@@ -267,7 +267,7 @@ async function resolve(env: Env, path: string): Promise<Page> {
           { "@type": "InteractionCounter", interactionType: "https://schema.org/CommentAction", userInteractionCount: p.comments }] },
       body: `<article class="entry"><div class="meta"><a class="who" href="/@${esc(p.author.handle)}">${esc(p.author.display_name)}</a> <time datetime="${p.created_at}">${p.created_at.slice(0, 10)}</time></div>
 <h1>${esc(headline)}</h1><div class="body">${paras(p.body)}</div></article>
-<section class="comments">${p.comment_list.map((c: any) => `<div class="comment"><a href="/@${esc(c.author.handle)}">${esc(c.author.display_name)}</a><div class="body">${paras(c.body)}</div></div>`).join("")}</section>`,
+<section class="comments" id="comments">${p.comment_list.map((c: any) => `<div class="comment"><a href="/@${esc(c.author.handle)}">${esc(c.author.display_name)}</a><div class="body">${paras(c.body)}</div></div>`).join("")}</section>`,
     };
   }
   return notFound(path);

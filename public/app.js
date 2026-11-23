@@ -67,7 +67,8 @@ function media(list) {
   return `<div class="media n${Math.min(list.length, 4)}">${items.join("")}</div>`;
 }
 
-const counts = (p) => `<div class="actions"><span class="l">${p.likes}</span><span class="h">${p.hates}</span><span class="c">${p.comments}</span></div>`;
+const replies = (p) => `<a class="c" href="/entry/${p.id}#comments" data-link title="Read the replies">${p.comments} ${p.comments === 1 ? "reply" : "replies"}</a>`;
+const counts = (p) => `<div class="actions"><span class="l">${p.likes}</span><span class="h">${p.hates}</span>${replies(p)}</div>`;
 
 function entryHtml(p, full = false, extra = "") {
   const a = p.author;
@@ -94,7 +95,7 @@ function confHtml(p, big = false) {
   return `<div class="conf ${big ? "big" : ""}" data-href="/entry/${p.id}">
     <div class="body">${md(p.body)}</div>
     ${media(p.media)}
-    <div class="actions"><span class="dim">${ago(p.created_at)}</span><span style="display:flex;gap:14px"><span class="l">${p.likes}</span><span class="h">${p.hates}</span><span class="c">${p.comments}</span></span></div>
+    <div class="actions"><span class="dim">${ago(p.created_at)}</span><span style="display:flex;gap:14px"><span class="l">${p.likes}</span><span class="h">${p.hates}</span>${replies(p)}</span></div>
   </div>`;
 }
 
@@ -225,7 +226,7 @@ const views = {
       ? `<p class="prompt">a confession</p>${confHtml(p, true)}`
       : entryHtml(p, true);
     app.innerHTML = `${top}
-      <section class="comments">
+      <section class="comments" id="comments">
         <h3>${p.comment_list.length} ${p.comment_list.length === 1 ? "reply" : "replies"}</h3>
         ${p.comment_list.map((c) => `<div class="comment">
           <div class="meta"><a class="who" href="/@${esc(c.author.handle)}" data-link>${avatar(c.author)}${esc(c.author.display_name)}</a><span class="faint">${ago(c.created_at)}</span></div>
@@ -457,7 +458,8 @@ async function render() {
   catch (e) {
     app.innerHTML = e.status === 404 ? `<div class="empty">404: ${esc(e.message.toLowerCase())}.</div>` : `<div class="empty">something went wrong: ${esc(e.message)}</div>`;
   }
-  window.scrollTo(0, 0);
+  const target = location.hash && document.getElementById(decodeURIComponent(location.hash.slice(1)));
+  if (target) target.scrollIntoView(); else window.scrollTo(0, 0);
   firstRender = false;
 }
 
