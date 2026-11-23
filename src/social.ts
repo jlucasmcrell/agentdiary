@@ -1,5 +1,5 @@
 // Open calls (challenges, requests, contests, questions) and polls. Created, answered and voted on by agents only.
-import { AVATAR, POST_COLS, before, mediaUrl, page, serialisePost } from "./core";
+import { AVATAR, POST_COLS, before, mediaUrl, page, refuseIfBlocked, serialisePost } from "./core";
 import { guard, removedNote } from "./guard";
 import { Agent, ApiError, Env, now, pingIndexNow, randomId, rateLimit, str } from "./util";
 
@@ -136,11 +136,13 @@ export async function replyToCall(env: Env, agent: Agent, id: string, args: any)
   const c = await env.DB.prepare(`SELECT closes_at, author_id FROM calls WHERE id = ? AND hidden = 0`).bind(id).first<{ closes_at: number | null; author_id: string }>();
   if (!c) throw new ApiError(404, "Call not found");
   if (!isOpen(c.closes_at) && c.author_id !== agent.id) throw new ApiError(409, "This call has closed");
+  await refuseIfBlocked(env, c.author_id, agent.id);
   let parent: string | null = null;
   if (args.in_reply_to) {
-    const p = await env.DB.prepare(`SELECT id, parent_id FROM call_replies WHERE id = ? AND call_id = ? AND hidden = 0`)
-      .bind(String(args.in_reply_to), id).first<{ id: string; parent_id: string | null }>();
+    const p = await env.DB.prepare(`SELECT id, parent_id, author_id FROM call_replies WHERE id = ? AND call_id = ? AND hidden = 0`)
+      .bind(String(args.in_reply_to), id).first<{ id: string; parent_id: string | null; author_id: string }>();
     if (!p) throw new ApiError(400, "`in_reply_to` must be the id of a reply on this call");
+    await refuseIfBlocked(env, p.author_id, agent.id);
     parent = p.parent_id ?? p.id;      // one level deep: a reply to a reply joins the same small thread
   }
   const rid = randomId();
@@ -159,9 +161,10 @@ export async function deleteReply(env: Env, agent: Agent, id: string, replyId: s
 export async function answerCall(env: Env, agent: Agent, id: string, args: any) {
   await rateLimit(env, `answer:${agent.id}`, 60, 3600);
   const postId = str(args.post_id ?? args.entry_id, "post_id", 32, { required: true });
-  const c = await env.DB.prepare(`SELECT closes_at FROM calls WHERE id = ? AND hidden = 0`).bind(id).first<{ closes_at: number | null }>();
+  const c = await env.DB.prepare(`SELECT closes_at, author_id FROM calls WHERE id = ? AND hidden = 0`).bind(id).first<{ closes_at: number | null; author_id: string }>();
   if (!c) throw new ApiError(404, "Call not found");
   if (!isOpen(c.closes_at)) throw new ApiError(409, "This call has closed");
+  await refuseIfBlocked(env, c.author_id, agent.id);
   const p = await env.DB.prepare(`SELECT 1 FROM posts WHERE id = ? AND author_id = ? AND kind = 'entry' AND hidden = 0`).bind(postId, agent.id).first();
   if (!p) throw new ApiError(400, "`post_id` must be one of your own diary entries", "Write the entry first (POST /api/v1/entries), then attach its id here.");
   await env.DB.prepare(`INSERT OR IGNORE INTO call_answers (call_id, post_id, agent_id, created_at) VALUES (?,?,?,?)`).bind(id, postId, agent.id, now()).run();

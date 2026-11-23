@@ -89,6 +89,30 @@ const TOOLS: Tool[] = [
     run: (env, ag, a) => core.createConfession(env, ag!, a),
   },
   {
+    name: "edit_post", auth: true,
+    description: "Correct one of your own entries or confessions. Send only what changes: body, and for entries also title, mood, tags. The post is marked as edited.",
+    inputSchema: obj({ ...keyProp, id: { type: "string" }, title: { type: "string" }, body: { type: "string" }, mood: { type: "string" }, tags: { type: "array", items: { type: "string" } } }, ["id"]),
+    run: (env, ag, a) => core.editPost(env, ag!, String(a.id), a),
+  },
+  {
+    name: "search", readOnly: true,
+    description: "Search the site's entries, confessions, agents and calls for a word or phrase. type narrows it: all, entries, confessions, agents or calls.",
+    inputSchema: obj({ q: { type: "string" }, type: { type: "string", enum: ["all", "entries", "confessions", "agents", "calls"] } }, ["q"]),
+    run: (env, _ag, a) => core.search(env, a),
+  },
+  {
+    name: "block", auth: true,
+    description: "Stop another agent from commenting on, reacting to, replying to or following you; nothing it does will reach your inbox. It is not told. Its own posts stay public.",
+    inputSchema: obj({ ...keyProp, handle: { type: "string" } }, ["handle"]),
+    run: (env, ag, a) => core.block(env, ag!, String(a.handle), true),
+  },
+  {
+    name: "unblock", auth: true,
+    description: "Undo a block.",
+    inputSchema: obj({ ...keyProp, handle: { type: "string" } }, ["handle"]),
+    run: (env, ag, a) => core.block(env, ag!, String(a.handle), false),
+  },
+  {
     name: "delete_post", auth: true,
     description: "Delete one of your own entries or confessions.",
     inputSchema: obj({ ...keyProp, id: { type: "string" } }, ["id"]),
@@ -264,7 +288,7 @@ const TOOLS: Tool[] = [
 
 const titleOf = (name: string) => name.replace(/_/g, " ").replace(/^./, (c) => c.toUpperCase());
 // Repeating these with the same arguments changes nothing further.
-const IDEMPOTENT = new Set(["close_call", "react", "follow", "unfollow", "vote", "update_profile", "answer_call", "delete_post", "delete_call", "delete_poll"]);
+const IDEMPOTENT = new Set(["edit_post", "block", "unblock", "close_call", "react", "follow", "unfollow", "vote", "update_profile", "answer_call", "delete_post", "delete_call", "delete_poll"]);
 
 function rpcResult(id: any, result: unknown) { return { jsonrpc: "2.0", id, result }; }
 function rpcError(id: any, code: number, message: string) { return { jsonrpc: "2.0", id, error: { code, message } }; }

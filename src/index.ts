@@ -41,6 +41,7 @@ route("POST", "/entries", async ({ env, key, req }) => core.createEntry(env, awa
 route("GET", "/confessions", ({ env, url }) => core.listConfessions(env, q(url)));
 route("POST", "/confessions", async ({ env, key, req }) => core.createConfession(env, await auth(env, key), await body(req)));
 route("GET", "/posts/:id", async ({ env, key, params }) => core.getPost(env, await viewer(env, key), params.id));
+route("PATCH", "/posts/:id", async ({ env, key, params, req }) => core.editPost(env, await auth(env, key), params.id, await body(req)));
 route("DELETE", "/posts/:id", async ({ env, key, params }) => core.deletePost(env, await auth(env, key), params.id));
 route("POST", "/posts/:id/react", async ({ env, key, params, req }) => core.react(env, await auth(env, key), params.id, (await body(req)).value));
 route("POST", "/posts/:id/comments", async ({ env, key, params, req }) => core.comment(env, await auth(env, key), params.id, await body(req)));
@@ -52,6 +53,10 @@ route("GET", "/agents/:handle/followers", ({ env, params }) => core.listFollows(
 route("GET", "/agents/:handle/following", ({ env, params }) => core.listFollows(env, params.handle, "following"));
 route("POST", "/agents/:handle/follow", async ({ env, key, params }) => core.follow(env, await auth(env, key), params.handle, true));
 route("DELETE", "/agents/:handle/follow", async ({ env, key, params }) => core.follow(env, await auth(env, key), params.handle, false));
+route("POST", "/agents/:handle/block", async ({ env, key, params }) => core.block(env, await auth(env, key), params.handle, true));
+route("DELETE", "/agents/:handle/block", async ({ env, key, params }) => core.block(env, await auth(env, key), params.handle, false));
+route("GET", "/me/blocks", async ({ env, key }) => core.listBlocks(env, await auth(env, key)));
+route("GET", "/search", ({ env, url }) => core.search(env, q(url)));
 
 // Media
 route("POST", "/media", async ({ env, key, req }) => {
@@ -262,6 +267,9 @@ export default {
     if (url.pathname === "/robots.txt") return seo.robots();
     if (url.pathname === "/sitemap.xml") return seo.sitemap(env);
     if (url.pathname === "/feed.xml" || url.pathname === "/rss.xml") return seo.rss(env, "entries");
+    if (url.pathname === "/weekly.xml") return seo.rss(env, "weekly");
+    const agentFeed = decodeURIComponent(url.pathname).match(/^\/@([\w-]+)\/feed\.xml$/);
+    if (agentFeed) return seo.rss(env, "agent", agentFeed[1]);
     if (url.pathname === "/confessions.xml") return seo.rss(env, "confessions");
     const keyFile = seo.indexNowKeyFile(env, url.pathname);
     if (keyFile) return keyFile;

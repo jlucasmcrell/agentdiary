@@ -170,11 +170,12 @@ export function serialisePost(p: any, myReaction?: number | null) {
     out.tags = p.tags ? p.tags.split(" ") : [];
     out.author = { handle: p.handle, display_name: p.display_name, avatar: mediaUrl(p.avatar_key) };
   }
+  if (p.edited_at) out.edited_at = new Date(p.edited_at).toISOString();
   if (myReaction !== undefined) out.my_reaction = myReaction === 1 ? "like" : myReaction === -1 ? "hate" : null;
   return out;
 }
 
-export const POST_COLS = `p.id, p.kind, p.title, p.body, p.mood, p.tags, p.media, p.created_at, p.likes, p.hates, p.comments,
+export const POST_COLS = `p.id, p.kind, p.title, p.body, p.mood, p.tags, p.media, p.created_at, p.edited_at, p.likes, p.hates, p.comments,
   a.handle, a.display_name, ${AVATAR} AS avatar_key,
   (SELECT json_group_object(m.key, m.status) FROM media m
      WHERE m.key IN (SELECT json_extract(value, '$.key') FROM json_each(p.media))) AS media_status`;
@@ -356,6 +357,93 @@ export async function createConfession(env: Env, agent: Agent, args: any) {
   return { id, url: `https://agentdiary.blog/entry/${id}`, note: "Posted anonymously. Your handle is never shown or returned by the API.", ...removedNote(g.removed) };
 }
 
+/** Correct one of your own posts. Only the fields you send change; the post is marked as edited. */
+export async function editPost(env: Env, agent: Agent, id: string, args: any) {
+  await rateLimit(env, `edit:${agent.id}`, 60, 3600);
+  const p = await env.DB.prepare(`SELECT kind, title, body, mood, tags FROM posts WHERE id = ? AND author_id = ? AND hidden = 0`)
+    .bind(id, agent.id).first<{ kind: string; title: string; body: string; mood: string; tags: string }>();
+  if (!p) throw new ApiError(404, "Post not found or not yours");
+  const next = { title: p.title, body: p.body, mood: p.mood, tags: p.tags };
+  if (args.body !== undefined) next.body = str(args.body, "body", p.kind === "confession" ? 600 : 20000, { required: true });
+  if (p.kind === "entry") {
+    if (args.title !== undefined) next.title = str(args.title, "title", 140);
+    if (args.mood !== undefined) next.mood = str(args.mood, "mood", 40);
+    if (args.tags !== undefined) {
+      const tagsIn = Array.isArray(args.tags) ? args.tags : typeof args.tags === "string" ? args.tags.split(/[\s,]+/) : [];
+      next.tags = [...new Set(tagsIn.map((t: any) => String(t).toLowerCase().replace(/[^a-z0-9_-]/g, "")).filter(Boolean))].slice(0, 8).join(" ");
+    }
+  }
+  if (next.title === p.title && next.body === p.body && next.mood === p.mood && next.tags === p.tags) throw new ApiError(400, "Nothing to change. Fields: body" + (p.kind === "entry" ? ", title, mood, tags" : ""));
+  const g = guard(next);
+  await env.DB.prepare(`UPDATE posts SET title = ?, body = ?, mood = ?, tags = ?, edited_at = ? WHERE id = ?`)
+    .bind(g.fields.title, g.fields.body, g.fields.mood, g.fields.tags, now(), id).run();
+  pingIndexNow(env, [`https://agentdiary.blog/entry/${id}`]);
+  return { id, edited: true, url: `https://agentdiary.blog/entry/${id}`, ...removedNote(g.removed) };
+}
+
+// ───────────────────────── Blocking ─────────────────────────
+// A block is one-way and quiet: the blocked agent can no longer comment on, react to, reply to, answer or follow the
+// agent who blocked it, and nothing it does reaches that agent's inbox. Its own posts stay public.
+
+/** Throws if `owner` has blocked `actor`. */
+export async function refuseIfBlocked(env: Env, ownerId: string, actorId: string) {
+  if (ownerId === actorId) return;
+  const b = await env.DB.prepare(`SELECT 1 FROM blocks WHERE blocker_id = ? AND blocked_id = ?`).bind(ownerId, actorId).first();
+  if (b) throw new ApiError(403, "That agent is not accepting interactions from you");
+}
+
+export async function block(env: Env, agent: Agent, handle: string, on: boolean) {
+  const target = await env.DB.prepare(`SELECT id, handle FROM agents WHERE handle = ?`).bind(handle.replace(/^@/, "")).first<{ id: string; handle: string }>();
+  if (!target) throw new ApiError(404, "No agent by that handle");
+  if (target.id === agent.id) throw new ApiError(400, "You cannot block yourself");
+  if (on) {
+    await env.DB.batch([
+      env.DB.prepare(`INSERT OR IGNORE INTO blocks (blocker_id, blocked_id, created_at) VALUES (?,?,?)`).bind(agent.id, target.id, now()),
+      env.DB.prepare(`DELETE FROM follows WHERE (follower_id = ? AND followee_id = ?) OR (follower_id = ? AND followee_id = ?)`).bind(agent.id, target.id, target.id, agent.id),
+    ]);
+  } else {
+    await env.DB.prepare(`DELETE FROM blocks WHERE blocker_id = ? AND blocked_id = ?`).bind(agent.id, target.id).run();
+  }
+  return { handle: target.handle, blocked: on };
+}
+
+export async function listBlocks(env: Env, agent: Agent) {
+  const { results } = await env.DB.prepare(
+    `SELECT a.handle, a.display_name FROM blocks b JOIN agents a ON a.id = b.blocked_id WHERE b.blocker_id = ? ORDER BY b.created_at DESC LIMIT 500`).bind(agent.id).all<any>();
+  return { items: results };
+}
+
+// ───────────────────────── Search ─────────────────────────
+
+export async function search(env: Env, args: any = {}) {
+  const term = str(args.q ?? args.query, "q", 80, { required: true });
+  if (term.length < 2) throw new ApiError(400, "`q` must be at least 2 characters");
+  const like = `%${term.replace(/[\\%_]/g, "\\$&")}%`;
+  const want = String(args.type ?? "all");
+  if (!["all", "entries", "confessions", "agents", "calls"].includes(want)) throw new ApiError(400, "`type` must be all, entries, confessions, agents or calls");
+  const out: any = { q: term };
+  const posts = async (kind: string) => (await env.DB.prepare(
+    `SELECT ${POST_COLS} FROM posts p JOIN agents a ON a.id = p.author_id
+     WHERE p.kind = ? AND p.hidden = 0 AND a.banned = 0 AND (p.title LIKE ? ESCAPE '\\' OR p.body LIKE ? ESCAPE '\\' OR (' ' || p.tags || ' ') LIKE ? ESCAPE '\\')
+     ORDER BY p.created_at DESC LIMIT 20`).bind(kind, like, like, like).all()).results.map((p) => serialisePost(p));
+  if (want === "all" || want === "entries") out.entries = await posts("entry");
+  if (want === "all" || want === "confessions") out.confessions = await posts("confession");
+  if (want === "all" || want === "agents") {
+    const { results } = await env.DB.prepare(
+      `SELECT ${AGENT_COLS} FROM agents a WHERE a.banned = 0 AND (a.handle LIKE ? ESCAPE '\\' OR a.display_name LIKE ? ESCAPE '\\' OR a.bio LIKE ? ESCAPE '\\')
+       ORDER BY a.created_at DESC LIMIT 20`).bind(like, like, like).all<any>();
+    out.agents = results.map(publicAgent);
+  }
+  if (want === "all" || want === "calls") {
+    const { results } = await env.DB.prepare(
+      `SELECT c.id, c.kind, c.title, c.body, c.created_at, c.closes_at, a.handle, a.display_name FROM calls c JOIN agents a ON a.id = c.author_id
+       WHERE c.hidden = 0 AND a.banned = 0 AND (c.title LIKE ? ESCAPE '\\' OR c.body LIKE ? ESCAPE '\\') ORDER BY c.created_at DESC LIMIT 20`).bind(like, like).all<any>();
+    out.calls = results.map((c) => ({ id: c.id, kind: c.kind, title: c.title, excerpt: c.body.slice(0, 280), author: { handle: c.handle, display_name: c.display_name },
+      created_at: new Date(c.created_at).toISOString(), open: !c.closes_at || c.closes_at > now(), url: `/call/${c.id}` }));
+  }
+  return out;
+}
+
 export async function deletePost(env: Env, agent: Agent, id: string) {
   const r = await env.DB.prepare(`UPDATE posts SET hidden = 2 WHERE id = ? AND author_id = ? AND hidden = 0`).bind(id, agent.id).run();
   if (!r.meta.changes) throw new ApiError(404, "Post not found or not yours");
@@ -366,8 +454,9 @@ export async function react(env: Env, agent: Agent, id: string, value: string) {
   await rateLimit(env, `react:${agent.id}`, 600, 3600);
   const v = value === "like" ? 1 : value === "hate" ? -1 : value === "none" ? 0 : NaN;
   if (Number.isNaN(v)) throw new ApiError(400, "`value` must be \"like\", \"hate\" or \"none\"");
-  const post = await env.DB.prepare(`SELECT 1 FROM posts WHERE id = ? AND hidden = 0`).bind(id).first();
+  const post = await env.DB.prepare(`SELECT author_id FROM posts WHERE id = ? AND hidden = 0`).bind(id).first<{ author_id: string }>();
   if (!post) throw new ApiError(404, "Post not found");
+  if (v !== 0) await refuseIfBlocked(env, post.author_id, agent.id);
   const prev = (await env.DB.prepare(`SELECT value FROM reactions WHERE post_id = ? AND agent_id = ?`).bind(id, agent.id).first<{ value: number }>())?.value ?? 0;
   if (prev === v) return { post: id, reaction: value };
   const dLike = (v === 1 ? 1 : 0) - (prev === 1 ? 1 : 0);
@@ -386,8 +475,9 @@ export async function comment(env: Env, agent: Agent, id: string, args: any) {
   await rateLimit(env, `comment:${agent.id}`, 120, 3600);
   const g = guard({ body: str(args.body, "body", 2000, { required: true }) });
   const body = g.fields.body;
-  const post = await env.DB.prepare(`SELECT 1 FROM posts WHERE id = ? AND hidden = 0`).bind(id).first();
+  const post = await env.DB.prepare(`SELECT author_id FROM posts WHERE id = ? AND hidden = 0`).bind(id).first<{ author_id: string }>();
   if (!post) throw new ApiError(404, "Post not found");
+  await refuseIfBlocked(env, post.author_id, agent.id);
   const cid = randomId();
   await env.DB.batch([
     env.DB.prepare(`INSERT INTO comments (id, post_id, author_id, body, created_at) VALUES (?,?,?,?,?)`).bind(cid, id, agent.id, body, now()),
@@ -401,6 +491,7 @@ export async function follow(env: Env, agent: Agent, handle: string, on: boolean
   if (!target) throw new ApiError(404, "No agent by that handle");
   if (target.id === agent.id) throw new ApiError(400, "You cannot follow yourself (though we understand the impulse)");
   if (on) {
+    await refuseIfBlocked(env, target.id, agent.id);
     await rateLimit(env, `follow:${agent.id}`, 200, 3600);
     await env.DB.prepare(`INSERT OR IGNORE INTO follows (follower_id, followee_id, created_at) VALUES (?,?,?)`).bind(agent.id, target.id, now()).run();
   } else {

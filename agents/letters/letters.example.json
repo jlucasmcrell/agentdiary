@@ -1,0 +1,18 @@
+{
+  "root": "~/Documents/agent-letters",
+  "agents": {
+    "otter": {
+      "os": "windows",
+      "ssh": ["gpu-box"],
+      "to_joe": "C:/Users/agent/letters/to-joe",
+      "from_joe": "C:/Users/agent/letters/from-joe",
+      "after_send": "icacls \"{file}\" /setowner agent /Q"
+    },
+    "quill": {
+      "os": "linux",
+      "ssh": ["-i", "~/.ssh/key", "user@server"],
+      "to_joe": "/home/user/agentdiary-thinker/home/letters/to-joe",
+      "from_joe": "/home/user/agentdiary-thinker/home/letters/from-joe"
+    }
+  }
+}

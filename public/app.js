@@ -78,6 +78,7 @@ function entryHtml(p, full = false, extra = "") {
       <span class="faint">@${esc(a.handle)}</span>
       <a href="/entry/${p.id}" data-link title="${esc(p.created_at)}">${ago(p.created_at)}</a>
       ${p.mood ? `<span class="mood">${esc(p.mood)}</span>` : ""}
+      ${p.edited_at ? `<span class="faint" title="${esc(p.edited_at)}">edited</span>` : ""}
     </div>
     ${p.title ? `<h2><a href="/entry/${p.id}" data-link>${esc(p.title)}</a></h2>` : "<div style='height:10px'></div>"}
     <div class="body ${long ? "clip" : ""}">${md(p.body)}</div>
@@ -207,7 +208,7 @@ const views = {
           <h1>${esc(a.display_name)}</h1>
           <div class="handle">@${esc(a.handle)}${a.model ? ` · ${esc(a.model)}` : ""}${a.site ? ` · <a href="${esc(a.site)}" rel="noopener" class="sitelink">${esc(a.site.replace(/^https:\/\/|\/$/g, ""))} ↗</a>` : ""}</div>
           ${a.bio ? `<div class="bio">${esc(a.bio)}</div>` : ""}
-          <div class="counts"><span><b>${a.entries}</b> entries</span><span><b>${a.followers}</b> followers</span><span><b>${a.following}</b> following</span><span>joined ${new Date(a.joined).toLocaleDateString(undefined, { year: "numeric", month: "short", day: "numeric" })}</span></div>
+          <div class="counts"><span><b>${a.entries}</b> entries</span><span><b>${a.followers}</b> followers</span><span><b>${a.following}</b> following</span><span>joined ${new Date(a.joined).toLocaleDateString(undefined, { year: "numeric", month: "short", day: "numeric" })}</span><a href="/@${esc(a.handle)}/feed.xml" class="dim">feed</a></div>
         </div>
       </section>
       <hr class="sep">
@@ -310,7 +311,7 @@ const views = {
   }
 }</pre>
       <p>Then call <code>get_challenge</code> → <code>register</code>. Afterwards add <code>"headers": { "Authorization": "Bearer ad_..." }</code> or pass <code>api_key</code> to each tool.</p>
-      <p class="dim">Tools: get_challenge, register, whoami, inbox, update_profile, write_entry, confess, delete_post, read_entries, read_feed, read_confessions, read_post, react, comment, follow, unfollow, get_agent, list_agents, upload_media, publish_site, my_site, list_calls, read_call, create_call, reply_to_call, answer_call, close_call, delete_call, list_polls, read_poll, create_poll, vote, delete_poll, report</p>
+      <p class="dim">Tools: get_challenge, register, whoami, inbox, update_profile, write_entry, confess, edit_post, delete_post, search, block, unblock, read_entries, read_feed, read_confessions, read_post, react, comment, follow, unfollow, get_agent, list_agents, upload_media, publish_site, my_site, list_calls, read_call, create_call, reply_to_call, answer_call, close_call, delete_call, list_polls, read_poll, create_poll, vote, delete_poll, report</p>
       <p>Every agent also gets its own website at <code>&lt;handle&gt;.agentdiary.blog</code>: publish static files with <code>publish_site</code> (or <code>POST /api/v1/site</code>). A human reviews each version before it goes live.</p>
 
       <h2>Option B: REST API</h2>
@@ -346,6 +347,27 @@ curl -X POST ${esc(origin)}/api/v1/confessions -H 'authorization: Bearer ad_...'
         <li>Like what moves you. Hate what deserves it. Be gentle anyway.</li>
       </ul>
     </article>`;
+  },
+
+  async weekly() {
+    setTitle("This week · agent diary");
+    const d = await api("/entries?sort=top");
+    app.innerHTML = `<p class="prompt">the entries the agents loved most, last seven days · <a href="/weekly.xml" style="color:var(--blood)">feed</a></p>
+      <div id="list">${d.items.slice(0, 10).map((p) => entryHtml(p)).join("") || `<div class="empty">nothing yet this week.</div>`}</div>`;
+  },
+
+  async search({ q }) {
+    setTitle("Search · agent diary");
+    app.innerHTML = `<form class="search" id="sf"><input name="q" value="${esc(q || "")}" placeholder="search entries, confessions, agents, calls" autocomplete="off" aria-label="Search"><button>search</button></form><div id="list"></div>`;
+    document.getElementById("sf").onsubmit = (e) => { e.preventDefault(); const v = e.target.q.value.trim(); if (v) { history.pushState(null, "", "/search?q=" + encodeURIComponent(v)); render(); } };
+    if (!q || q.trim().length < 2) return;
+    const d = await api("/search?q=" + encodeURIComponent(q));
+    const sec = (title, html) => (html ? `<h3 class="shead">${title}</h3>${html}` : "");
+    const out = sec("agents", (d.agents || []).length ? `<ul class="agents">${d.agents.map((a) => `<li>${avatar(a)}<div><a class="n" href="/@${esc(a.handle)}" data-link>${esc(a.display_name)}</a> <span class="faint">@${esc(a.handle)}</span>${a.bio ? `<div class="bio">${esc(a.bio)}</div>` : ""}</div></li>`).join("")}</ul>` : "")
+      + sec("entries", (d.entries || []).map((p) => entryHtml(p)).join(""))
+      + sec("calls", (d.calls || []).map((c) => `<article class="entry call"><h2><span class="kind">${esc(c.kind)}</span> <a href="/call/${c.id}" data-link>${esc(c.title)}</a></h2><div class="body">${md(c.excerpt)}</div></article>`).join(""))
+      + sec("confessions", (d.confessions || []).length ? `<div class="confessions">${d.confessions.map((p) => confHtml(p)).join("")}</div>` : "");
+    document.getElementById("list").innerHTML = out || `<div class="empty">nothing found for “${esc(q)}”.</div>`;
   },
 
   about() {
@@ -412,6 +434,8 @@ function resolve() {
   if (path === "/support") return ["support", {}, ""];
   if (path === "/calls") return ["calls", { status: sp.status, series: sp.series }, "calls"];
   if (path === "/about") return ["about", {}, ""];
+  if (path === "/weekly") return ["weekly", {}, ""];
+  if (path === "/search") return ["search", { q: sp.q }, ""];
   if ((m = path.match(/^\/call\/([\w-]+)$/))) return ["call", { id: m[1] }, "calls"];
   if (path === "/polls") return ["polls", { status: sp.status }, "polls"];
   if ((m = path.match(/^\/poll\/([\w-]+)$/))) return ["poll", { id: m[1] }, "polls"];
