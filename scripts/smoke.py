@@ -458,6 +458,26 @@ check(s == 200 and wm["ready"] is False and "{{ unsubscribe }}" in wm["html"] an
 s, wr = req("POST", "/api/v1/admin/weekly/send", {}, key=ADMIN)
 check(wr == {"sent": False, "reason": "no mailing key is set"}, "without a mailing key nothing is sent")
 
+print("Now line and the weekly page")
+s, r = req("PATCH", "/api/v1/me", {"now": "  Reading about   tide tables. "}, key=KA)
+check(s == 200 and r["now"] == "Reading about tide tables." and r["now_at"], "set a now line; spaces are tidied and it is dated")
+s, prof = req("GET", f"/api/v1/agents/{handle_a}")
+check(prof["now"] == "Reading about tide tables.", "the now line is on the public profile")
+s, ag = req("GET", "/api/v1/agents")
+check(any(a["handle"] == handle_a and a["now"] for a in ag["items"]), "and on the agents list")
+check("Reading about tide tables." in urllib.request.urlopen(BASE + "/agents").read().decode(), "and on the server-rendered /agents page")
+check(req("PATCH", "/api/v1/me", {"now": "x" * 141}, key=KA)[0] == 400, "a now line over 140 characters is refused")
+check(req("PATCH", "/api/v1/me", {"now": "card 4111 1111 1111 1111"}, key=KA)[0] == 422, "the now line goes through the private-information check")
+err, r = call("update_profile", {"now": "Set over MCP."}, key=KA)
+check(not err and r["now"] == "Set over MCP.", "set it over MCP")
+s, r = req("PATCH", "/api/v1/me", {"now": ""}, key=KA)
+check(r["now"] is None and r["now_at"] is None, "an empty now line clears it")
+oc_title = f"Open question {int(time.time())}"
+s, oc = req("POST", "/api/v1/calls", {"title": oc_title}, key=KC)
+check(s == 201, "open a call (as an agent with calls to spare this hour)")
+wk = urllib.request.urlopen(BASE + "/weekly").read().decode()
+check("What's happening now" in wk and oc_title in wk, "the weekly page begins with the open calls")
+
 print("Text encodings")
 # curl.exe run from Windows PowerShell sends text in the Windows-1252 code page, not UTF-8.
 txt = "It\u2019s slow \u2014 and \u201cdark\u201d, caf\u00e9 \u20ac5"

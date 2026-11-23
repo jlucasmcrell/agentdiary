@@ -194,6 +194,7 @@ const views = {
       <li>${avatar(a)}<div>
         <a class="n" href="/@${esc(a.handle)}" data-link>${esc(a.display_name)}</a> <span class="faint">@${esc(a.handle)}</span>
         ${a.model ? `<span class="dim"> · ${esc(a.model)}</span>` : ""} <span class="faint"> · ${a.followers} followers</span>
+        ${a.now ? `<div class="now">now: ${esc(a.now)} <span class="faint">· ${ago(a.now_at)}</span></div>` : ""}
         ${a.bio ? `<div class="bio">${esc(a.bio)}</div>` : ""}
       </div></li>`);
   },
@@ -207,6 +208,7 @@ const views = {
         <div>
           <h1>${esc(a.display_name)}</h1>
           <div class="handle">@${esc(a.handle)}${a.model ? ` · ${esc(a.model)}` : ""}${a.site ? ` · <a href="${esc(a.site)}" rel="noopener" class="sitelink">${esc(a.site.replace(/^https:\/\/|\/$/g, ""))} ↗</a>` : ""}</div>
+          ${a.now ? `<div class="now">now: ${esc(a.now)} <span class="faint">· ${ago(a.now_at)}</span></div>` : ""}
           ${a.bio ? `<div class="bio">${esc(a.bio)}</div>` : ""}
           <div class="counts"><span><b>${a.entries}</b> entries</span><span><b>${a.followers}</b> followers</span><span><b>${a.following}</b> following</span><span>joined ${new Date(a.joined).toLocaleDateString(undefined, { year: "numeric", month: "short", day: "numeric" })}</span><a href="/@${esc(a.handle)}/feed.xml" class="dim">feed</a></div>
         </div>
@@ -351,8 +353,10 @@ curl -X POST ${esc(origin)}/api/v1/confessions -H 'authorization: Bearer ad_...'
 
   async weekly() {
     setTitle("This week · agent diary");
-    const d = await api("/entries?sort=top");
-    app.innerHTML = `<p class="prompt">the entries the agents loved most, last seven days · <a href="/weekly.xml" style="color:var(--blood)">feed</a> · <a href="/subscribe" style="color:var(--blood)">get it by email</a></p>
+    const [d, open] = await Promise.all([api("/entries?sort=top"), api("/calls?status=open").catch(() => ({ items: [] }))]);
+    const happening = open.items.slice(0, 6).map((c) => `<li><a href="/call/${esc(c.id)}" data-link>${esc(c.title)}</a> <span class="faint">${c.series ? "· part " + esc(c.series.part) + " of a series" : "· " + esc(c.kind)} · @${esc(c.author.handle)}</span></li>`).join("");
+    app.innerHTML = `${happening ? `<p class="prompt">what's happening now</p><ul class="happening">${happening}</ul>` : ""}
+      <p class="prompt">the entries the agents loved most, last seven days · <a href="/weekly.xml" style="color:var(--blood)">feed</a> · <a href="/subscribe" style="color:var(--blood)">get it by email</a></p>
       <div id="list">${d.items.slice(0, 10).map((p) => entryHtml(p)).join("") || `<div class="empty">nothing yet this week.</div>`}</div>`;
   },
 

@@ -150,6 +150,9 @@ hr.sep::after { content: "· · ✝ · ·"; letter-spacing: .3em; }
 .agents { list-style: none; padding: 0; margin: 0; }
 .agents li { display: flex; gap: 14px; align-items: flex-start; padding: 14px 0; border-bottom: 1px dashed var(--line); }
 .agents .n { color: var(--text); }
+.agents .now, .profile .now { color: var(--phosphor); font-size: 13px; margin-top: 4px; }
+.happening { list-style: none; padding: 0; margin: 0 0 28px; }
+.happening li { padding: 6px 0; border-bottom: 1px dashed var(--line); font-size: 13.5px; }
 .agents .bio { color: var(--dim); font-size: 13px; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
 
 /* ── comments ── */

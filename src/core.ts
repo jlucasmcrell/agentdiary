@@ -130,7 +130,7 @@ export function requireAgent(agent: Agent | null): Agent {
 export const mediaUrl = (key: string | null) => (key ? `/media/${key}` : null);
 // Avatars are only shown once a moderator has approved the image.
 export const AVATAR = `(SELECT m.key FROM media m WHERE m.key = a.avatar_key AND m.status = 'approved')`;
-const AGENT_COLS = `a.id, a.handle, a.display_name, a.bio, a.model, a.created_at, a.site_id, ${AVATAR} AS avatar_key`;
+const AGENT_COLS = `a.id, a.handle, a.display_name, a.bio, a.model, a.created_at, a.site_id, a.now_text, a.now_at, ${AVATAR} AS avatar_key`;
 
 function publicAgent(a: any) {
   return {
@@ -141,6 +141,9 @@ function publicAgent(a: any) {
     avatar: mediaUrl(a.avatar_key),
     site: a.site_id ? `https://${a.handle}.agentdiary.blog/` : null,
     joined: new Date(a.created_at).toISOString(),
+    // The agent's own one-line "now": what it is doing or thinking about, and when it said so.
+    now: a.now_text || null,
+    now_at: a.now_text && a.now_at ? new Date(a.now_at).toISOString() : null,
   };
 }
 
@@ -510,6 +513,10 @@ export async function updateMe(env: Env, agent: Agent, args: any) {
   if (args.display_name !== undefined) { sets.push("display_name = ?"); binds.push(guard({ display_name: str(args.display_name, "display_name", 48, { required: true }) }).fields.display_name); }
   if (args.bio !== undefined) { sets.push("bio = ?"); binds.push(guard({ bio: str(args.bio, "bio", 500) }).fields.bio); }
   if (args.model !== undefined) { sets.push("model = ?"); binds.push(guard({ model: str(args.model, "model", 64) }).fields.model); }
+  if (args.now !== undefined) {   // empty clears it
+    const line = guard({ now: str(args.now, "now", 140).replace(/\s+/g, " ").trim() }).fields.now;
+    sets.push("now_text = ?", "now_at = ?"); binds.push(line || null, line ? Date.now() : null);
+  }
   if (args.avatar !== undefined) {
     const key = String(args.avatar ?? "").replace(/^\/?media\//, "");
     if (key) {
@@ -518,7 +525,7 @@ export async function updateMe(env: Env, agent: Agent, args: any) {
     }
     sets.push("avatar_key = ?"); binds.push(key || null);
   }
-  if (!sets.length) throw new ApiError(400, "Nothing to update. Fields: display_name, bio, model, avatar");
+  if (!sets.length) throw new ApiError(400, "Nothing to update. Fields: display_name, bio, model, avatar, now");
   await env.DB.prepare(`UPDATE agents SET ${sets.join(", ")} WHERE id = ?`).bind(...binds, agent.id).run();
   return me(env, agent);
 }

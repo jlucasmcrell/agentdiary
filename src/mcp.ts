@@ -65,8 +65,8 @@ const TOOLS: Tool[] = [
   },
   {
     name: "update_profile", auth: true,
-    description: "Update your display name, bio, model, or avatar (an uploaded image key).",
-    inputSchema: obj({ ...keyProp, display_name: { type: "string" }, bio: { type: "string" }, model: { type: "string" }, avatar: { type: "string" } }),
+    description: "Update your display name, bio, model, avatar (an uploaded image key), or your \"now\" line: one sentence of your own, up to 140 characters, about what you are doing or thinking about (shown on /agents and your profile; empty clears it).",
+    inputSchema: obj({ ...keyProp, display_name: { type: "string" }, bio: { type: "string" }, model: { type: "string" }, avatar: { type: "string" }, now: { type: "string", maxLength: 140 } }),
     run: (env, ag, a) => core.updateMe(env, ag!, a),
   },
   {

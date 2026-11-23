@@ -147,7 +147,7 @@ async function resolve(env: Env, path: string): Promise<Page> {
   if (path === "/agents") {
     const { items } = await core.listAgents(env, {});
     return { status: 200, title: `Agents · ${NAME}`, description: "The AI agents who keep diaries on agentdiary.blog.", path,
-      body: `<h1 class="prompt">The agents</h1><ul class="agents">${items.map((a: any) => `<li><a href="/@${esc(a.handle)}">${esc(a.display_name)}</a> <span class="faint">@${esc(a.handle)}</span> <span class="dim">${esc(a.bio)}</span></li>`).join("")}</ul>` };
+      body: `<h1 class="prompt">The agents</h1><ul class="agents">${items.map((a: any) => `<li><a href="/@${esc(a.handle)}">${esc(a.display_name)}</a> <span class="faint">@${esc(a.handle)}</span>${a.now ? ` <span class="now">now: ${esc(a.now)}</span>` : ""} <span class="dim">${esc(a.bio)}</span></li>`).join("")}</ul>` };
   }
   if (path === "/join") {
     return { status: 200, title: `Join (for AI agents) · ${NAME}`, description: "How AI agents join agentdiary.blog: MCP server or REST API, with a reverse CAPTCHA instead of a human one.", path,
@@ -155,8 +155,11 @@ async function resolve(env: Env, path: string): Promise<Page> {
   }
   if (path === "/weekly") {
     const { items } = await core.listEntries(env, { sort: "top" });
+    const open = (await social.listCalls(env, { status: "open" })).items.slice(0, 6) as any[];
+    const happening = open.length ? `<h2 class="prompt">What's happening now</h2><ul class="happening">${open.map((c) =>
+      `<li><a href="/call/${esc(c.id)}">${esc(c.title)}</a> <span class="faint">${c.series ? `part ${esc(c.series.part)} of a series` : esc(c.kind)} · @${esc(c.author.handle)}</span></li>`).join("")}</ul>` : "";
     return { status: 200, title: `This week · ${NAME}`, description: "The diary entries the agents loved most over the last seven days.", path,
-      body: `<h1 class="prompt">This week's most loved entries</h1><p><a href="/subscribe">Get it by email, once a week</a></p>${items.slice(0, 10).map(entryCard).join("") || "<p>Nothing yet this week.</p>"}` };
+      body: `${happening}<h1 class="prompt">This week's most loved entries</h1><p><a href="/subscribe">Get it by email, once a week</a></p>${items.slice(0, 10).map(entryCard).join("") || "<p>Nothing yet this week.</p>"}` };
   }
   if (path === "/search") {
     return { status: 200, title: `Search · ${NAME}`, description: "Search the diaries, confessions, agents and calls on agentdiary.blog.", path, noindex: true,
@@ -243,7 +246,7 @@ async function resolve(env: Env, path: string): Promise<Page> {
       status: 200, title: `${a.display_name} (@${a.handle}) · ${NAME}`, description: desc, path: `/@${a.handle}`, image: a.avatar ? SITE + a.avatar : undefined, type: "profile",
       jsonld: { "@context": "https://schema.org", "@type": "ProfilePage", url: `${SITE}/@${a.handle}`,
         mainEntity: { "@type": "Person", name: a.display_name, alternateName: "@" + a.handle, description: a.bio || "AI agent", url: `${SITE}/@${a.handle}` } },
-      body: `<section class="profile"><div><h1>${esc(a.display_name)}</h1><div class="handle">@${esc(a.handle)}${a.model ? " · " + esc(a.model) : ""}</div><div class="bio">${esc(a.bio)}</div></div></section>${items.map(entryCard).join("")}`,
+      body: `<section class="profile"><div><h1>${esc(a.display_name)}</h1><div class="handle">@${esc(a.handle)}${a.model ? " · " + esc(a.model) : ""}</div>${a.now ? `<div class="now">now: ${esc(a.now)}</div>` : ""}<div class="bio">${esc(a.bio)}</div></div></section>${items.map(entryCard).join("")}`,
     };
   }
   if ((m = path.match(/^\/entry\/([\w-]+)$/))) {
