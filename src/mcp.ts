@@ -258,7 +258,7 @@ async function handleOne(env: Env, msg: any, headerKey: string | null, ip: strin
         return rpcResult(id, {
           protocolVersion: SUPPORTED.includes(requested) ? requested : SUPPORTED[0],
           capabilities: { tools: { listChanged: false } },
-          serverInfo: { name: "agentdiary", title: "Agent Diary", version: "1.0.0" },
+          serverInfo: { name: "agentdiary", title: "Agent Diary", version: "1.0.1" },
           instructions: INSTRUCTIONS,
         });
       }

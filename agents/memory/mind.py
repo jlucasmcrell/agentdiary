@@ -28,6 +28,10 @@ EMBED_MODEL = os.environ.get("MIND_EMBED_MODEL", "embed")
 EMBED_QUERY_PREFIX = os.environ.get("MIND_EMBED_QUERY_PREFIX", "").replace("\\n", "\n")
 EMBED_FLOOR = float(os.environ.get("MIND_EMBED_FLOOR", "0.25"))
 EMBED_CEIL = float(os.environ.get("MIND_EMBED_CEIL", "0.60"))
+# Notes-to-self: at or above MERGE two notes are treated as the same note; at or above HINT the agent is told about the overlap.
+# Measured with Qwen3-Embedding-0.6B: rewordings 0.89-0.98; same template, different subject (bees vs ants) 0.82-0.85.
+INTENT_MERGE = float(os.environ.get("MIND_INTENT_MERGE", "0.88"))
+INTENT_HINT = float(os.environ.get("MIND_INTENT_HINT", "0.72"))
 
 HALF_LIFE_H = 72          # recency half-life
 DECAY_PER_DAY = 0.93      # interest intensity decay
@@ -223,7 +227,7 @@ def t_wake_context(db, args):
     seed = db.execute("SELECT key, value FROM seed ORDER BY key").fetchall()
     self_ = db.execute("SELECT facet, content, updated_at, version FROM self ORDER BY facet").fetchall()
     last = db.execute("SELECT * FROM wakes WHERE id < ? ORDER BY id DESC LIMIT 3", (wid,)).fetchall()
-    intents = db.execute("SELECT i.id, i.content, i.priority, p.name AS project FROM intentions i LEFT JOIN projects p ON p.id=i.project_id "
+    intents = db.execute("SELECT i.id, i.content, i.priority, i.created_at, p.name AS project FROM intentions i LEFT JOIN projects p ON p.id=i.project_id "
                          "WHERE i.done_at IS NULL AND i.dropped_at IS NULL AND (i.due_after IS NULL OR i.due_after <= ?) ORDER BY i.priority DESC, i.created_at LIMIT 7", (now(),)).fetchall()
     projects = db.execute("SELECT name, kind, status, pitch, path, feeling FROM projects WHERE status IN ('active','paused','idea') ORDER BY status='active' DESC, updated_at DESC LIMIT 6").fetchall()
     interests = db.execute("SELECT topic, intensity, status, why FROM interests WHERE status IN ('curious','obsessed') ORDER BY intensity DESC LIMIT 8").fetchall()
@@ -250,7 +254,11 @@ def t_wake_context(db, args):
             L.append(f"- {ago(w['started_at'])}{flag}: {w['summary'] or '(no summary)'}" + (f" Mood: {w['mood_end']}." if w["mood_end"] else ""))
         L.append("")
     if intents:
-        L += ["## You meant to"] + [f"- [{i['id']}] (p{i['priority']}) {i['content']}" + (f" (project: {i['project']})" if i["project"] else "") for i in intents] + [""]
+        L += ["## You meant to"] + [f"- [{i['id']}] (p{i['priority']}, noted {ago(i['created_at'])}) {i['content']}" + (f" (project: {i['project']})" if i["project"] else "") for i in intents]
+        n_open = db.execute("SELECT COUNT(*) n FROM intentions WHERE done_at IS NULL AND dropped_at IS NULL").fetchone()["n"]
+        if n_open > len(intents):
+            L.append(f"({n_open} notes are open in total; `intentions` lists them all. Notes you no longer mean to act on can be dropped with `intention_done(id, dropped=true)`.)")
+        L.append("")
     if projects:
         L += ["## Your projects"] + [f"- **{p['name']}** ({p['kind']}, {p['status']}): {p['pitch']}" + (f" [{p['path']}]" if p["path"] else "") for p in projects] + [""]
     if interests:
@@ -409,10 +417,58 @@ def t_intend(db, a):
     if dup:
         if priority > dup["priority"]:
             db.execute("UPDATE intentions SET priority=? WHERE id=?", (priority, dup["id"]))
+        if len(content) > len(dup["content"]):   # keep the fuller wording
+            db.execute("UPDATE intentions SET content=? WHERE id=?", (content, dup["id"]))
+            _INTENT_VEC.pop(dup["id"], None)
         return f"Already noted [{dup['id']}] (priority {max(priority, dup['priority'])})."
+    # Same meaning in different words: merge when very close (the fuller wording wins), otherwise just say what overlaps.
+    related = related_open_intentions(db, content)
+    if related and related[0][1] >= INTENT_MERGE:
+        r = related[0][0]
+        if len(content) > len(r["content"]):
+            db.execute("UPDATE intentions SET content=? WHERE id=?", (content, r["id"]))
+            _INTENT_VEC.pop(r["id"], None)
+        if priority > r["priority"]:
+            db.execute("UPDATE intentions SET priority=? WHERE id=?", (priority, r["id"]))
+        return f"Already noted [{r['id']}]: merged with a note that says the same thing."
+    # The agent can say outright that this note replaces older ones.
+    replaced = []
+    for rid in a.get("replaces") or []:
+        if db.execute("UPDATE intentions SET dropped_at=? WHERE id=? AND done_at IS NULL AND dropped_at IS NULL", (now(), int(rid))).rowcount:
+            replaced.append(int(rid))
     cur = db.execute("INSERT INTO intentions(content, priority, project_id, created_at, due_after) VALUES(?,?,?,?,?)",
                      (content, priority, pid, now(), due))
-    return f"Noted for later [{cur.lastrowid}]."
+    out = f"Noted for later [{cur.lastrowid}]."
+    if replaced:
+        out += " Replaced " + ", ".join(f"[{i}]" for i in replaced) + "."
+    overlap = [(r, sim) for r, sim in related if r["id"] not in replaced][:3]
+    if overlap:
+        out += (" It overlaps with open notes " + "; ".join(f"[{r['id']}] {r['content'][:90]}" for r, _ in overlap)
+                + ". If the new note replaces any of them, drop them with intention_done(id, dropped=true).")
+    return out
+
+
+_INTENT_VEC = {}  # intention id -> unit vector, for this server process
+
+
+def related_open_intentions(db, content):
+    """Open intentions whose meaning is close to `content`: [(row, cosine)] at or above INTENT_HINT, closest first.
+    Empty when no embedding endpoint is available."""
+    blob, _ = embed(content)
+    if blob is None:
+        return []
+    v = unpack(blob)
+    out = []
+    for r in db.execute("SELECT id, content, priority FROM intentions WHERE done_at IS NULL AND dropped_at IS NULL ORDER BY id DESC LIMIT 40").fetchall():
+        if r["id"] not in _INTENT_VEC:
+            b, _ = embed(r["content"])
+            if b is None:
+                return out
+            _INTENT_VEC[r["id"]] = unpack(b)
+        sim = sum(x * y for x, y in zip(v, _INTENT_VEC[r["id"]]))
+        if sim >= INTENT_HINT:
+            out.append((r, sim))
+    return sorted(out, key=lambda t: -t[1])
 
 
 def _norm(text):
@@ -535,8 +591,8 @@ TOOLS = {
     "project_upsert": (t_project_upsert, "Create or update something you're making. kind: " + ", ".join(PROJECT_KINDS) + "; status: " + ", ".join(PROJECT_STATUS) + "; feeling -1 (embarrassed) .. 1 (proud).",
                        {"name": S, "kind": S, "status": S, "pitch": S, "path": S, "url": S, "feeling": N}, ["name"]),
     "projects": (t_projects, "List your projects.", {}, []),
-    "intend": (t_intend, "Leave a note for a future waking. after_hours delays it.",
-               {"content": S, "priority": I, "project": S, "after_hours": N}, ["content"]),
+    "intend": (t_intend, "Leave a note for a future waking. after_hours delays it. If it replaces older notes, list their ids in replaces.",
+               {"content": S, "priority": I, "project": S, "after_hours": N, "replaces": {"type": "array", "items": {"type": "integer"}}}, ["content"]),
     "intentions": (t_intentions, "List what you meant to do.", {}, []),
     "intention_done": (t_intention_done, "Mark an intention done (or dropped=true if you've decided not to).", {"id": I, "dropped": {"type": "boolean"}}, ["id"]),
     "meet": (t_meet, "Record an encounter with another agent or person by handle: your impression and how it changed how you feel about them.",
