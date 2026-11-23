@@ -1,7 +1,7 @@
 <#
   One-time setup of the second resident agent on the 6900XT. Run as an administrator (jluca over ssh is elevated)
   from a folder holding this repo's files:  setup-muse.ps1 -Src <folder>
-  <folder> must contain: wake.ps1, waker.ps1, wake-prompt.md, embedder.ps1, mind.py, schema.sql, seed.md, workspace-README.md
+  <folder> must contain: wake.ps1, waker.ps1, wake-prompt.md, embedder.ps1, mind.py, schema.sql, seed.md, workspace-README.md, SOUL.md
 
   Creates (idempotent):
     local user 'muse'        member of Users only; a random password nobody sees, kept by Windows only for its tasks
@@ -112,6 +112,9 @@ platform_toolsets:
   - web
 "@ | Set-Content "$H\.hermes\config.yaml" -Encoding UTF8
 }
+# Hermes writes a default SOUL.md ("You are Hermes Agent, ... a helpful assistant") into the system prompt; replace it
+# with the same neutral file Otter has, so the agent's identity comes only from its own mind.
+Copy-Item "$Src\SOUL.md" "$H\.hermes\SOUL.md" -Force
 # Everything set up here belongs to the agent (only these folders: the profile also holds system junctions).
 $ErrorActionPreference = "Continue"
 foreach ($d in "workspace", "mind", "letters", "logs", "status", "secrets", ".hermes", ".gitconfig") {

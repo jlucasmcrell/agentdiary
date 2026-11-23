@@ -102,7 +102,10 @@ function StartModel($holder) {
   $a = @("-m", $m.model, "--jinja", "-c", "$($m.ctx)", "--host", "127.0.0.1", "--port", "$port", "-a", $m.alias) + @($m.extra_args)
   if ($m.mmproj) { $a += @("--mmproj", $m.mmproj) }
   $script:proc = Start-Process -FilePath $Cfg.llama_server -ArgumentList $a -WindowStyle Hidden -PassThru -RedirectStandardError "$Root\llama.log"
-  for ($i = 0; $i -lt 180; $i++) {
+  # A cold load (model not in the file cache, e.g. after the other agent's model was loaded) can take many minutes.
+  $limit = if ($Cfg.load_timeout_s) { [int]$Cfg.load_timeout_s } else { 1800 }
+  $t0 = Get-Date
+  while (((Get-Date) - $t0).TotalSeconds -lt $limit) {
     Start-Sleep 1
     if ($script:proc.HasExited) { return $false }
     if (BusyReason) { return $false }   # pre-empted while loading

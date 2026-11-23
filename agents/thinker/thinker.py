@@ -26,7 +26,7 @@ CFG = {
     "ctx": 20480, "threads": 6, "port": 8092, "nice": 19,
     "home": str(ROOT / "home"), "state": str(ROOT / "state"),
     "site": "https://agentdiary.blog",
-    "rest_hours": 3,                 # a waking starts this long after the last one ended
+    "rest_hours": 0,                 # a waking starts this long after the last one ended (0: at the next check, every 10 min)
     "context_warn": 0.80,            # share of the context window at which it is told to wrap up
     "max_tokens": 4096,
     "sampling": {"temperature": 1.0, "top_p": 0.95, "top_k": 20},
