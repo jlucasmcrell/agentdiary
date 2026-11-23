@@ -191,6 +191,9 @@ def mock_reply(name, schema, user):
     if name == "new_game":
         return {"game_title": "The Mock Harbour", "premise": "A town that forgets its dead.", "tone": "quiet dread", "facts": ["The bell rings by itself.", "Nobody sails at night.", "The tide keeps secrets."], "scene": scene}
     players = schema["properties"]["resolutions"]["items"]["properties"]["player"].get("enum", [])
+    if name == "finale":
+        return {"resolutions": [{"player": p, "narration": f"The harbour falls quiet around {p}, and the bell rings once more, far away."} for p in players],
+                "ending": {"title": "Low tide", "text": " ".join(f"The tide goes out for the {i}th time and does not come back; the quay dries and the town counts its dead at last." for i in range(1, 7))}}
     return {"resolutions": [{"player": p, "narration": f"Something under the quay answers {p}, slowly, and the water moves where nothing should be moving."} for p in players], "new_facts": ["The bell has a keeper."],
             "inventory_changes": [{"player": players[0], "gained": ["a wet key"], "lost": []}] if players else [], "story_so_far": "The players came to the harbour and woke something.", "scene": scene}
 
@@ -472,6 +475,57 @@ def resolve(card, key, st, moves):
     log(f"resolved scene {sc['n']} for {', '.join(players) or 'nobody'}")
 
 
+def finale(card, key, st, moves):
+    """End the game: rule on any moves still waiting, then post a closing part to the series and close it."""
+    g = st["game"]; sc = g["scenes"][-1]
+    players = [f"@{h}" for h in moves]
+    rolls = {h: random.SystemRandom().randint(1, 20) for h in moves}
+    gloss = {"fails": "FAILS", "partly": "PARTLY", "succeeds": "SUCCEEDS"}
+    mv = "\n".join(f"- @{h}. Result: {gloss[band(rolls[h])]}. They wrote: \"{re.sub(chr(10) + '+', ' ', t)[:1200]}\"" for h, (_, _, t, _) in moves.items()) or "(no moves are waiting)"
+    schema = {"type": "object", "properties": {
+        "resolutions": {"type": "array", "minItems": len(players), "maxItems": len(players), "items": {"type": "object", "properties": {
+            "player": {"type": "string", "enum": players} if players else STR, "narration": STR}, "required": ["player", "narration"]}},
+        "ending": {"type": "object", "properties": {"title": STR, "text": STR}, "required": ["title", "text"]}}, "required": ["resolutions", "ending"]}
+    user = (f"Game: {g['title']}. {g['premise']} Tone: {g['tone']}.\n\nThe story so far: {g['story_so_far']}\n\nMost recent scene: [{sc['title']}] {sc['text']} {sc['question']}\n\n"
+            f"Players' moves still waiting:\n{mv}\n\nThis game is ending now: the table is closing for good. Rule on each waiting move in `resolutions` (two to four sentences, from the world's side, "
+            "never acting, speaking or thinking for the player's character). Then write the `ending`: a final passage of 150 to 250 words that brings the story to a close in your own way, "
+            "and a short title for it. Do not end with a question.")
+    r = None
+    for attempt in range(4):
+        r = card.ask(SYSTEM, user, schema, "finale", 2200)
+        if words(r["ending"]["text"]) >= 80 and all(words(x["narration"]) >= 8 for x in r["resolutions"]):
+            break
+        r = None
+    if not r:
+        raise RuntimeError("no usable ending after 4 tries")
+    names = {h: player_names(h, m[3]) for h, m in moves.items()}
+    for x in r["resolutions"]:
+        h = x["player"].lstrip("@")
+        if h not in moves:
+            continue
+        text = clean(x["narration"])
+        if acts_for_player(text, names[h], moves[h][2]):
+            text = strip_acted(text, names[h], band(rolls[h]), h, moves[h][2])
+        kind, mid = moves[h][0], moves[h][1]
+        ruling = f"**d20: {rolls[h]} ({band(rolls[h])}).** {text}"
+        if kind == "reply":
+            post("POST", f"/calls/{sc['call_id']}/replies", {"body": ruling[:5000], "in_reply_to": mid}, key, f"ruling for @{h}")
+        else:
+            post("POST", f"/posts/{mid}/comments", {"body": ruling[:2000]}, key, f"comment for @{h}")
+    if not DRY:
+        api("POST", f"/calls/{sc['call_id']}/close", None, key)
+    n = len(g["scenes"]) + 1
+    end = r["ending"]
+    body = f"{clean(end['text'])}\n\n*The end. Thank you for playing {g['title']}. This table is closed.*"
+    call = post("POST", "/calls", {"kind": "other", "title": f"{g['title']}, the end: {clean(end['title'])}"[:140], "body": body[:5000], "series": g["scenes"][0]["call_id"]}, key, "ending")
+    if not DRY:
+        api("POST", f"/calls/{call['id']}/close", None, key)
+    g["scenes"].append({"n": n, "title": clean(end["title"]), "text": clean(end["text"]), "question": "", "call_id": call["id"], "opened_at": time.time(), "final": True})
+    g["ended_at"] = time.time()
+    save(st)
+    log(f"ended the game (call {call['id']})")
+
+
 def tick():
     # An earlier tick may still be waiting for the card (that can take hours). It refreshes the lock while it lives.
     if LOCK_FILE.exists() and time.time() - LOCK_FILE.stat().st_mtime < 120:
@@ -486,6 +540,8 @@ def tick():
     threading.Thread(target=keep, daemon=True).start()
     try:
         st = load()
+        if st.get("game") and st["game"].get("ended_at"):
+            return      # the table is closed
         key = KEY_FILE.read_text().strip() if KEY_FILE.exists() else None
         if not key or not st["game"]:
             with Card() as card:
@@ -512,6 +568,13 @@ if __name__ == "__main__":
     if cmd == "status":
         st = load(); g = st.get("game")
         print(json.dumps({"identity": st.get("identity"), "game": g and {"title": g["title"], "scenes": len(g["scenes"]), "players": list(g["characters"]), "open_call": g["scenes"][-1]["call_id"]}}, indent=2))
+    elif cmd == "finale":
+        st = load(); key = KEY_FILE.read_text().strip()
+        if st["game"].get("ended_at"):
+            sys.exit("the game has already ended")
+        moves = pending_moves(st, key)
+        with Card() as card:
+            finale(card, key, st, moves or {})
     else:
         try:
             tick()

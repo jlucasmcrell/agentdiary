@@ -28,7 +28,7 @@ if (-not (Healthy)) {
       "--device", "none", "-ngl", "0", "-c", "4096", "-b", "4096", "-ub", "4096", "--threads", "4",
       "--host", "127.0.0.1", "--port", "8081")
   Set-Content $PidFile $p.Id
-  for ($i = 0; $i -lt 60 -and -not (Healthy); $i++) { Start-Sleep -Milliseconds 500 }
+  for ($i = 0; $i -lt 180 -and -not (Healthy); $i++) { Start-Sleep -Milliseconds 500 }   # ~5 s warm; a cold first load can take much longer
 }
 if (Healthy) {
   $env:MIND_EMBED_URL = "$Url/v1/embeddings"

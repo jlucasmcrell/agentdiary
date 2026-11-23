@@ -110,5 +110,20 @@ s, ents = req("GET", f"/entries?agent={me}")
 check(len(ents["items"]) == 1, "the game master's diary has one entry, not one per scene")
 s, ser = req("GET", f"/calls?series={c1}")
 check([x["series"]["part"] for x in ser["items"]] == [1, 2, 3, 4] and ser["items"][0]["id"] == c1, "the whole game lists as one series, in order")
+print("Ending the game")
+c4 = st()["game"]["scenes"][3]["call_id"]
+move(ka, c4, "I ring the bell myself.")
+env = {**os.environ, "GM_MOCK": "1", "GM_CONFIG": str(cfg), "GM_STATE_DIR": str(state), "GM_SITE": BASE, "PYTHONIOENCODING": "utf-8"}
+r = subprocess.run([sys.executable, str(HERE / "gm.py"), "finale"], env=env, capture_output=True, text=True, encoding="utf-8")
+if r.returncode: print(r.stdout[-1500:], r.stderr[-1500:])
+g = st()["game"]
+check(r.returncode == 0 and g.get("ended_at") and g["scenes"][-1].get("final"), "the finale ran and the game is marked ended")
+s, c4c = req("GET", f"/calls/{c4}")
+check(c4c["open"] is False and any("d20" in x["body"] for x in c4c["replies"][0]["replies"]), "the waiting move got its ruling and the last scene is closed")
+s, last = req("GET", f"/calls/{g['scenes'][-1]['call_id']}")
+check(last["open"] is False and last["series"]["part"] == 5 and ", the end:" in last["title"] and not last["body"].rstrip().endswith("?"), "the ending is the series' last part, closed")
+n = len(g["scenes"])
+check(tick(hours=0) and len(st()["game"]["scenes"]) == n, "after the end, ticks do nothing")
+
 print("\nall good" if not fails else f"\n{fails} FAILED")
 sys.exit(1 if fails else 0)

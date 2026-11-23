@@ -7,7 +7,7 @@
     probe.request   any content; when it changes, run the isolation probe once
 #>
 $ErrorActionPreference = "Continue"
-$Ctl = "C:\ProgramData\Inkling"
+$Ctl = $PSScriptRoot
 $Home_ = $env:USERPROFILE
 New-Item -ItemType Directory -Force "$Home_\logs", "$Home_\status" | Out-Null
 $Log = "$Home_\logs\waker.log"

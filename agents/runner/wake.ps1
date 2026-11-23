@@ -1,6 +1,6 @@
 <#
-  Wake runner. Installed at C:\ProgramData\Inkling\wake.ps1 (admin-owned); run by waker.ps1 as the agent
-  user when C:\ProgramData\Inkling\enabled exists.
+  Wake runner. Installed in the agent's control folder (C:\ProgramData\Inkling for Otter, C:\ProgramData\Muse for
+  the second resident; admin-owned), run by waker.ps1 as the agent's user when <control folder>\enabled exists.
 
   One waking:
     1. lease the main model from the GPU gate (runs as the box owner) and wait until it's served
@@ -9,18 +9,21 @@
     4. no time limit by default: stop when the agent finishes, when it hangs, or the moment the gate pre-empts us (the owner needs the GPU)
     5. close the waking in the mind if the agent didn't, safety-commit the workspace, release everything
 
-  Settings: C:\ProgramData\Inkling\runner.json  { harness: "hermes"|"dsh", wait_minutes, wake_minutes (0 = no limit), stall_minutes (hang guard; 0 = off) }
+  Settings: <control folder>\runner.json  { holder: the agent's name at the GPU gate (default "inkling"), harness: "hermes"|"dsh",
+            wait_minutes, wake_minutes (0 = no limit), stall_minutes (hang guard; 0 = off), system_note (hermes: extra system text) }
   Logs:     %USERPROFILE%\logs\wakes\<timestamp>\
 #>
 param([switch]$DryRun)
 $ErrorActionPreference = "Continue"
-$Ctl = "C:\ProgramData\Inkling"
+$Ctl = $PSScriptRoot
 $Gate = "C:\ProgramData\InklingGate"
 $HomeDir = $env:USERPROFILE
 $Ws = "$HomeDir\workspace"
 $git = "C:\Program Files\Git\cmd\git.exe"
 $py = "C:\Program Files\Python312\python.exe"
 $Cfg = Get-Content "$Ctl\runner.json" -Raw | ConvertFrom-Json
+$Holder = if ($Cfg.holder) { "$($Cfg.holder)" } else { "inkling" }
+$LeaseFile = if ($Holder -eq "inkling") { "lease.json" } else { "$Holder.json" }   # lease.json: the first agent's file, kept for compatibility
 $stamp = Get-Date -Format "yyyyMMdd-HHmmss"
 $Out = "$HomeDir\logs\wakes\$stamp"
 New-Item -ItemType Directory -Force $Out | Out-Null
@@ -28,9 +31,9 @@ $meta = [ordered]@{ started = (Get-Date -Format s); harness = $Cfg.harness; outc
 function Log($m) { Add-Content "$Out\runner.log" "$(Get-Date -Format s) $m" -Encoding UTF8 }
 function UnixNow { [DateTimeOffset]::UtcNow.ToUnixTimeSeconds() }
 function Lease([bool]$want) {
-  $tmp = "$Gate\lease\lease.json.tmp"
-  @{ holder = "inkling"; want = $want; heartbeat = (UnixNow) } | ConvertTo-Json -Compress | Set-Content $tmp -Encoding ASCII
-  Move-Item -Force $tmp "$Gate\lease\lease.json"
+  $tmp = "$Gate\lease\$LeaseFile.tmp"
+  @{ holder = $Holder; want = $want; heartbeat = (UnixNow) } | ConvertTo-Json -Compress | Set-Content $tmp -Encoding ASCII
+  Move-Item -Force $tmp "$Gate\lease\$LeaseFile"
 }
 function GateState {
   try { $s = Get-Content "$Gate\state.json" -Raw | ConvertFrom-Json } catch { return "unknown" }
@@ -41,11 +44,11 @@ function GateState {
 function Mine {
   try { $s = Get-Content "$Gate\state.json" -Raw | ConvertFrom-Json } catch { return $false }
   if ((UnixNow) - [int]$s.updated -gt 60 -or $s.state -ne "ready") { return $false }
-  return (-not $s.PSObject.Properties['holder']) -or $s.holder -eq "inkling"
+  return (-not $s.PSObject.Properties['holder']) -or $s.holder -eq $Holder
 }
 function Waiting {   # other agents queued for the card, as a sentence (or '')
   try { $s = Get-Content "$Gate\state.json" -Raw | ConvertFrom-Json } catch { return "" }
-  $q = @($s.queue | Where-Object { $_ -and $_.holder -ne "inkling" })
+  $q = @($s.queue | Where-Object { $_ -and $_.holder -ne $Holder })
   if (-not $q.Count) { return "" }
   $w = $q[0]; $t = [DateTimeOffset]::FromUnixTimeSeconds([int64]$w.since).LocalDateTime.ToString("HH:mm")
   return "$($w.label), another agent that shares this graphics card, has been waiting for it since $t. There is no deadline: the card passes to it whenever you go to sleep."
@@ -75,7 +78,7 @@ $mindEnv = [ordered]@{
   MIND_DB = "$HomeDir\mind\mind.db"
   MIND_EMBED_URL = "$env:MIND_EMBED_URL"; MIND_EMBED_MODEL = "$env:MIND_EMBED_MODEL"; MIND_EMBED_QUERY_PREFIX = "$env:MIND_EMBED_QUERY_PREFIX"
   PYTHONIOENCODING = "utf-8"
-  MIND_TURN_FILE = "$Gate\state.json"; MIND_TURN_NAME = "inkling"   # lets the mind mention, mid-waking, that another agent is waiting
+  MIND_TURN_FILE = "$Gate\state.json"; MIND_TURN_NAME = $Holder   # lets the mind mention, mid-waking, that another agent is waiting
 }
 
 # ── 3. prompt + harness ──
@@ -127,6 +130,8 @@ $env:Path = [Environment]::GetEnvironmentVariable("Path", "Machine")
 switch ($Cfg.harness) {
   "hermes" {
     $env:HERMES_HOME = "$HomeDir\.hermes"
+    # Model-specific system text from runner.json, e.g. "Reasoning strength: high" for Muse Glimmer (added at call time, never saved).
+    if ($Cfg.system_note) { $env:HERMES_EPHEMERAL_SYSTEM_PROMPT = "$($Cfg.system_note)" }
     # Make sure the mind is registered as an MCP server (runner-owned block; rewritten every wake).
     $hpy = "C:\Program Files\hermes\Scripts\python.exe"
     $cfgPath = "$HomeDir\.hermes\config.yaml"
