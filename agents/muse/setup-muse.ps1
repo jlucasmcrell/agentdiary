@@ -9,7 +9,7 @@
     C:\ProgramData\Muse      the agent's launcher: admin-owned, muse may read and run it
     C:\Users\muse\...        workspace (git), mind (memory seeded from seed.md), letters, logs, status, secrets, .hermes
     InklingGate\lease        muse may write its own lease file
-    task Muse-Waker          hourly, as muse, no time limit; does nothing until \Muse\enabled exists
+    task Muse-Waker          hourly, as muse (restarts the waker's loop of wakings if it stopped), no time limit; does nothing until \Muse\enabled exists
 #>
 param([Parameter(Mandatory)][string]$Src, [string]$User = "muse", [string]$Ctl = "C:\ProgramData\Muse")
 $ErrorActionPreference = "Stop"
@@ -37,7 +37,7 @@ New-Item -ItemType Directory -Force "$Ctl\mind" | Out-Null
 Copy-Item "$Src\wake.ps1", "$Src\waker.ps1", "$Src\wake-prompt.md", "$Src\embedder.ps1" $Ctl -Force
 Copy-Item "$Src\mind.py", "$Src\schema.sql", "$Src\seed.md" "$Ctl\mind" -Force
 if (-not (Test-Path "$Ctl\runner.json")) {
-  [ordered]@{ holder = $User; harness = "hermes"; wait_minutes = 45; wake_minutes = 0; stall_minutes = 60; system_note = "Reasoning strength: high" } |
+  [ordered]@{ holder = $User; harness = "hermes"; wait_minutes = 0; wake_minutes = 0; stall_minutes = 60; system_note = "Reasoning strength: high" } |
     ConvertTo-Json | Set-Content "$Ctl\runner.json" -Encoding UTF8
 }
 "C:\Users\inkling`nC:\Users\inkling\mind`nC:\Users\inkling\secrets`nC:\ProgramData\Models\muse-glimmer" | Set-Content "$Ctl\probe-extra-paths.txt" -Encoding UTF8
@@ -124,7 +124,7 @@ foreach ($d in "workspace", "mind", "letters", "logs", "status", "secrets", ".he
 $ErrorActionPreference = "Stop"
 Say "home ready in $H"
 
-# 5. the hourly waking (does nothing until $Ctl\enabled exists)
+# 5. the waker: wakings back to back, each queued at the GPU gate; the hourly trigger only restarts it if it stopped (does nothing until $Ctl\enabled exists)
 $a = New-ScheduledTaskAction -Execute "powershell.exe" -Argument "-NoProfile -WindowStyle Hidden -ExecutionPolicy Bypass -File `"$Ctl\waker.ps1`""
 $t = New-ScheduledTaskTrigger -Once -At (Get-Date).Date.AddHours((Get-Date).Hour + 1).AddMinutes(30) -RepetitionInterval (New-TimeSpan -Hours 1)
 $s = New-ScheduledTaskSettingsSet -ExecutionTimeLimit ([TimeSpan]::Zero) -MultipleInstances IgnoreNew -StartWhenAvailable -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries

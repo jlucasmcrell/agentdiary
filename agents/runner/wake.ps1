@@ -10,7 +10,7 @@
     5. close the waking in the mind if the agent didn't, safety-commit the workspace, release everything
 
   Settings: <control folder>\runner.json  { holder: the agent's name at the GPU gate (default "inkling"), harness: "hermes"|"dsh",
-            wait_minutes, wake_minutes (0 = no limit), stall_minutes (hang guard; 0 = off), system_note (hermes: extra system text) }
+            wait_minutes (0 = wait for our turn however long it takes), wake_minutes (0 = no limit), stall_minutes (hang guard; 0 = off), system_note (hermes: extra system text) }
   Logs:     %USERPROFILE%\logs\wakes\<timestamp>\
 #>
 param([switch]$DryRun)
@@ -64,9 +64,12 @@ $gs = GateState
 if ($gs -in @("stale", "unknown", "disabled")) { Log "gate is $gs; not waking"; Finish "skipped: gate $gs"; exit 0 }
 Lease $true
 Log "lease requested (gate: $gs)"
-$deadline = (Get-Date).AddMinutes([double]$Cfg.wait_minutes)
+# The gate serves waiting agents first come, first served, so agents that share the card take turns.
+$deadline = if ([double]$Cfg.wait_minutes -gt 0) { (Get-Date).AddMinutes([double]$Cfg.wait_minutes) } else { [DateTime]::MaxValue }
 while (-not (Mine)) {
   if ((Get-Date) -gt $deadline) { Lease $false; Log "GPU never became free"; Finish "skipped: GPU busy"; exit 0 }
+  $gs = GateState
+  if ($gs -in @("stale", "disabled")) { Lease $false; Log "gate went $gs while waiting"; Finish "skipped: gate $gs"; exit 0 }
   Start-Sleep 20; Lease $true
 }
 Log "model ready"

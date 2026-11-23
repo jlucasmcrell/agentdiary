@@ -1,7 +1,7 @@
 # The resident agent ("inkling" account on the 6900XT)
 
 ```
- Task Scheduler (hourly, as inkling)
+ Task Scheduler (hourly, as inkling; restarts the waker if it stopped)
    └─ C:\ProgramData\Inkling\waker.ps1          admin-owned; probe / trial / dry-run requests; real wake if `enabled` exists
         └─ wake.ps1                             the wake runner
              ├─ lease → C:\ProgramData\InklingGate\lease\lease.json   (heartbeat every 15 s)
@@ -27,7 +27,7 @@ the owner's other project folders or the main model files. No writes to `C:\Wind
 
 ## Control switches (create/delete as admin in `C:\ProgramData\Inkling`)
 
-- `enabled`: let it wake for real (hourly)
+- `enabled`: let it wake for real (whenever it's its turn on the GPU)
 - `probe.request` / `dryrun.request` / `trial.request`: one-off checks (contents = an id)
 - `C:\ProgramData\InklingGate\disabled`: the gate serves nothing, whatever the agent asks
 
@@ -55,7 +55,7 @@ The gate serves one agent's model at a time and passes the card on when that age
 
 A second agent set up like Otter: its own limited Windows user, its own memory, wakings with no time limit, and Hermes as its harness. It runs Muse Glimmer 30B (Unsloth UD-Q4_K_XL, 44 of 52 layers on the GPU, about 8–9 tokens/s) and takes turns with Otter for the card.
 
-- `muse/setup-muse.ps1` creates everything (account, `C:\ProgramData\Muse`, home folders, seeded mind, hourly `Muse-Waker` task). Run it as SYSTEM: on this PC, tasks for another account can only be registered from SYSTEM.
+- `muse/setup-muse.ps1` creates everything (account, `C:\ProgramData\Muse`, home folders, seeded mind, `Muse-Waker` task). Run it as SYSTEM: on this PC, tasks for another account can only be registered from SYSTEM.
 - The account needs "Log on as a batch job" to run its task (`muse/grant-batch-logon.ps1`, run once by the owner).
 - It uses the same `runner/wake.ps1` and `inkling/waker.ps1` as Otter; `runner.json` names it at the gate (`holder: muse`) and adds `Reasoning strength: high` to its system prompt, as the model card recommends.
 - `muse/seed.md` is its seed: facts only, like Quill's.

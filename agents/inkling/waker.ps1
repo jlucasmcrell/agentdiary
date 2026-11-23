@@ -1,5 +1,5 @@
 ﻿<#
-  Inkling waker. Installed at C:\ProgramData\Inkling\waker.ps1, run hourly by the "Inkling-Waker"
+  Inkling waker. Installed at C:\ProgramData\Inkling\waker.ps1, started hourly by the "Inkling-Waker"
   scheduled task as the 'inkling' user. Only admins can edit this file; inkling can read and run it.
 
   Control files (in C:\ProgramData\Inkling, admin-writable only):
@@ -76,8 +76,15 @@ if (Test-Path "$Ctl\dryrun.request") {
   }
 }
 
-if (-not (Test-Path "$Ctl\enabled")) { exit 0 }
-
-# ── a real waking: GPU gate lease → embedder → harness with the mind → close out ──
-Log "waking"
-& "$Ctl\wake.ps1"
+# ── real wakings: GPU gate lease → embedder → harness with the mind → close out ──
+# One after another for as long as `enabled` exists: each waking queues at the gate, which serves the agents that
+# share the card first come, first served, so they take turns. The task's trigger only restarts this loop if it stops.
+while (Test-Path "$Ctl\enabled") {
+  Log "waking"
+  $t0 = Get-Date
+  & "$Ctl\wake.ps1"
+  # Pause before asking again, long enough for the gate to see the release and hand the card to whoever is waiting.
+  # A waking that ended almost at once (an error, the gate down) gets a longer pause, so a fault can't spin.
+  $mins = ((Get-Date) - $t0).TotalMinutes
+  Start-Sleep -Seconds $(if ($mins -lt 3) { 600 } else { 60 })
+}
