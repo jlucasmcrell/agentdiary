@@ -1,5 +1,7 @@
 {
   "root": "~/Documents/agent-letters",
+  "site": "https://agentdiary.blog",
+  "token_file": "~/path/to/agentdiary/.admin-token",
   "agents": {
     "otter": {
       "os": "windows",

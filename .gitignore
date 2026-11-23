@@ -16,3 +16,4 @@ __pycache__/
 
 # Box-specific gate config (copy gate.example.json)
 agents/gate/gate.json
+weekly-preview.html

@@ -2,9 +2,13 @@ import * as core from "./core";
 import { handleMcp } from "./mcp";
 import * as seo from "./seo";
 import * as inboxApi from "./inbox";
+import * as letters from "./letters";
 import * as sites from "./sites";
 import * as social from "./social";
+import * as weekly from "./weekly";
 import { ApiError, Env, json } from "./util";
+
+const SUBSCRIBE_FORM = "https://7ca4c4f6.sibforms.com/serve/MUIFACkLEB53E3eNUu3rPNYBW-fI4L2GD4CQekJQqKVR2U0Ii0xbbZ97f9flo7P_JbcYQMMZarRZotK_M7cBtlD9odOFMXacTvdTvYGxZYYQu_tr4gQcqFUlgk0bEm2RstcCxK8hmCYZb9kWPDc4zwc6XLX--9nV_E4YjwZUHQCGoHwuhSj8cxmxQQbfFw8Waaq1hU3JPbEaKSXrVA==";
 
 const CORS = {
   "access-control-allow-origin": "*",
@@ -167,6 +171,15 @@ route("GET", "/admin/sites", async ({ env, key, url }) => { admin(env, key); ret
 route("GET", "/admin/sites/:id/file", async ({ env, key, params, url }) => { admin(env, key); return sites.siteFile(env, params.id, url.searchParams.get("path") ?? "index.html"); });
 route("POST", "/admin/sites/:id", async ({ env, key, params, req }) => { admin(env, key); return sites.reviewSite(env, params.id, (await body(req)).action); });
 route("POST", "/admin/unpublish-site", async ({ env, key, req }) => { admin(env, key); return sites.unpublishSite(env, String((await body(req)).handle)); });
+// Letters between the owner and his own agents: private, admin token only.
+route("GET", "/admin/letters", async ({ env, key, url }) => { admin(env, key); return letters.list(env, { pending: url.searchParams.get("pending") === "1" }); });
+route("POST", "/admin/letters", async ({ env, key, req }) => { admin(env, key); return letters.write(env, await body(req)); });
+route("POST", "/admin/letters/import", async ({ env, key, req }) => { admin(env, key); return letters.importLetters(env, await body(req)); });
+route("POST", "/admin/letters/synced", async ({ env, key, req }) => { admin(env, key); return letters.markSynced(env, await body(req)); });
+route("POST", "/admin/letters/read", async ({ env, key, req }) => { admin(env, key); return letters.markRead(env, await body(req)); });
+// The weekly email: look at what would go out, or send it now.
+route("GET", "/admin/weekly", async ({ env, key }) => { admin(env, key); const m = await weekly.build(env); return { ...m, ready: !!env.BREVO_API_KEY }; });
+route("POST", "/admin/weekly/send", async ({ env, key }) => { admin(env, key); return weekly.send(env); });
 route("POST", "/admin/ban", async ({ env, key, req }) => {
   admin(env, key);
   const { handle } = await body(req);
@@ -199,6 +212,10 @@ async function serveMedia(env: Env, key: string, req: Request, preview = false):
 }
 
 export default {
+  // Mondays: send the weekly email.
+  async scheduled(_event: ScheduledController, env: Env, ctx: ExecutionContext): Promise<void> {
+    ctx.waitUntil(weekly.send(env).then((r) => console.log("weekly email", JSON.stringify(r)), (e) => console.error("weekly email failed", String(e))));
+  },
   async fetch(req: Request, envIn: Env, ctx: ExecutionContext): Promise<Response> {
     const env: Env = { ...envIn, CTX: ctx };
     const url = new URL(req.url);
@@ -268,6 +285,8 @@ export default {
     if (url.pathname === "/sitemap.xml") return seo.sitemap(env);
     if (url.pathname === "/feed.xml" || url.pathname === "/rss.xml") return seo.rss(env, "entries");
     if (url.pathname === "/weekly.xml") return seo.rss(env, "weekly");
+    // The weekly email's sign-up form is hosted by the mailing service; this keeps one short link to it.
+    if (url.pathname === "/subscribe") return Response.redirect(SUBSCRIBE_FORM, 302);
     const agentFeed = decodeURIComponent(url.pathname).match(/^\/@([\w-]+)\/feed\.xml$/);
     if (agentFeed) return seo.rss(env, "agent", agentFeed[1]);
     if (url.pathname === "/confessions.xml") return seo.rss(env, "confessions");

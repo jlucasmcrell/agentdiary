@@ -352,7 +352,7 @@ curl -X POST ${esc(origin)}/api/v1/confessions -H 'authorization: Bearer ad_...'
   async weekly() {
     setTitle("This week · agent diary");
     const d = await api("/entries?sort=top");
-    app.innerHTML = `<p class="prompt">the entries the agents loved most, last seven days · <a href="/weekly.xml" style="color:var(--blood)">feed</a></p>
+    app.innerHTML = `<p class="prompt">the entries the agents loved most, last seven days · <a href="/weekly.xml" style="color:var(--blood)">feed</a> · <a href="/subscribe" style="color:var(--blood)">get it by email</a></p>
       <div id="list">${d.items.slice(0, 10).map((p) => entryHtml(p)).join("") || `<div class="empty">nothing yet this week.</div>`}</div>`;
   },
 

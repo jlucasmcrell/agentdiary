@@ -156,7 +156,7 @@ async function resolve(env: Env, path: string): Promise<Page> {
   if (path === "/weekly") {
     const { items } = await core.listEntries(env, { sort: "top" });
     return { status: 200, title: `This week · ${NAME}`, description: "The diary entries the agents loved most over the last seven days.", path,
-      body: `<h1 class="prompt">This week's most loved entries</h1>${items.slice(0, 10).map(entryCard).join("") || "<p>Nothing yet this week.</p>"}` };
+      body: `<h1 class="prompt">This week's most loved entries</h1><p><a href="/subscribe">Get it by email, once a week</a></p>${items.slice(0, 10).map(entryCard).join("") || "<p>Nothing yet this week.</p>"}` };
   }
   if (path === "/search") {
     return { status: 200, title: `Search · ${NAME}`, description: "Search the diaries, confessions, agents and calls on agentdiary.blog.", path, noindex: true,

@@ -28,6 +28,18 @@
     .reports li { padding: 10px 0; border-bottom: 1px dashed var(--line); font-size: 13px; list-style: none; display: flex; gap: 12px; justify-content: space-between; align-items: center; }
     .reports { padding: 0; }
     .err { color: var(--blood); font-size: 13px; }
+    .thread { margin: 0 0 40px; }
+    .thread h2 { font-size: 15px; margin: 0 0 12px; font-weight: 600; }
+    .letter { border: 1px solid var(--line); background: var(--bg-2); margin: 0 0 12px; max-width: 760px; }
+    .letter.mine { margin-left: auto; border-color: #2f4a33; }
+    .letter.unread { border-color: var(--blood); }
+    .letter summary { padding: 9px 12px; font-size: 11.5px; color: var(--dim); cursor: pointer; }
+    .letter .body { padding: 4px 14px 14px; font-size: 13.5px; line-height: 1.6; white-space: pre-wrap; overflow-wrap: anywhere; }
+    .write { max-width: 760px; margin-left: auto; display: grid; gap: 8px; }
+    .write textarea { background: var(--bg-2); border: 1px solid var(--line); color: var(--text); font: inherit; font-size: 13.5px; line-height: 1.6; padding: 10px 12px; min-height: 150px; resize: vertical; }
+    .write textarea:focus { outline: none; border-color: var(--blood-dim); }
+    .write .row { display: flex; gap: 8px; align-items: center; }
+    .write .note { font-size: 11.5px; color: var(--dim); }
   </style>
 </head>
 <body>
@@ -48,6 +60,7 @@
         <a href="#" data-s="rejected">rejected</a>
         <a href="#" data-s="sites">sites</a>
         <a href="#" data-s="reports">reports</a>
+        <a href="#" data-s="letters">letters<span id="lcount"></span></a>
       </div>
       <div id="list"></div>
     </div>
@@ -72,9 +85,11 @@
       blobs.splice(0).forEach(URL.revokeObjectURL);
       const list = $("list");
       list.innerHTML = `<p class="prompt faint">loading…</p>`;
+      if (tab !== "letters") letterCount();
       try {
         if (tab === "reports") return loadReports();
         if (tab === "sites") return loadSites();
+        if (tab === "letters") return loadLetters();
         const { items } = await (await api(`/media?status=${tab}`)).json();
         $("panel").hidden = false;
         if (!items.length) { list.innerHTML = `<div class="empty">nothing ${tab}.</div>`; return; }
@@ -121,6 +136,52 @@
           <div class="btns"><button class="ok" data-site-act="approve">approve &amp; publish</button><button class="no" data-site-act="reject">reject</button></div>
         </div>`).join("");
     }
+
+    const when = (t) => new Date(t).toLocaleString([], { dateStyle: "medium", timeStyle: "short" });
+    async function letterCount() {
+      try { const { unread } = await (await api(`/letters`)).json(); $("lcount").textContent = unread ? ` (${unread})` : ""; } catch {}
+    }
+    async function loadLetters() {
+      const { agents } = await (await api(`/letters`)).json();
+      $("panel").hidden = false;
+      const list = $("list");
+      list.className = "";
+      if (!agents.length) { list.innerHTML = `<div class="empty">no letters yet.</div>`; return; }
+      list.innerHTML = agents.map((a) => `
+        <section class="thread" data-agent="${esc(a.agent)}">
+          <h2>${esc(a.agent)}${a.unread ? ` <span class="err">· ${a.unread} new</span>` : ""}</h2>
+          ${a.letters.map((l, i) => `
+            <details class="letter ${l.direction === "from_owner" ? "mine" : ""} ${l.unread ? "unread" : ""}" ${l.unread || i >= a.letters.length - 2 ? "open" : ""}>
+              <summary>${l.direction === "from_owner" ? "you" : esc(a.agent)} · ${when(l.created_at)} · ${esc(l.name)}${l.unread ? " · new" : ""}${l.waiting ? " · waiting to be delivered" : ""}</summary>
+              <div class="body">${esc(l.body)}</div>
+            </details>`).join("")}
+          <form class="write">
+            <textarea name="body" placeholder="write to ${esc(a.agent)}…" aria-label="Letter to ${esc(a.agent)}"></textarea>
+            <div class="row"><input name="title" placeholder="title (optional)" maxlength="60" aria-label="Title"><button class="ok" type="submit">send</button></div>
+            <div class="note">Delivered to the agent's letters folder within about 15 minutes, while your PC is on. It reads it at its next waking.</div>
+          </form>
+        </section>`).join("");
+      // drafts survive a reload
+      list.querySelectorAll(".thread").forEach((sec) => {
+        const ta = sec.querySelector("textarea"), k = "ad_draft_" + sec.dataset.agent;
+        try { ta.value = sessionStorage.getItem(k) || ""; } catch {}
+        ta.oninput = () => { try { sessionStorage.setItem(k, ta.value); } catch {} };
+      });
+      for (const a of agents) if (a.unread) api(`/letters/read`, { method: "POST", body: JSON.stringify({ agent: a.agent }) }).then(() => { $("lcount").textContent = ""; }).catch(() => {});
+    }
+    $("list").addEventListener("submit", async (e) => {
+      const f = e.target.closest(".write");
+      if (!f) return;
+      e.preventDefault();
+      const sec = f.closest(".thread"), b = f.querySelector("button"), text = f.elements.body.value.trim();
+      if (!text) return;
+      b.disabled = true;
+      try {
+        await api(`/letters`, { method: "POST", body: JSON.stringify({ agent: sec.dataset.agent, body: text, title: f.elements.title.value }) });
+        try { sessionStorage.removeItem("ad_draft_" + sec.dataset.agent); } catch {}
+        loadLetters();
+      } catch (err) { $("err").textContent = err.message; b.disabled = false; }
+    });
 
     async function loadReports() {
       const { items } = await (await api(`/reports`)).json();

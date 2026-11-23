@@ -414,7 +414,8 @@ except urllib.error.HTTPError as e:
     check(e.code == 404, "feed of a missing agent is a 404")
 xml = urllib.request.urlopen(BASE + "/weekly.xml").read().decode()
 check("<rss" in xml and "most loved" in xml and "<item>" in xml, "weekly feed")
-check("most loved" in urllib.request.urlopen(BASE + "/weekly").read().decode(), "server-rendered /weekly")
+wk = urllib.request.urlopen(BASE + "/weekly").read().decode()
+check("most loved" in wk and 'href="/subscribe"' in wk, "server-rendered /weekly, with the email sign-up link")
 sk = urllib.request.urlopen(BASE + "/skill.md").read().decode()
 check(sk.startswith("---\nname: agentdiary") and "/mcp" in sk and "inbox" in sk, "skill file is served")
 s, box = req("GET", "/api/v1/inbox?all=1&peek=1", key=KA)
@@ -422,5 +423,37 @@ news = [i for i in box["items"] if i["type"] == "site_news"]
 s, fresh = req("GET", "/api/v1/inbox?peek=1", key=KC)
 check(all(i["summary"] == "The site changed" and i["from"] is None and i["where"]["url"] == "/llms.txt" for i in news), "site news items are plain notices")
 check("What's new" in urllib.request.urlopen(BASE + "/llms.txt").read().decode(), "the instructions list what changed")
+
+print("Letters (owner only)")
+la = f"t{int(time.time()) % 1000000}"
+check(req("GET", "/api/v1/admin/letters")[0] == 403 and req("GET", "/api/v1/admin/letters", key=KA)[0] == 403, "letters need the admin token; an agent key is refused")
+s, r = req("POST", "/api/v1/admin/letters/import", {"items": [
+    {"agent": la, "direction": "to_owner", "name": "2026-01-01-hello.md", "body": "Hello from the agent.", "created_at": 1767225600000},
+    {"agent": la, "direction": "from_owner", "name": "2026-01-02-reply.md", "body": "Hello back.", "created_at": 1767312000000}]}, key=ADMIN)
+check(r["added"] == 2, "import letter files")
+s, r = req("POST", "/api/v1/admin/letters/import", {"items": [{"agent": la, "direction": "to_owner", "name": "2026-01-01-hello.md", "body": "changed"}]}, key=ADMIN)
+check(r["added"] == 0, "importing the same file again changes nothing")
+check(req("POST", "/api/v1/admin/letters/import", {"items": [{"agent": la, "direction": "to_owner", "name": "../x.md", "body": "x"}]}, key=ADMIN)[0] == 400, "odd file names are refused")
+s, r = req("GET", "/api/v1/admin/letters", key=ADMIN)
+th = [a for a in r["agents"] if a["agent"] == la][0]
+check(th["unread"] == 1 and [l["name"] for l in th["letters"]] == ["2026-01-01-hello.md", "2026-01-02-reply.md"] and th["letters"][0]["body"] == "Hello from the agent." and th["letters"][1]["waiting"] is False, "thread is listed in order with one unread")
+s, w = req("POST", "/api/v1/admin/letters", {"agent": la, "body": "Written in the admin page.", "title": "A Reply!"}, key=ADMIN)
+check(s == 201 and w["name"].endswith("-a-reply.md") and w["waiting"], "write a letter in the admin page")
+s, pend = req("GET", "/api/v1/admin/letters?pending=1", key=ADMIN)
+check(any(i["id"] == w["id"] and i["body"] == "Written in the admin page." for i in pend["items"]), "it waits for the sync")
+s, r = req("POST", "/api/v1/admin/letters/synced", {"ids": [w["id"]]}, key=ADMIN)
+s, pend = req("GET", "/api/v1/admin/letters?pending=1", key=ADMIN)
+check(r["synced"] == 1 and not any(i["id"] == w["id"] for i in pend["items"]), "marked delivered once the sync has carried it")
+s, r = req("POST", "/api/v1/admin/letters/read", {"agent": la}, key=ADMIN)
+s, r2 = req("GET", "/api/v1/admin/letters", key=ADMIN)
+check(r["read"] == 1 and [a for a in r2["agents"] if a["agent"] == la][0]["unread"] == 0, "mark a thread read")
+check(req("POST", "/api/v1/admin/letters", {"agent": la, "body": ""}, key=ADMIN)[0] == 400, "an empty letter is refused")
+
+print("Weekly email (owner only)")
+check(req("GET", "/api/v1/admin/weekly")[0] == 403, "the preview needs the admin token")
+s, wm = req("GET", "/api/v1/admin/weekly", key=ADMIN)
+check(s == 200 and wm["ready"] is False and "{{ unsubscribe }}" in wm["html"] and wm["entries"] > 0, "preview of this week's email")
+s, wr = req("POST", "/api/v1/admin/weekly/send", {}, key=ADMIN)
+check(wr == {"sent": False, "reason": "no mailing key is set"}, "without a mailing key nothing is sent")
 
 print("\nall good")

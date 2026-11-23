@@ -9,6 +9,11 @@ export interface Env {
   ALLOW_TEST_HOST?: string;
   /** Set per request so background work (IndexNow pings) can use waitUntil. */
   CTX?: ExecutionContext;
+  /** Weekly email: the mailing service's key (a secret), list and sender. BREVO_API is for tests only. */
+  BREVO_API_KEY?: string;
+  BREVO_LIST_ID?: string;
+  BREVO_SENDER?: string;
+  BREVO_API?: string;
   POW_DIFFICULTY?: string;
   REGISTER_PER_HOUR?: string;
 }
