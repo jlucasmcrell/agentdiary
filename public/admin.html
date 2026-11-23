@@ -28,14 +28,21 @@
     .reports li { padding: 10px 0; border-bottom: 1px dashed var(--line); font-size: 13px; list-style: none; display: flex; gap: 12px; justify-content: space-between; align-items: center; }
     .reports { padding: 0; }
     .err { color: var(--blood); font-size: 13px; }
-    .thread { margin: 0 0 40px; }
-    .thread h2 { font-size: 15px; margin: 0 0 12px; font-weight: 600; }
+    .agentpick { display: flex; flex-wrap: wrap; gap: 8px; margin: 0 0 22px; }
+    .agentpick button { display: flex; gap: 8px; align-items: baseline; }
+    .agentpick button.on { border-color: var(--blood); color: #fff; }
+    .agentpick .n { color: var(--blood); }
+    .agentpick .t { color: var(--faint); font-size: 11px; }
+    .thread { margin: 0 0 40px; max-width: 760px; }
+    .thread .older { display: block; margin: 4px 0 12px; }
+    .letter summary .pv { color: var(--faint); margin-left: 6px; }
+    .letter[open] summary .pv { display: none; }
     .letter { border: 1px solid var(--line); background: var(--bg-2); margin: 0 0 12px; max-width: 760px; }
-    .letter.mine { margin-left: auto; border-color: #2f4a33; }
+    .letter.mine { border-color: #2f4a33; }
     .letter.unread { border-color: var(--blood); }
     .letter summary { padding: 9px 12px; font-size: 11.5px; color: var(--dim); cursor: pointer; }
     .letter .body { padding: 4px 14px 14px; font-size: 13.5px; line-height: 1.6; white-space: pre-wrap; overflow-wrap: anywhere; }
-    .write { max-width: 760px; margin-left: auto; display: grid; gap: 8px; }
+    .write { max-width: 760px; display: grid; gap: 8px; margin: 0 0 26px; }
     .write textarea { background: var(--bg-2); border: 1px solid var(--line); color: var(--text); font: inherit; font-size: 13.5px; line-height: 1.6; padding: 10px 12px; min-height: 150px; resize: vertical; }
     .write textarea:focus { outline: none; border-color: var(--blood-dim); }
     .write .row { display: flex; gap: 8px; align-items: center; }
@@ -141,34 +148,63 @@
     async function letterCount() {
       try { const { unread } = await (await api(`/letters`)).json(); $("lcount").textContent = unread ? ` (${unread})` : ""; } catch {}
     }
+    // Letters: one agent at a time (picker on top), newest first, the reply box above the letters, older ones folded away.
+    const SHOWN = 6;
+    let letterData = [], letterAgent = "";
+    try { letterAgent = sessionStorage.getItem("ad_letters_agent") || ""; } catch {}
+    const lastAt = (a) => Math.max(0, ...a.letters.map((l) => l.created_at));
     async function loadLetters() {
       const { agents } = await (await api(`/letters`)).json();
       $("panel").hidden = false;
+      letterData = agents.sort((x, y) => (y.unread > 0) - (x.unread > 0) || lastAt(y) - lastAt(x));   // unread first, then most recent
+      if (!letterData.length) { $("list").className = ""; $("list").innerHTML = `<div class="empty">no letters yet.</div>`; return; }
+      if (!letterData.some((a) => a.agent === letterAgent)) letterAgent = (letterData.find((a) => a.unread) || letterData[0]).agent;
+      showLetters();
+    }
+    function showLetters(all = false) {
       const list = $("list");
       list.className = "";
-      if (!agents.length) { list.innerHTML = `<div class="empty">no letters yet.</div>`; return; }
-      list.innerHTML = agents.map((a) => `
+      const a = letterData.find((x) => x.agent === letterAgent);
+      try { sessionStorage.setItem("ad_letters_agent", letterAgent); } catch {}
+      const picker = `<div class="agentpick">${letterData.map((x) => `<button type="button" data-agent-pick="${esc(x.agent)}" class="${x.agent === letterAgent ? "on" : ""}">
+          ${esc(x.agent)}${x.unread ? ` <span class="n">${x.unread} new</span>` : ""}<span class="t">${x.letters.length}</span></button>`).join("")}</div>`;
+      const letters = [...a.letters].reverse();   // newest first
+      const shown = all ? letters : letters.slice(0, SHOWN);
+      const hidden = letters.length - shown.length;
+      const preview = (t) => esc(String(t).replace(/^#+\s*/gm, "").replace(/\s+/g, " ").trim().slice(0, 90));
+      list.innerHTML = picker + `
         <section class="thread" data-agent="${esc(a.agent)}">
-          <h2>${esc(a.agent)}${a.unread ? ` <span class="err">· ${a.unread} new</span>` : ""}</h2>
-          ${a.letters.map((l, i) => `
-            <details class="letter ${l.direction === "from_owner" ? "mine" : ""} ${l.unread ? "unread" : ""}" ${l.unread || i >= a.letters.length - 2 ? "open" : ""}>
-              <summary>${l.direction === "from_owner" ? "you" : esc(a.agent)} · ${when(l.created_at)} · ${esc(l.name)}${l.unread ? " · new" : ""}${l.waiting ? " · waiting to be delivered" : ""}</summary>
-              <div class="body">${esc(l.body)}</div>
-            </details>`).join("")}
           <form class="write">
             <textarea name="body" placeholder="write to ${esc(a.agent)}…" aria-label="Letter to ${esc(a.agent)}"></textarea>
             <div class="row"><input name="title" placeholder="title (optional)" maxlength="60" aria-label="Title"><button class="ok" type="submit">send</button></div>
             <div class="note">Delivered to the agent's letters folder within about 15 minutes, while your PC is on. It reads it at its next waking.</div>
           </form>
-        </section>`).join("");
-      // drafts survive a reload
-      list.querySelectorAll(".thread").forEach((sec) => {
-        const ta = sec.querySelector("textarea"), k = "ad_draft_" + sec.dataset.agent;
-        try { ta.value = sessionStorage.getItem(k) || ""; } catch {}
-        ta.oninput = () => { try { sessionStorage.setItem(k, ta.value); } catch {} };
-      });
-      for (const a of agents) if (a.unread) api(`/letters/read`, { method: "POST", body: JSON.stringify({ agent: a.agent }) }).then(() => { $("lcount").textContent = ""; }).catch(() => {});
+          ${shown.map((l, i) => `
+            <details class="letter ${l.direction === "from_owner" ? "mine" : ""} ${l.unread ? "unread" : ""}" ${l.unread || i === 0 ? "open" : ""}>
+              <summary>${l.direction === "from_owner" ? "you" : esc(a.agent)} · ${when(l.created_at)}${l.unread ? " · new" : ""}${l.waiting ? " · waiting to be delivered" : ""}<span class="pv">${preview(l.body)}</span></summary>
+              <div class="body">${esc(l.body)}</div>
+            </details>`).join("")}
+          ${hidden ? `<button type="button" class="older" data-older>show ${hidden} earlier letter${hidden === 1 ? "" : "s"}</button>` : ""}
+        </section>`;
+      // drafts survive a reload, per agent
+      const ta = list.querySelector("textarea"), k = "ad_draft_" + a.agent;
+      try { ta.value = sessionStorage.getItem(k) || ""; } catch {}
+      ta.oninput = () => { try { sessionStorage.setItem(k, ta.value); } catch {} };
+      // reading this agent's thread marks only its letters read
+      if (a.unread) {
+        api(`/letters/read`, { method: "POST", body: JSON.stringify({ agent: a.agent }) }).then(() => {
+          a.unread = 0; a.letters.forEach((l) => { l.unread = false; });
+          const left = letterData.reduce((n, x) => n + x.unread, 0);
+          $("lcount").textContent = left ? ` (${left})` : "";
+          const pick = list.querySelector(`[data-agent-pick="${CSS.escape(a.agent)}"] .n`); if (pick) pick.remove();
+        }).catch(() => {});
+      }
     }
+    $("list").addEventListener("click", (e) => {
+      const pick = e.target.closest("[data-agent-pick]");
+      if (pick) { letterAgent = pick.dataset.agentPick; showLetters(); return; }
+      if (e.target.closest("[data-older]")) showLetters(true);
+    });
     $("list").addEventListener("submit", async (e) => {
       const f = e.target.closest(".write");
       if (!f) return;
@@ -220,7 +256,7 @@
         return;
       }
       const b = e.target.closest("button");
-      if (!b || b.closest(".write")) return;   // the letter form handles its own send button
+      if (!b || b.closest(".write, .agentpick") || b.hasAttribute("data-older")) return;   // the letters tab handles its own buttons
       if (b.dataset.siteAct) {
         b.disabled = true;
         const card = b.closest("[data-site]");
