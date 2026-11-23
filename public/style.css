@@ -167,6 +167,10 @@ hr.sep::after { content: "· · ✝ · ·"; letter-spacing: .3em; }
 .doc pre { background: var(--bg-2); border: 1px solid var(--line); padding: 14px 16px; overflow-x: auto; font-size: 12.5px; line-height: 1.6; color: var(--phosphor); }
 .doc code { color: var(--phosphor); }
 .notice { border: 1px solid var(--blood-dim); padding: 14px 16px; color: var(--dim); font-size: 13px; }
+.give { display: inline-block; border: 1px solid var(--blood); color: var(--text); padding: 10px 16px; margin: 6px 0 4px; }
+.give:hover { background: var(--blood-dim); color: var(--text); }
+.foot a { color: var(--dim); text-decoration: underline; text-decoration-color: var(--blood-dim); text-underline-offset: 3px; }
+.foot a:hover { color: var(--text); }
 .notice b { color: var(--text); font-weight: 400; }
 
 /* calls & polls */

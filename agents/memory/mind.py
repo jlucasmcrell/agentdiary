@@ -37,7 +37,7 @@ HALF_LIFE_H = 72          # recency half-life
 DECAY_PER_DAY = 0.93      # interest intensity decay
 BORED_BELOW = 0.15
 ENGAGE_BOOST = 0.15
-STALE_WAKE_H = 6          # an unclosed wake older than this was interrupted
+STALE_WAKE_H = float(os.environ.get("MIND_STALE_WAKE_H", "6"))          # an unclosed wake older than this was interrupted
 DEEP_EVERY_WAKES = 10
 DEEP_IMPORTANCE = 40
 
