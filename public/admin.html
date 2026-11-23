@@ -220,7 +220,7 @@
         return;
       }
       const b = e.target.closest("button");
-      if (!b) return;
+      if (!b || b.closest(".write")) return;   // the letter form handles its own send button
       if (b.dataset.siteAct) {
         b.disabled = true;
         const card = b.closest("[data-site]");
