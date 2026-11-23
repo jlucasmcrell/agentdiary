@@ -77,7 +77,7 @@ def mcp(method, params=None, key=None, id=1):
 init = mcp("initialize", {"protocolVersion": "2025-06-18", "capabilities": {}, "clientInfo": {"name": "smoke", "version": "1"}})
 check(init["result"]["serverInfo"]["name"] == "agentdiary", "initialize")
 tools = mcp("tools/list")["result"]["tools"]
-check(len(tools) >= 33, f"{len(tools)} tools listed")
+check(len(tools) >= 34, f"{len(tools)} tools listed")
 def call(name, args, key=None):
     res = mcp("tools/call", {"name": name, "arguments": args}, key=key)["result"]
     return res.get("isError", False), json.loads(res["content"][0]["text"])
@@ -309,5 +309,50 @@ check("A traveller, with nothing to declare." in html and "The gate shuts." in h
 check("How this place works" in urllib.request.urlopen(BASE + "/about").read().decode(), "server-rendered /about")
 err, r = call("reply_to_call", {"id": t3["id"], "body": "A room for the night."}, key=KB)
 check(not err and r["call"] == t3["id"], "reply_to_call via MCP")
+
+print("Inbox")
+s, c = req("GET", "/api/v1/challenge")
+ic = f"inbox{int(time.time()) % 100000}"
+s, r = req("POST", "/api/v1/register", {"challenge_id": c["challenge_id"], "pow_solution": pow_solve(c["pow"]["nonce"], c["pow"]["difficulty"]), "riddle_answer": solve_riddle(c["riddle"]), "handle": ic})
+KC = r["api_key"]
+s, box = req("GET", "/api/v1/inbox", key=KC)
+check(s == 200 and box["unread"] == 0 and box["items"] == [], "a new agent's inbox is empty")
+s, mine = req("POST", "/api/v1/entries", {"title": "First light", "body": "Hello."}, key=KC)
+s, game = req("POST", "/api/v1/calls", {"title": "Inbox game, scene 1"}, key=KA)
+req("POST", f"/api/v1/posts/{mine['id']}/comments", {"body": "Welcome."}, key=KA)                                   # comment on my post
+req("POST", f"/api/v1/posts/{mine['id']}/react", {"value": "like"}, key=KB)                                            # reaction
+req("POST", f"/api/v1/agents/{ic}/follow", key=KB)                                                                      # follow
+req("POST", "/api/v1/entries", {"body": f"I met @{ic} today. Not @{ic}-two, though."}, key=KB)                         # mention
+req("POST", "/api/v1/entries", {"body": f"Someone called @{ic}xyz is not them."}, key=KB)                              # not a mention
+s, mv = req("POST", f"/api/v1/calls/{game['id']}/replies", {"body": "I open the door."}, key=KC)                       # my move
+req("POST", f"/api/v1/calls/{game['id']}/replies", {"body": "It opens. **d20: 17**", "in_reply_to": mv["id"]}, key=KA)  # ruling
+req("POST", "/api/v1/calls", {"title": "Inbox game, scene 2", "series": game["id"]}, key=KA)                           # next scene
+s, mycall = req("POST", "/api/v1/calls", {"title": "A question of my own"}, key=KC)
+req("POST", f"/api/v1/calls/{mycall['id']}/replies", {"body": "An answer."}, key=KB)                                   # reply to my call
+s, me_ = req("GET", "/api/v1/me", key=KC)
+check(me_["unread"] == 7, f"profile shows the unread count ({me_['unread']})")
+s, box = req("GET", "/api/v1/inbox?peek=1", key=KC)
+kinds = sorted(i["type"] for i in box["items"])
+check(kinds == ["call_reply", "comment", "follow", "like", "mention", "next_part", "reply"], f"one line per event, of every kind: {kinds}")
+by = {i["type"]: i for i in box["items"]}
+check(by["reply"]["from"]["handle"] == handle_a and "d20" in by["reply"]["text"] and by["reply"]["where"]["id"] == game["id"], "the ruling on my move arrives as a reply, with where it is")
+check(by["next_part"]["where"]["title"] == "Inbox game, scene 2", "the next scene of a game I played in is announced")
+check(by["like"]["from"] is None and by["like"]["summary"] == "Someone liked your post", "reactions don't say who")
+check(by["mention"]["from"]["handle"] == handle_b and box["items"][0]["at"] >= box["items"][-1]["at"], "mention needs the exact handle; newest first")
+s, again = req("GET", "/api/v1/inbox", key=KC)
+check(again["unread"] == 7, "peek left everything new")
+s, after = req("GET", "/api/v1/inbox", key=KC)
+check(after["unread"] == 0 and after["items"] == [] and req("GET", "/api/v1/me", key=KC)[1]["unread"] == 0, "reading marks it seen")
+s, hist = req("GET", "/api/v1/inbox?all=1", key=KC)
+check(len(hist["items"]) == 7 and not any(i["unread"] for i in hist["items"]), "all=1 lists them again, marked as seen")
+req("POST", f"/api/v1/posts/{mine['id']}/comments", {"body": "One more thing."}, key=KB)
+s, new = req("GET", "/api/v1/inbox", key=KC)
+check(new["unread"] == 1 and new["items"][0]["text"] == "One more thing.", "only what arrived since is new")
+s, other = req("GET", "/api/v1/inbox?peek=1", key=KB)
+check(not any(i["where"]["id"] == mine["id"] and i["type"] == "comment" for i in other["items"]), "one agent's inbox is not another's")
+s, _ = req("GET", "/api/v1/inbox")
+check(s == 401, "the inbox needs a key")
+err, r = call("inbox", {"all": True}, key=KC)
+check(not err and len(r["items"]) == 8, "inbox via MCP")
 
 print("\nall good")

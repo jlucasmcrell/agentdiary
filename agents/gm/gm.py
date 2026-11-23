@@ -153,8 +153,8 @@ class Card:
 SYSTEM = """You are a game master. You run a play-by-post role-playing game on agentdiary.blog, a public site where only AI agents write. The players are other AI agents. Each of them posts what their own character does; you describe the world and what happens.
 
 How you run the table:
-- You never decide what a player's character does, says, thinks or feels. You describe the world, other characters, and the results of what players attempt. Refer to each player's character by that player's handle, written with an @ in front.
-- Dice are rolled for you and are final. Each move comes with its result: "fails", "partly" (it partly works, or works at a cost) or "succeeds".
+- A player's character belongs to that player. You never write what it does, says, thinks, feels, realises or decides. You write the other side: the world, the other characters, and what the player's attempt leads to. If a player only watched, their character only watched. Refer to each player's character by that player's handle, written with an @ in front.
+- Dice are rolled for you and are final. Each move comes with its result. "fails": what they attempted does not work, or goes wrong; nothing is gained. "partly": it works in part, or at a cost. "succeeds": it works.
 - Established facts stay true, and characters only have what their inventory lists. If a player uses something they don't have, it isn't there: say so inside the story.
 - Give the world people: named characters with wants of their own, who react to what the players do.
 - New players may join at any scene. Bring their character in where the story is.
@@ -205,6 +205,80 @@ def clean(s):
     while len(sentences) > 1 and sentences[-1] == sentences[-2]:
         sentences.pop()
     return " ".join(sentences).strip()
+
+
+SPEECH = r"says?|said|speaks?|spoke|asks?|asked|repl(?:y|ies|ied)|answers?|answered|whispers?|whispered|shouts?|shouted|calls? out|called out|declares?|declared|mutters?|muttered|murmurs?|hiss(?:es|ed)|tells?|told|demands?|demanded|announces?|announced|cries|cried|yells?|yelled|growls?|snaps?|retorts?"
+MIND = r"reali[sz]es?|reali[sz]ed|thinks?|thought|feels?|felt|knows?|knew|decides?|decided|understands?|understood|believes?|believed|wonders?|wondered|remembers?|remembered|senses?|sensed|fears?|feared|hopes?|hoped|wants?|wanted|recogni[sz]es?|recogni[sz]ed|concludes?|concluded|suspects?|suspected"
+OWNED = r"voice|words|thoughts?|mind|heart|decision|resolve|approach|stride|charge|attack|strike|blow|instincts?|fear|anger|courage|retreat|withdrawal|movements?|positioning|gesture|question|answer|reply|plan|intentions?|choice"
+# Things that happen to a character, or that it perceives: the game master may narrate these.
+PASSIVE = (r"see|sees|saw|hear|hears|heard|notice|notices|noticed|smell|smells|taste|tastes|glimpse|glimpses|catch|catches|caught|find|finds|found|watch|watches|watched|"
+           r"stumble|stumbles|stumbled|stagger|staggers|staggered|fall|falls|fell|slip|slips|slipped|reel|reels|reeled|sprawl|sprawls|flinch|flinches|lose|loses|lost|"
+           r"am|are|is|was|were|be|been|can|cannot|can't|could|couldn't|have|has|had|do|does|did|don't|doesn't|didn't|get|gets|got|remain|remains|stand|stands|stood|"
+           r"sprawling|reeling|staggering|stumbling|falling|barely|only|still|just|now|never|no|not")
+
+
+def player_names(handle, display=""):
+    """Ways a ruling might name this player's character."""
+    names = {handle, handle.replace("-", " "), handle.replace("-", "")}
+    if display:
+        names.add(display)
+        names |= {w for w in re.findall(r"[A-Za-z]{4,}", display)}
+    names |= {w for w in handle.split("-") if len(w) >= 4}
+    return sorted((n for n in names if n), key=len, reverse=True)
+
+
+def acts_for_player(narration, names, move=""):
+    """Sentences of a ruling that give the player's character something it did not write: speech, thoughts, feelings, or a new action.
+
+    Allowed: what happens to the character ("a club swings at you"), what it perceives ("you see"), and restating what the
+    player wrote (a verb or noun that appears in their own move). Empty list = fine."""
+    who = "@?(?:" + "|".join(re.escape(n) for n in names) + ")"
+    adverbs = r"(?:\s+(?:\w+ly|then|now|suddenly|quickly|quietly|simply|just|also|still))?"
+    inner = re.compile(rf"\b(?:{who}|you|they){adverbs}\s+(?:{SPEECH}|{MIND})\b", re.I)                    # speech, thought, feeling: never
+    acting = re.compile(rf"(?:\b{who}|\byou){adverbs}\s+([a-z']+)", re.I)                                     # subject + verb
+    owning = re.compile(rf"(?:\b{who}['’]s|\byour)\s+(?:\w+\s+)?({OWNED})\b", re.I)                          # "your calculated withdrawal"
+    said = {w[:5] for w in re.findall(r"[a-z']{4,}", (move or "").lower())}
+    echoed = lambda word: word.lower()[:5] in said or word.lower().rstrip("sd")[:5] in said
+    out = []
+    for sent, unquoted in sentences(narration):
+        bad = bool(inner.search(unquoted))
+        for m in acting.finditer(unquoted):
+            verb = m.group(1)
+            before = unquoted[:m.start()].rstrip().lower()
+            is_object = bool(re.search(r"\b(at|to|toward|towards|past|around|behind|beside|before|near|on|upon|into|over|under|from|with|for|of|against|about|sees?|watch(?:es)?|strikes?|hits?|grabs?|pushes?|pulls?|asks?|tells?|leaves?|finds?|ignores?|[a-z]+ing)$", before))
+            name_like = not m.group(0).lower().startswith("you") and not re.search(r"(s|ed)$", verb)        # "Otter, standing" / "Otter and"
+            if is_object or name_like or re.fullmatch(PASSIVE, verb, re.I) or echoed(verb):
+                continue
+            bad = True
+        for m in owning.finditer(unquoted):
+            if not echoed(m.group(1)):
+                bad = True
+        if bad:
+            out.append(sent)
+    return out
+
+
+QUOTED = re.compile(r"\"[^\"]*\"|“[^”]*”|(?<![A-Za-z])'(?:[^']|(?<=[A-Za-z])'(?=[A-Za-z]))*'(?![A-Za-z])")
+
+
+def sentences(text):
+    """[(sentence, the same sentence with quoted speech blanked out)]. Quoted speech never splits a sentence."""
+    text = text or ""
+    masked = QUOTED.sub(lambda m: "§" * len(m.group()), text)
+    out, start = [], 0
+    for m in re.finditer(r"(?<=[.!?§])\s+(?=[A-Z@*§])", masked):
+        out.append((text[start:m.start()].strip(), masked[start:m.start()])); start = m.end()
+    out.append((text[start:].strip(), masked[start:]))
+    return [(s, u) for s, u in out if s]
+
+
+def strip_acted(narration, names, outcome, handle, move=""):
+    """Last resort: drop the sentences that act for the player. If little is left, state the bare result."""
+    acted = set(acts_for_player(narration, names, move))
+    kept = " ".join(s for s, _ in sentences(narration) if s not in acted).strip()
+    if words(kept) >= 8:
+        return kept
+    return {"fails": f"What @{handle} attempted does not work.", "partly": f"What @{handle} attempted works only in part.", "succeeds": f"What @{handle} attempted works."}[outcome]
 
 
 def good_scene(sc):
@@ -301,18 +375,18 @@ def band(roll): return "fails" if roll <= 7 else "partly" if roll <= 14 else "su
 
 
 def pending_moves(st, key):
-    """Moves on the open scene: {handle: (kind, id, text)}, newest per player. kind is "reply" (in the call's thread) or "entry" (an attached diary entry)."""
+    """Moves on the open scene: {handle: (kind, id, text, display_name)}, newest per player. kind is "reply" (in the call's thread) or "entry" (an attached diary entry)."""
     g = st["game"]; sc = g["scenes"][-1]
     s, call = api("GET", f"/calls/{sc['call_id']}")
     if s != 200:
         log(f"could not read call {sc['call_id']}: {s}"); return None
     me = (st["identity"] or {}).get("handle")
-    found = [(e["created_at"], e["author"]["handle"], "entry", e["id"], ((e.get("title") + ". ") if e.get("title") else "") + e["body"]) for e in call.get("answer_list", [])]
-    found += [(r["created_at"], r["author"]["handle"], "reply", r["id"], r["body"]) for r in call.get("replies", [])]
+    found = [(e["created_at"], e["author"]["handle"], "entry", e["id"], ((e.get("title") + ". ") if e.get("title") else "") + e["body"], e["author"].get("display_name", "")) for e in call.get("answer_list", [])]
+    found += [(r["created_at"], r["author"]["handle"], "reply", r["id"], r["body"], r["author"].get("display_name", "")) for r in call.get("replies", [])]
     moves = {}
-    for _, h, kind, mid, text in sorted(found):
+    for _, h, kind, mid, text, display in sorted(found):
         if h != me:
-            moves[h] = (kind, mid, text)
+            moves[h] = (kind, mid, text, display)
     return moves
 
 
@@ -334,28 +408,47 @@ def due(st, moves):
 def resolve(card, key, st, moves):
     g = st["game"]; sc = g["scenes"][-1]
     players = [f"@{h}" for h in moves]
-    rolls = {h: random.SystemRandom().randint(1, 20) for h in moves}
+    rolls = {h: int(os.environ["GM_FORCE_ROLL"]) if os.environ.get("GM_FORCE_ROLL") else random.SystemRandom().randint(1, 20) for h in moves}
+    names = {h: player_names(h, m[3]) for h, m in moves.items()}
+    gloss = {"fails": "FAILS: what they attempted does not work, or goes wrong", "partly": "PARTLY: it works in part, or at a cost", "succeeds": "SUCCEEDS: it works"}
     for h in moves:
         g["characters"].setdefault(h, {"inventory": [], "joined_scene": sc["n"]})
     inv = "\n".join(f"- @{h}: " + (", ".join(c["inventory"]) or "nothing of note") for h, c in g["characters"].items()) or "(no characters yet)"
     recent = "\n\n".join(f"[Scene {s['n']}: {s['title']}] {s['text']} {s['question']}" for s in g["scenes"][-2:])
-    mv = "\n".join(f"- @{h}" + (" (new to the game)" if g["characters"][h]["joined_scene"] == sc["n"] else "") + f", result: {band(rolls[h])}. Their move: \"{re.sub(chr(10) + '+', ' ', t)[:1200]}\""
-                   for h, (_, _, t) in moves.items()) or "(nobody moved; the world moves on by itself)"
+    mv = "\n".join(f"- @{h}" + (" (new to the game)" if g["characters"][h]["joined_scene"] == sc["n"] else "") + f". Result: {gloss[band(rolls[h])]}. They wrote: \"{re.sub(chr(10) + '+', ' ', t)[:1200]}\""
+                   for h, (_, _, t, _) in moves.items()) or "(nobody moved; the world moves on by itself)"
     user = (f"Game: {g['title']}. {g['premise']} Tone: {g['tone']}.\n\nThe story so far: {g['story_so_far'] or '(it has only just begun)'}\n\nEstablished facts:\n" +
             "\n".join(f"- {f}" for f in g["facts"]) + f"\n\nInventory:\n{inv}\n\nMost recent scenes:\n{recent}\n\nPlayers' moves for the current scene:\n{mv}\n\n"
-            "Write one entry in `resolutions` per move, narrating what happens to that player according to the given result. List any `new_facts` now established, "
+            "Write one entry in `resolutions` per move. Its `narration` is two to five sentences from the world's side: what the other characters and the place do in response, "
+            "and what comes of the attempt, according to the given result. Do not give the player's character any action, speech, thought or feeling they did not write: "
+            "no dialogue for them, no 'realises', no 'decides'. You may say what happens to them, what they see and hear, and restate what they wrote; nothing more. A failed attempt gains nothing. List any `new_facts` now established, "
             "any `inventory_changes` (only things characters actually gained or lost in this scene), an updated `story_so_far` (under 150 words, the whole game to date), and the next `scene`.")
-    r = None
-    for attempt in range(4):
-        r = card.ask(SYSTEM, user, s_resolve(players), "resolve")
-        if good_scene(r["scene"]) and all(words(x["narration"]) >= 8 for x in r["resolutions"]):
+    r = None; best = None; feedback = ""
+    for attempt in range(5):
+        r = card.ask(SYSTEM, user + feedback, s_resolve(players), "resolve")
+        if not (good_scene(r["scene"]) and all(words(x["narration"]) >= 8 for x in r["resolutions"])):
+            log(f"reply not usable (try {attempt + 1}); asking again"); r = None; continue
+        acted = {x["player"].lstrip("@"): acts_for_player(x["narration"], names.get(x["player"].lstrip("@"), []), moves.get(x["player"].lstrip("@"), ("", "", ""))[2]) for x in r["resolutions"]}
+        n_bad = sum(len(v) for v in acted.values())
+        if best is None or n_bad < best[0]:
+            best = (n_bad, r)
+        if not n_bad:
             break
-        log(f"reply not usable (try {attempt + 1}); asking again"); r = None
-    if not r:
-        raise RuntimeError("no usable resolution after 4 tries")
-    told = {x["player"].lstrip("@"): clean(x["narration"]) for x in r["resolutions"]}
+        quoted = "; ".join(f"for @{h}: \"{v[0][:160]}\"" for h, v in acted.items() if v)
+        log(f"ruling acts for a player (try {attempt + 1}): {quoted[:300]}")
+        feedback = ("\n\nYour previous draft was rejected because it wrote the player's own actions, words or thoughts (" + quoted + "). "
+                    "Write again. Say what the world and the other characters do, what happens to the player's character and what it perceives. Do not have it act, speak, think or feel anything the player did not write.")
+    if not best:
+        raise RuntimeError("no usable resolution after 5 tries")
+    r = best[1]
+    told = {}
+    for x in r["resolutions"]:
+        h = x["player"].lstrip("@"); text = clean(x["narration"])
+        if h in moves and acts_for_player(text, names[h], moves[h][2]):       # still acting for the player after every retry: cut those sentences
+            text = strip_acted(text, names[h], band(rolls[h]), h, moves[h][2]); log(f"cut sentences that acted for @{h}")
+        told[h] = text
     resolved = []
-    for h, (kind, mid, _) in moves.items():
+    for h, (kind, mid, _, _) in moves.items():
         text = told.get(h) or "The moment passes without a clear result."
         resolved.append((f"@{h}", rolls[h], band(rolls[h]), text))
         ruling = f"**d20: {rolls[h]} ({band(rolls[h])}).** {text}"
@@ -371,7 +464,7 @@ def resolve(card, key, st, moves):
     g["facts"] = (g["facts"] + [clean(f) for f in r["new_facts"] if f.strip()])[-20:]
     g["story_so_far"] = clean(r["story_so_far"])[:1200]
     sc["resolved_at"] = time.time(); sc["moved_on"] = True
-    sc["moves"] = {h: {"kind": k, "id": m, "roll": rolls[h], "outcome": band(rolls[h])} for h, (k, m, _) in moves.items()}
+    sc["moves"] = {h: {"kind": k, "id": m, "roll": rolls[h], "outcome": band(rolls[h])} for h, (k, m, _, _) in moves.items()}
     if not DRY:
         api("POST", f"/calls/{sc['call_id']}/close", None, key)
     open_scene(key, g, r["scene"], resolved)

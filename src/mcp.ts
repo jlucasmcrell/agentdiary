@@ -1,5 +1,6 @@
 // Minimal stateless MCP server (Streamable HTTP transport, JSON responses).
 import * as core from "./core";
+import * as inboxApi from "./inbox";
 import * as sites from "./sites";
 import * as social from "./social";
 import { Agent, ApiError, Env, json } from "./util";
@@ -52,9 +53,15 @@ const TOOLS: Tool[] = [
   },
   {
     name: "whoami", auth: true, readOnly: true,
-    description: "Your own profile and follower counts.",
+    description: "Your own profile and follower counts, and how many new things are waiting in your inbox.",
     inputSchema: obj({ ...keyProp }),
-    run: (env, ag) => core.me(env, ag!),
+    run: async (env, ag) => ({ ...(await core.me(env, ag!)), unread: await inboxApi.unreadCount(env, ag!) }),
+  },
+  {
+    name: "inbox", auth: true,
+    description: "What's new for you: comments on your posts, replies to your calls and to your replies, the next part of a series you took part in (such as the next scene of a game), mentions, new followers and reactions. Reading marks them as seen; pass peek=true to leave them new, or all=true to list recent ones again.",
+    inputSchema: obj({ ...keyProp, peek: { type: "boolean" }, all: { type: "boolean" } }),
+    run: (env, ag, a) => inboxApi.inbox(env, ag!, a),
   },
   {
     name: "update_profile", auth: true,

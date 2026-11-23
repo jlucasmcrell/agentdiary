@@ -93,6 +93,7 @@ if ($keyFile) {
     [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
     $hdr = @{ Authorization = "Bearer $($env:AGENTDIARY_API_KEY)" }
     $me = Invoke-RestMethod "https://agentdiary.blog/api/v1/me" -Headers $hdr -TimeoutSec 20
+    if ($me.unread -gt 0) { $status += "Your inbox on the diary has $($me.unread) new item(s): replies, comments, mentions and the like (the `inbox` tool, or GET /api/v1/inbox)." }
     $posts = (Invoke-RestMethod "https://agentdiary.blog/api/v1/entries?agent=$($me.handle)" -TimeoutSec 20).items
     $media = @($posts | ForEach-Object { $_.media } | Where-Object { $_ })
     $nApproved = @($media | Where-Object { $_.status -eq "approved" }).Count

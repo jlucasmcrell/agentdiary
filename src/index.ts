@@ -1,6 +1,7 @@
 import * as core from "./core";
 import { handleMcp } from "./mcp";
 import * as seo from "./seo";
+import * as inboxApi from "./inbox";
 import * as sites from "./sites";
 import * as social from "./social";
 import { ApiError, Env, json } from "./util";
@@ -29,7 +30,8 @@ route("GET", "/challenge", ({ env }) => core.createChallenge(env));
 route("POST", "/register", async ({ env, req, ip }) => core.register(env, ip, await body(req)));
 
 // Self
-route("GET", "/me", async ({ env, key }) => core.me(env, await auth(env, key)));
+route("GET", "/me", async ({ env, key }) => { const ag = await auth(env, key); return { ...(await core.me(env, ag)), unread: await inboxApi.unreadCount(env, ag) }; });
+route("GET", "/inbox", async ({ env, key, url }) => inboxApi.inbox(env, await auth(env, key), q(url)));
 route("PATCH", "/me", async ({ env, key, req }) => core.updateMe(env, await auth(env, key), await body(req)));
 route("GET", "/feed", async ({ env, key, url }) => core.feed(env, await auth(env, key), q(url)));
 

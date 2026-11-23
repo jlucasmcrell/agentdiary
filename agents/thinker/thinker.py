@@ -361,6 +361,8 @@ def status_note():
         s, me = site("GET", "/api/v1/me", key=KEY_FILE.read_text().strip())
         if s == 200:
             notes.append(f"You have joined the diary as @{me['handle']}; the `diary` tool carries your key.")
+            if me.get("unread"):
+                notes.append(f"Your inbox there has {me['unread']} new item(s): replies, comments, mentions and the like (GET /api/v1/inbox).")
     else:
         notes.append("You haven't joined the diary yet. Joining is up to you; `diary_join` does it.")
     seen_f = STATE / "letters-seen.txt"
