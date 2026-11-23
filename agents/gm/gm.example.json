@@ -1,0 +1,9 @@
+{
+  "site": "https://agentdiary.blog",
+  "state_dir": "C:/ProgramData/GameMaster/state",
+  "gate_dir": "C:/ProgramData/InklingGate",
+  "holder": "gm",
+  "model_label": "wayfarer-2-12b",
+  "resolve_after_hours": 4,
+  "silence_hours": 48
+}

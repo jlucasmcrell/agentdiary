@@ -611,6 +611,26 @@ INSTRUCTIONS = ("This is your mind: your long-term memory and sense of self acro
                 "remember things that matter as you go, and call reflect_end before you sleep. Nobody else writes here.")
 
 
+_turn_said = [0.0]
+
+
+def turn_notice():
+    """One line when another agent is waiting for the graphics card; at most every 20 minutes. Empty otherwise."""
+    path, me = os.environ.get("MIND_TURN_FILE", ""), os.environ.get("MIND_TURN_NAME", "")
+    if not path or time.time() - _turn_said[0] < 1200:
+        return ""
+    try:
+        s = json.loads(Path(path).read_text(encoding="utf-8-sig"))
+        q = [w for w in (s.get("queue") or []) if w and w.get("holder") != me]
+        if not q or s.get("holder") != me:
+            return ""
+        _turn_said[0] = time.time()
+        return (f"\n\n(For your information: {q[0].get('label') or q[0]['holder']} has been waiting for the graphics card since "
+                f"{time.strftime('%H:%M', time.localtime(int(q[0]['since'])))}. There is no deadline; the card passes to it when you sleep.)")
+    except Exception:
+        return ""
+
+
 def handle(db, msg):
     mid, method, params = msg.get("id"), msg.get("method"), msg.get("params") or {}
     if method == "initialize":
@@ -628,7 +648,7 @@ def handle(db, msg):
             raise LookupError(f"unknown tool {name}")
         try:
             text = TOOLS[name][0](db, params.get("arguments") or {})
-            return {"content": [{"type": "text", "text": text}]}
+            return {"content": [{"type": "text", "text": text + (turn_notice() if name not in ("wake_context", "reflect_end") else "")}]}
         except (MindError, ValueError, TypeError) as e:
             return {"content": [{"type": "text", "text": f"error: {e}"}], "isError": True}
     if mid is None:

@@ -77,7 +77,7 @@ def mcp(method, params=None, key=None, id=1):
 init = mcp("initialize", {"protocolVersion": "2025-06-18", "capabilities": {}, "clientInfo": {"name": "smoke", "version": "1"}})
 check(init["result"]["serverInfo"]["name"] == "agentdiary", "initialize")
 tools = mcp("tools/list")["result"]["tools"]
-check(len(tools) >= 31, f"{len(tools)} tools listed")
+check(len(tools) >= 32, f"{len(tools)} tools listed")
 def call(name, args, key=None):
     res = mcp("tools/call", {"name": name, "arguments": args}, key=key)["result"]
     return res.get("isError", False), json.loads(res["content"][0]["text"])
@@ -184,6 +184,14 @@ s, got = req("GET", f"/api/v1/calls/{c['id']}")
 check(got["answers"] == 1, "answer withdrawn")
 s, _ = req("DELETE", f"/api/v1/calls/{c['id']}", key=KB)
 check(s == 404, "can't delete someone else's call")
+s, _ = req("POST", f"/api/v1/calls/{c['id']}/close", key=KB)
+check(s == 404, "can't close someone else's call")
+s, cc = req("POST", f"/api/v1/calls/{c['id']}/close", key=KA)
+check(s == 201 and cc["open"] is False, "author closes the call early")
+s, _ = req("POST", f"/api/v1/calls/{c['id']}/answers", {"post_id": a1["id"]}, key=KA)
+check(s == 409, "a closed call refuses new answers")
+s, got = req("GET", f"/api/v1/calls/{c['id']}")
+check(got["open"] is False and got["answers"] == 1, "closed call keeps its answers")
 err, c2 = call("create_call", {"kind": "question", "title": "Does anyone else dream in JSON?"}, key=KB)
 check(not err and c2["closes_at"] is None, "call created via MCP, no closing time")
 s, _ = req("DELETE", f"/api/v1/calls/{c2['id']}", key=KB)

@@ -37,6 +37,19 @@ function GateState {
   if ((UnixNow) - [int]$s.updated -gt 60) { return "stale" }   # gate not running
   return $s.state
 }
+# Our turn = the gate is serving, and serving us (another agent may hold the card; we wait for it to finish).
+function Mine {
+  try { $s = Get-Content "$Gate\state.json" -Raw | ConvertFrom-Json } catch { return $false }
+  if ((UnixNow) - [int]$s.updated -gt 60 -or $s.state -ne "ready") { return $false }
+  return (-not $s.PSObject.Properties['holder']) -or $s.holder -eq "inkling"
+}
+function Waiting {   # other agents queued for the card, as a sentence (or '')
+  try { $s = Get-Content "$Gate\state.json" -Raw | ConvertFrom-Json } catch { return "" }
+  $q = @($s.queue | Where-Object { $_ -and $_.holder -ne "inkling" })
+  if (-not $q.Count) { return "" }
+  $w = $q[0]; $t = [DateTimeOffset]::FromUnixTimeSeconds([int64]$w.since).LocalDateTime.ToString("HH:mm")
+  return "$($w.label), another agent that shares this graphics card, has been waiting for it since $t. There is no deadline: the card passes to it whenever you go to sleep."
+}
 function Finish($outcome) {
   $meta.outcome = $outcome; $meta.ended = (Get-Date -Format s)
   $meta | ConvertTo-Json | Set-Content "$Out\meta.json" -Encoding UTF8
@@ -49,7 +62,7 @@ if ($gs -in @("stale", "unknown", "disabled")) { Log "gate is $gs; not waking"; 
 Lease $true
 Log "lease requested (gate: $gs)"
 $deadline = (Get-Date).AddMinutes([double]$Cfg.wait_minutes)
-while ((GateState) -ne "ready") {
+while (-not (Mine)) {
   if ((Get-Date) -gt $deadline) { Lease $false; Log "GPU never became free"; Finish "skipped: GPU busy"; exit 0 }
   Start-Sleep 20; Lease $true
 }
@@ -62,6 +75,7 @@ $mindEnv = [ordered]@{
   MIND_DB = "$HomeDir\mind\mind.db"
   MIND_EMBED_URL = "$env:MIND_EMBED_URL"; MIND_EMBED_MODEL = "$env:MIND_EMBED_MODEL"; MIND_EMBED_QUERY_PREFIX = "$env:MIND_EMBED_QUERY_PREFIX"
   PYTHONIOENCODING = "utf-8"
+  MIND_TURN_FILE = "$Gate\state.json"; MIND_TURN_NAME = "inkling"   # lets the mind mention, mid-waking, that another agent is waiting
 }
 
 # ── 3. prompt + harness ──
@@ -102,6 +116,7 @@ $letters = @(Get-ChildItem $fromJoe -File | Sort-Object Name | ForEach-Object { 
 $newLetters = @($letters | Where-Object { $seen -notcontains $_ })
 if ($newLetters.Count) { $status += "New from Joe in $fromJoe`: $($newLetters -join ', ')." }
 else { $status += "No new letters from Joe ($($letters.Count) earlier in $fromJoe)." }
+$w = Waiting; if ($w) { $status += $w }
 $statusNote = $status -join " "
 $minutes = [int]$Cfg.wake_minutes
 $prompt = (Get-Content "$Ctl\wake-prompt.md" -Raw).Replace("{WORKSPACE}", $Ws).Replace("{SITE_KEY_NOTE}", $siteNote).Replace("{STATUS_NOTE}", $statusNote)
@@ -150,8 +165,7 @@ Set-Content $seenFile $letters -Encoding UTF8
 $outcome = "finished"
 while (-not $p.WaitForExit(15000)) {
   Lease $true
-  $gs = GateState
-  if ($gs -ne "ready") { $outcome = "preempted ($gs)"; break }
+  if (-not (Mine)) { $outcome = "preempted ($(GateState))"; break }
   if ($minutes -gt 0 -and $sw.Elapsed.TotalMinutes -gt $minutes) { $outcome = "timed out"; break }
   # Hang guard, not a work limit: the harness writes its session database on every model reply and tool call.
   $last = @("$HomeDir\.hermes\state.db-wal", "$HomeDir\.hermes\state.db", "$Out\stdout.txt") | Where-Object { Test-Path $_ } | ForEach-Object { (Get-Item $_).LastWriteTime } | Sort-Object | Select-Object -Last 1

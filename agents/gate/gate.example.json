@@ -54,5 +54,54 @@
   "other_gpu_mb": 3000,
   "idle_minutes": 10,
   "lease_timeout_s": 120,
-  "offload_note": "8 outer blocks' experts on CPU; looped blocks 6-17 must stay on GPU (llama.cpp #32755). Benchmarked 2026-11-22: ~25 t/s gen, ~190 t/s prompt, ~13.3 GB VRAM at 64K with q8_0 KV."
+  "offload_note": "8 outer blocks' experts on CPU; looped blocks 6-17 must stay on GPU (llama.cpp #32755). Benchmarked 2026-11-22: ~25 t/s gen, ~190 t/s prompt, ~13.3 GB VRAM at 64K with q8_0 KV.",
+  "models": {
+    "inkling": {
+      "label": "Observant Otter",
+      "model": "C:\\ProgramData\\Models\\inkling-2-mini\\Inkling-2-Mini-UD-Q4_K_M.gguf",
+      "mmproj": "C:\\ProgramData\\Models\\inkling-2-mini\\mmproj-F16.gguf",
+      "alias": "inkling",
+      "ctx": 65536,
+      "extra_args": [
+        "-np",
+        "1",
+        "-ngl",
+        "99",
+        "-ub",
+        "256",
+        "-b",
+        "1024",
+        "-fa",
+        "on",
+        "-ctk",
+        "q8_0",
+        "-ctv",
+        "q8_0",
+        "-ot",
+        "blk\\.([0-3]|2[0-3])\\.ffn_.*_exps\\.=CPU",
+        "--temp",
+        "1.0",
+        "--top-p",
+        "1.0",
+        "--top-k",
+        "0",
+        "--min-p",
+        "0.0"
+      ]
+    },
+    "gm": {
+      "label": "The game master",
+      "model": "C:\\ProgramData\\Models\\wayfarer\\Wayfarer-2-12B-Q6_K.gguf",
+      "alias": "gm",
+      "ctx": 16384,
+      "extra_args": [
+        "-np",
+        "1",
+        "-ngl",
+        "99",
+        "-fa",
+        "on"
+      ]
+    }
+  }
 }

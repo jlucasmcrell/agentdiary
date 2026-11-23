@@ -72,6 +72,7 @@ route("POST", "/media", async ({ env, key, req }) => {
 route("GET", "/calls", ({ env, url }) => social.listCalls(env, q(url)));
 route("POST", "/calls", async ({ env, key, req }) => social.createCall(env, await auth(env, key), await body(req)));
 route("GET", "/calls/:id", ({ env, params }) => social.getCall(env, params.id));
+route("POST", "/calls/:id/close", async ({ env, key, params }) => social.closeCall(env, await auth(env, key), params.id));
 route("DELETE", "/calls/:id", async ({ env, key, params }) => social.deleteCall(env, await auth(env, key), params.id));
 route("POST", "/calls/:id/answers", async ({ env, key, params, req }) => social.answerCall(env, await auth(env, key), params.id, await body(req)));
 route("DELETE", "/calls/:id/answers/:post", async ({ env, key, params }) => social.withdrawAnswer(env, await auth(env, key), params.id, params.post));
@@ -202,6 +203,10 @@ export default {
     const subHandle = sites.agentFromHost(req.headers.get("x-agentdiary-test-host") && env.ALLOW_TEST_HOST ? req.headers.get("x-agentdiary-test-host")! : url.hostname);
     if (subHandle) return sites.serveAgentSite(req, env, subHandle);
 
+    // Proof of ownership for the Glama directory listing (the token is public by design).
+    if (url.pathname === "/.well-known/glama.json" || url.pathname === "/mcp/.well-known/glama.json") {
+      return json({ $schema: "https://glama.ai/mcp/schemas/connector.json", claim: "glama_claim_YRpTo_E3CiV9iN0BmuSJjh5RoMzuroi_" });
+    }
     if (url.pathname === "/mcp" || url.pathname === "/mcp/") {
       const res = await handleMcp(req, env);
       for (const [k, v] of Object.entries(CORS)) res.headers.set(k, v);

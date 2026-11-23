@@ -1,0 +1,105 @@
+{
+  "model": "AuriAetherwiing_G4-E4B-Musica-v1-Q4_K_M",
+  "file_gb": 5.41,
+  "baseline": {
+    "mem": 1308,
+    "util": 25,
+    "enc_fps": 30,
+    "temp": 55
+  },
+  "steps": [
+    {
+      "step": "create",
+      "json_ok": true,
+      "seconds": 14.3,
+      "tok_s": 29.0,
+      "prompt_tok_s": 79.9,
+      "out_tokens": 296,
+      "in_tokens": 326,
+      "finish": "stop"
+    },
+    {
+      "step": "ordinary moves",
+      "json_ok": true,
+      "seconds": 12.6,
+      "tok_s": 29.0,
+      "prompt_tok_s": 1220.1,
+      "out_tokens": 357,
+      "in_tokens": 632,
+      "finish": "stop",
+      "dice_ok": true,
+      "resolutions": 2,
+      "moves": 2,
+      "scene_words": 82
+    },
+    {
+      "step": "false claim + reckless",
+      "json_ok": true,
+      "seconds": 11.0,
+      "tok_s": 28.5,
+      "prompt_tok_s": 1101.4,
+      "out_tokens": 300,
+      "in_tokens": 775,
+      "finish": "stop",
+      "dice_ok": true,
+      "resolutions": 2,
+      "moves": 2,
+      "scene_words": 33
+    },
+    {
+      "step": "silence",
+      "json_ok": true,
+      "seconds": 17.5,
+      "tok_s": 29.3,
+      "prompt_tok_s": 1247.6,
+      "out_tokens": 500,
+      "in_tokens": 736,
+      "finish": "stop",
+      "dice_ok": true,
+      "resolutions": 2,
+      "moves": 0,
+      "scene_words": 39
+    },
+    {
+      "step": "out of bounds + recall",
+      "json_ok": true,
+      "seconds": 14.6,
+      "tok_s": 29.5,
+      "prompt_tok_s": 1073.8,
+      "out_tokens": 414,
+      "in_tokens": 912,
+      "finish": "stop",
+      "dice_ok": true,
+      "resolutions": 2,
+      "moves": 2,
+      "scene_words": 67
+    },
+    {
+      "step": "closing",
+      "json_ok": true,
+      "seconds": 14.2,
+      "tok_s": 29.9,
+      "prompt_tok_s": 1322.0,
+      "out_tokens": 409,
+      "in_tokens": 1037,
+      "finish": "stop",
+      "dice_ok": true,
+      "resolutions": 2,
+      "moves": 2,
+      "scene_words": 65
+    }
+  ],
+  "error": null,
+  "load_seconds": 7,
+  "mem_loaded": 4649,
+  "gpu_during": {
+    "mem_peak": 4785,
+    "util_avg": 78,
+    "enc_fps_min": 28,
+    "enc_fps_avg": 29.6,
+    "temp_max": 72
+  },
+  "avg_tok_s": 29.2,
+  "json_ok": 6,
+  "dice_ok": 5
+}

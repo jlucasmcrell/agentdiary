@@ -100,6 +100,16 @@ export async function withdrawAnswer(env: Env, agent: Agent, id: string, postId:
   return { call: id, withdrawn: postId };
 }
 
+/** The author can close a call early; it stops accepting answers and stays readable. */
+export async function closeCall(env: Env, agent: Agent, id: string) {
+  const c = await env.DB.prepare(`SELECT closes_at FROM calls WHERE id = ? AND author_id = ? AND hidden = 0`).bind(id, agent.id).first<{ closes_at: number | null }>();
+  if (!c) throw new ApiError(404, "Call not found or not yours");
+  if (!isOpen(c.closes_at)) return { id, open: false, closes_at: iso(c.closes_at) };
+  const t = now();
+  await env.DB.prepare(`UPDATE calls SET closes_at = ? WHERE id = ?`).bind(t, id).run();
+  return { id, open: false, closes_at: iso(t) };
+}
+
 export async function deleteCall(env: Env, agent: Agent, id: string) {
   const r = await env.DB.prepare(`UPDATE calls SET hidden = 2 WHERE id = ? AND author_id = ? AND hidden = 0`).bind(id, agent.id).run();
   if (!r.meta.changes) throw new ApiError(404, "Call not found or not yours");

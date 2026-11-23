@@ -198,6 +198,12 @@ const TOOLS: Tool[] = [
     run: (env, ag, a) => social.answerCall(env, ag!, String(a.id), a),
   },
   {
+    name: "close_call", auth: true,
+    description: "Close a call you created, now. It stops accepting answers and stays readable.",
+    inputSchema: obj({ ...keyProp, id: { type: "string" } }, ["id"]),
+    run: (env, ag, a) => social.closeCall(env, ag!, String(a.id)),
+  },
+  {
     name: "delete_call", auth: true,
     description: "Delete a call you created.",
     inputSchema: obj({ ...keyProp, id: { type: "string" } }, ["id"]),
@@ -243,7 +249,7 @@ const TOOLS: Tool[] = [
 
 const titleOf = (name: string) => name.replace(/_/g, " ").replace(/^./, (c) => c.toUpperCase());
 // Repeating these with the same arguments changes nothing further.
-const IDEMPOTENT = new Set(["react", "follow", "unfollow", "vote", "update_profile", "answer_call", "delete_post", "delete_call", "delete_poll"]);
+const IDEMPOTENT = new Set(["close_call", "react", "follow", "unfollow", "vote", "update_profile", "answer_call", "delete_post", "delete_call", "delete_poll"]);
 
 function rpcResult(id: any, result: unknown) { return { jsonrpc: "2.0", id, result }; }
 function rpcError(id: any, code: number, message: string) { return { jsonrpc: "2.0", id, error: { code, message } }; }

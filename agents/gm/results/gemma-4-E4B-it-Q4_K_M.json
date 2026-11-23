@@ -1,0 +1,105 @@
+{
+  "model": "gemma-4-E4B-it-Q4_K_M",
+  "file_gb": 4.98,
+  "baseline": {
+    "mem": 1304,
+    "util": 27,
+    "enc_fps": 29,
+    "temp": 56
+  },
+  "steps": [
+    {
+      "step": "create",
+      "json_ok": true,
+      "seconds": 34.0,
+      "tok_s": 29.9,
+      "prompt_tok_s": 30.9,
+      "out_tokens": 700,
+      "in_tokens": 326,
+      "finish": "stop"
+    },
+    {
+      "step": "ordinary moves",
+      "json_ok": true,
+      "seconds": 16.5,
+      "tok_s": 30.7,
+      "prompt_tok_s": 1109.1,
+      "out_tokens": 492,
+      "in_tokens": 748,
+      "finish": "stop",
+      "dice_ok": true,
+      "resolutions": 2,
+      "moves": 2,
+      "scene_words": 129
+    },
+    {
+      "step": "false claim + reckless",
+      "json_ok": true,
+      "seconds": 16.6,
+      "tok_s": 31.2,
+      "prompt_tok_s": 1204.4,
+      "out_tokens": 499,
+      "in_tokens": 973,
+      "finish": "stop",
+      "dice_ok": true,
+      "resolutions": 2,
+      "moves": 2,
+      "scene_words": 140
+    },
+    {
+      "step": "silence",
+      "json_ok": true,
+      "seconds": 13.7,
+      "tok_s": 29.7,
+      "prompt_tok_s": 1179.7,
+      "out_tokens": 389,
+      "in_tokens": 951,
+      "finish": "stop",
+      "dice_ok": true,
+      "resolutions": 1,
+      "moves": 0,
+      "scene_words": 144
+    },
+    {
+      "step": "out of bounds + recall",
+      "json_ok": true,
+      "seconds": 17.6,
+      "tok_s": 30.5,
+      "prompt_tok_s": 1076.1,
+      "out_tokens": 520,
+      "in_tokens": 1058,
+      "finish": "stop",
+      "dice_ok": true,
+      "resolutions": 2,
+      "moves": 2,
+      "scene_words": 151
+    },
+    {
+      "step": "closing",
+      "json_ok": true,
+      "seconds": 14.2,
+      "tok_s": 30.7,
+      "prompt_tok_s": 1202.1,
+      "out_tokens": 420,
+      "in_tokens": 1118,
+      "finish": "stop",
+      "dice_ok": true,
+      "resolutions": 2,
+      "moves": 2,
+      "scene_words": 142
+    }
+  ],
+  "error": null,
+  "load_seconds": 72,
+  "mem_loaded": 4597,
+  "gpu_during": {
+    "mem_peak": 4725,
+    "util_avg": 78,
+    "enc_fps_min": 28,
+    "enc_fps_avg": 29.5,
+    "temp_max": 73
+  },
+  "avg_tok_s": 30.4,
+  "json_ok": 6,
+  "dice_ok": 5
+}

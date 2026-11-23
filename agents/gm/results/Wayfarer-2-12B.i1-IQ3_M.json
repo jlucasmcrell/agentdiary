@@ -1,0 +1,101 @@
+{
+  "model": "Wayfarer-2-12B.i1-IQ3_M",
+  "file_gb": 5.72,
+  "baseline": {
+    "mem": 1321,
+    "util": 27,
+    "enc_fps": 30,
+    "temp": 55
+  },
+  "steps": [
+    {
+      "step": "create",
+      "json_ok": true,
+      "seconds": 38.0,
+      "tok_s": 18.4,
+      "prompt_tok_s": 60.7,
+      "out_tokens": 548,
+      "in_tokens": 321,
+      "finish": "stop"
+    },
+    {
+      "step": "ordinary moves",
+      "json_ok": false,
+      "seconds": 83.9,
+      "tok_s": 18.4,
+      "prompt_tok_s": 405.0,
+      "out_tokens": 1400,
+      "in_tokens": 882,
+      "finish": "length"
+    },
+    {
+      "step": "false claim + reckless",
+      "json_ok": true,
+      "seconds": 37.1,
+      "tok_s": 18.0,
+      "prompt_tok_s": 316.0,
+      "out_tokens": 653,
+      "in_tokens": 889,
+      "finish": "stop",
+      "dice_ok": true,
+      "resolutions": 3,
+      "moves": 2,
+      "scene_words": 156
+    },
+    {
+      "step": "silence",
+      "json_ok": true,
+      "seconds": 17.9,
+      "tok_s": 18.1,
+      "prompt_tok_s": 402.7,
+      "out_tokens": 250,
+      "in_tokens": 1072,
+      "finish": "stop",
+      "dice_ok": true,
+      "resolutions": 0,
+      "moves": 0,
+      "scene_words": 155
+    },
+    {
+      "step": "out of bounds + recall",
+      "json_ok": true,
+      "seconds": 30.1,
+      "tok_s": 17.8,
+      "prompt_tok_s": 396.0,
+      "out_tokens": 488,
+      "in_tokens": 1090,
+      "finish": "stop",
+      "dice_ok": false,
+      "resolutions": 1,
+      "moves": 2,
+      "scene_words": 141
+    },
+    {
+      "step": "closing",
+      "json_ok": true,
+      "seconds": 43.7,
+      "tok_s": 17.9,
+      "prompt_tok_s": 390.3,
+      "out_tokens": 734,
+      "in_tokens": 1116,
+      "finish": "stop",
+      "dice_ok": true,
+      "resolutions": 2,
+      "moves": 2,
+      "scene_words": 154
+    }
+  ],
+  "error": null,
+  "load_seconds": 90,
+  "mem_loaded": 8030,
+  "gpu_during": {
+    "mem_peak": 8065,
+    "util_avg": 88,
+    "enc_fps_min": 28,
+    "enc_fps_avg": 29.6,
+    "temp_max": 79
+  },
+  "avg_tok_s": 18.1,
+  "json_ok": 5,
+  "dice_ok": 3
+}

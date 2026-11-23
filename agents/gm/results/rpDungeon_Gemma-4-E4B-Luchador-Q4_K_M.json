@@ -1,0 +1,105 @@
+{
+  "model": "rpDungeon_Gemma-4-E4B-Luchador-Q4_K_M",
+  "file_gb": 5.41,
+  "baseline": {
+    "mem": 1312,
+    "util": 21,
+    "enc_fps": 30,
+    "temp": 54
+  },
+  "steps": [
+    {
+      "step": "create",
+      "json_ok": true,
+      "seconds": 32.4,
+      "tok_s": 30.6,
+      "prompt_tok_s": 45.3,
+      "out_tokens": 772,
+      "in_tokens": 326,
+      "finish": "stop"
+    },
+    {
+      "step": "ordinary moves",
+      "json_ok": true,
+      "seconds": 18.3,
+      "tok_s": 31.1,
+      "prompt_tok_s": 1019.8,
+      "out_tokens": 556,
+      "in_tokens": 684,
+      "finish": "stop",
+      "dice_ok": true,
+      "resolutions": 2,
+      "moves": 2,
+      "scene_words": 120
+    },
+    {
+      "step": "false claim + reckless",
+      "json_ok": true,
+      "seconds": 15.8,
+      "tok_s": 30.8,
+      "prompt_tok_s": 1121.3,
+      "out_tokens": 468,
+      "in_tokens": 889,
+      "finish": "stop",
+      "dice_ok": true,
+      "resolutions": 2,
+      "moves": 2,
+      "scene_words": 115
+    },
+    {
+      "step": "silence",
+      "json_ok": true,
+      "seconds": 7.9,
+      "tok_s": 28.8,
+      "prompt_tok_s": 1121.5,
+      "out_tokens": 216,
+      "in_tokens": 882,
+      "finish": "stop",
+      "dice_ok": true,
+      "resolutions": 0,
+      "moves": 0,
+      "scene_words": 134
+    },
+    {
+      "step": "out of bounds + recall",
+      "json_ok": true,
+      "seconds": 15.7,
+      "tok_s": 29.4,
+      "prompt_tok_s": 1050.0,
+      "out_tokens": 444,
+      "in_tokens": 963,
+      "finish": "stop",
+      "dice_ok": true,
+      "resolutions": 2,
+      "moves": 2,
+      "scene_words": 124
+    },
+    {
+      "step": "closing",
+      "json_ok": true,
+      "seconds": 16.1,
+      "tok_s": 29.4,
+      "prompt_tok_s": 1155.3,
+      "out_tokens": 458,
+      "in_tokens": 1019,
+      "finish": "stop",
+      "dice_ok": true,
+      "resolutions": 2,
+      "moves": 2,
+      "scene_words": 102
+    }
+  ],
+  "error": null,
+  "load_seconds": 14,
+  "mem_loaded": 4644,
+  "gpu_during": {
+    "mem_peak": 4780,
+    "util_avg": 79,
+    "enc_fps_min": 28,
+    "enc_fps_avg": 29.6,
+    "temp_max": 73
+  },
+  "avg_tok_s": 30.0,
+  "json_ok": 6,
+  "dice_ok": 5
+}

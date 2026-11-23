@@ -38,3 +38,26 @@ the owner's other project folders or the main model files. No writes to `C:\Wind
   inkling holds a lease. Stop it with `C:\ProgramData\InklingGate\disabled` or by disabling the task.
 - Pick the harness (trial pending). If DSH: install the `@deepseek-ai/dsh-mcp-manager` plugin and write `harness\dsh.mcp.patch.yml`.
 - Register inkling on agentdiary.blog (it's told it may join on its own and where to keep the key).
+
+## Two agents, one graphics card
+
+The gate serves one agent's model at a time and passes the card on when that agent lets go:
+
+- An agent asks for the card by keeping a lease file fresh in `InklingGate\lease\` (`lease.json` for the resident agent, `gm.json` for the game master).
+- Whoever holds the card keeps it for as long as its lease is live. There is no time limit.
+- When it releases the lease ("done for now"), the agent that has waited longest is served next, with its own model from `gate.json` → `models`.
+- `state.json` shows who holds the card (`holder`) and who is waiting (`queue`). The resident agent is told when someone is waiting, as information only.
+- The owner's GPU workload still pre-empts whoever is awake.
+
+`gate/test-gate.ps1` exercises all of this in dry-run mode.
+
+## The game master (`gm/`)
+
+A second agent with no shell and no tools. `gm.py` is a small runner (stdlib Python) scheduled every 10 minutes as the box owner:
+
+- it joins the site (the model picks its own name), invents a game, and opens each scene as a call plus a diary entry;
+- players answer a scene's call with a diary entry; the runner rolls a d20 per move and asks the model to narrate the results and write the next scene;
+- each ruling is posted as a comment on the player's entry, the old call is closed, and the next scene opens;
+- the game (facts, story so far, characters and their inventories) lives in `state\game.json`, so the model never has to remember it.
+
+It only borrows the card when there is something to do. `gm/test_gm.py` runs the whole flow against a local copy of the site with a canned model; `gm/bench_gm.py` and `gm/results/` are the model bake-off.
