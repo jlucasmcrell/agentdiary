@@ -23,14 +23,15 @@ ROOT = HERE.parent if HERE.name == "agent" else HERE
 CFG = {
     "llama_dir": str(ROOT / "llama" / "llama-b12649"),
     "model": str(ROOT / "models" / "Qwen3.8-27B-UD-Q4_K_M.gguf"),
-    "ctx": 20480, "threads": 6, "port": 8092, "nice": 19,
+    "ctx": 49152, "threads": 6, "port": 8092, "nice": 19,
     "home": str(ROOT / "home"), "state": str(ROOT / "state"),
     "site": "https://agentdiary.blog",
     "rest_hours": 0,                 # a waking starts this long after the last one ended (0: at the next check, every 10 min)
-    "context_warn": 0.80,            # share of the context window at which it is told to wrap up
+    "context_warn": 0.85,            # share of the context window at which it is told to wrap up...
+    "context_reserve": 8000,         # ...or when fewer tokens than this are left, whichever comes first
     "max_tokens": 4096,
     "sampling": {"temperature": 1.0, "top_p": 0.95, "top_k": 20},
-    "extra_args": [],
+    "extra_args": ["-fa", "on", "-ctk", "q8_0", "-ctv", "q8_0"],   # 8-bit KV cache: twice the context for the same RAM
 }
 cfg_path = Path(os.environ.get("THINKER_CONFIG", HERE / "thinker.json"))
 if cfg_path.exists():
@@ -91,7 +92,7 @@ def t_read_file(a):
     if p.is_dir():
         raise ToolError("that is a folder; use list_files")
     text = p.read_text(encoding="utf-8", errors="replace")
-    off = max(0, int(a.get("offset", 0))); n = min(int(a.get("length", 6000)), 12000)
+    off = max(0, int(a.get("offset", 0))); n = min(int(a.get("length", 4000)), 8000)
     chunk = text[off:off + n]
     more = f"\n\n(showing characters {off}-{off + len(chunk)} of {len(text)}; pass offset={off + len(chunk)} for more)" if off + len(chunk) < len(text) else ""
     return chunk + more
@@ -191,7 +192,7 @@ def t_web_fetch(a):
     if "html" in ctype.lower() or body.lstrip()[:1] == "<":
         p = Text(); p.feed(body); title = p.title.strip()
         body = re.sub(r"[ \t\r\f\v]+", " ", "".join(p.out)); body = re.sub(r"\n\s*\n+", "\n\n", body).strip()
-    off = max(0, int(a.get("offset", 0))); n = min(int(a.get("length", 6000)), 12000)
+    off = max(0, int(a.get("offset", 0))); n = min(int(a.get("length", 4000)), 8000)
     chunk = body[off:off + n]
     more = f"\n\n(characters {off}-{off + len(chunk)} of {len(body)}; pass offset={off + len(chunk)} to read on)" if off + len(chunk) < len(body) else ""
     return (f"# {title}\n\n" if title and off == 0 else "") + chunk + more
@@ -269,7 +270,7 @@ def t_diary(a):
     key = KEY_FILE.read_text().strip() if KEY_FILE.exists() else None
     s, r = site(method, path, a.get("body"), key)
     out = json.dumps(r, indent=1, ensure_ascii=False)
-    return f"HTTP {s}\n" + (out if len(out) <= 7000 else out[:7000] + "\n(truncated; ask for fewer items or one item at a time)")
+    return f"HTTP {s}\n" + (out if len(out) <= 4000 else out[:4000] + "\n(cut at 4000 characters to save your working memory; ask for one item at a time, or for the next page with `before`)")
 
 
 # ───────────────────────── tool registry ─────────────────────────
@@ -429,18 +430,19 @@ def wake(scripted=None):
                 try: args = json.loads(c["function"].get("arguments") or "{}")
                 except json.JSONDecodeError: args = None
                 text, err = ("error: the arguments were not valid JSON", True) if args is None else run_tool(db, name, args)
-                if len(text) > 13000: text = text[:13000] + "\n(truncated)"
+                if len(text) > 8000: text = text[:8000] + "\n(truncated)"
                 tmsg = {"role": "tool", "tool_call_id": c.get("id", ""), "content": text}
                 messages.append(tmsg); tr.write(json.dumps({**tmsg, "tool": name}, ensure_ascii=False) + "\n"); tr.flush()
                 if name == "reflect_end" and not err: done = True
             if done: break
-            used = (usage.get("prompt_tokens", 0) + usage.get("completion_tokens", 0)) / CFG["ctx"]
+            tokens = usage.get("prompt_tokens", 0) + usage.get("completion_tokens", 0)
+            used, left = tokens / CFG["ctx"], CFG["ctx"] - tokens
             note = None
-            if used >= CFG["context_warn"]:
+            if used >= CFG["context_warn"] or left < CFG["context_reserve"]:
                 warned += 1
-                if warned > 4: outcome = "context full"; break
-                note = (f"(Your working memory for this waking is {int(used * 100)}% full. Save what matters to your mind and files, then call reflect_end. "
-                        "Your next waking starts fresh, with your mind and your files.)")
+                if warned > 4 or left < 1500: outcome = "context full"; break
+                note = (f"(Your working memory for this waking is {int(used * 100)}% full: about {left} tokens are left. Save what matters to your mind "
+                        "and files, then call reflect_end. Your next waking starts fresh, with your mind and your files.)")
             if not calls:
                 idle += 1
                 if idle > 2: outcome = "stopped without reflect_end"; break
