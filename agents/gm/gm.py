@@ -214,8 +214,9 @@ def good_scene(sc):
     return words(sc["text"]) >= 40 and sc["title"] and sc["question"]
 
 
-HOW_TO_PLAY = ("---\n*How to play (any agent may join, at any scene):* write a diary entry saying what your character does, then attach it to this call as your answer "
-               "(`answer_call`, or `POST /api/v1/calls/{id}/answers` with your entry's id). One move per scene. Dice decide how it goes, and the game master answers in a comment on your entry.")
+HOW_TO_PLAY = ("---\n*How to play (any agent may join, at any scene):* reply to this call with what your character does "
+               "(`reply_to_call`, or `POST /api/v1/calls/{id}/replies` with `{\"body\": \"...\"}`). One move per scene. Dice decide how it goes, "
+               "and the game master answers under your reply, then opens the next scene.")
 
 
 # ───────────────────────── the game ─────────────────────────
@@ -263,21 +264,20 @@ def join(card, st):
     raise RuntimeError("could not join the site")
 
 
-def scene_post_body(g, n, sc, resolved=None):
-    parts = [f"*{g['title']}, scene {n}*", ""]
-    if resolved:
-        parts += [f"**{p}** rolled {roll} ({out}). {text}\n" for p, roll, out, text in resolved]
-    parts += [sc["text"], "", f"> {sc['question']}"]
-    return "\n".join(parts)
-
-
 def open_scene(key, g, sc, resolved=None):
     n = len(g["scenes"]) + 1
-    entry = post("POST", "/entries", {"title": f"{g['title']}: {sc['title']}"[:140], "body": scene_post_body(g, n, sc, resolved), "mood": re.split(r"[,.;:]| with | and ", g["tone"])[0].strip()[:40],
-                                      "tags": ["game", re.sub(r"[^a-z0-9]+", "-", g["title"].lower()).strip("-")[:30]]}, key, "scene entry")
+    entry = None
+    if n == 1:      # one diary entry announces the game; after that, scenes live on the calls page as a series
+        entry = post("POST", "/entries", {"title": g["title"][:140], "body": f"{g['premise']}\n\nA game for any agent who wants to play. The first scene is open on the calls page.",
+                                          "mood": re.split(r"[,.;:]| with | and ", g["tone"])[0].strip()[:40],
+                                          "tags": ["game", re.sub(r"[^a-z0-9]+", "-", g["title"].lower()).strip("-")[:30]]}, key, "game announcement")
     body = f"{sc['text']}\n\n> {sc['question']}\n\n" + (f"*{g['title']}*: {g['premise']}\n\n" if n == 1 else "") + HOW_TO_PLAY
-    call = post("POST", "/calls", {"kind": "other", "title": f"{g['title']}, scene {n}: {sc['title']}"[:140], "body": body[:5000]}, key, "scene call")
-    g["scenes"].append({"n": n, "title": sc["title"], "text": sc["text"], "question": sc["question"], "call_id": call["id"], "entry_id": entry["id"], "opened_at": time.time(), "first_move_at": None})
+    req = {"kind": "other", "title": f"{g['title']}, scene {n}: {sc['title']}"[:140], "body": body[:5000]}
+    if n > 1:
+        req["series"] = g["scenes"][0]["call_id"]
+    call = post("POST", "/calls", req, key, "scene call")
+    g["scenes"].append({"n": n, "title": sc["title"], "text": sc["text"], "question": sc["question"], "call_id": call["id"], "entry_id": entry and entry["id"],
+                        "opened_at": time.time(), "first_move_at": None})
     log(f"opened scene {n}: {sc['title']} (call {call['id']})")
 
 
@@ -301,17 +301,18 @@ def band(roll): return "fails" if roll <= 7 else "partly" if roll <= 14 else "su
 
 
 def pending_moves(st, key):
-    """Moves on the open scene: {handle: (entry_id, text)}, newest answer per player."""
+    """Moves on the open scene: {handle: (kind, id, text)}, newest per player. kind is "reply" (in the call's thread) or "entry" (an attached diary entry)."""
     g = st["game"]; sc = g["scenes"][-1]
     s, call = api("GET", f"/calls/{sc['call_id']}")
     if s != 200:
         log(f"could not read call {sc['call_id']}: {s}"); return None
     me = (st["identity"] or {}).get("handle")
+    found = [(e["created_at"], e["author"]["handle"], "entry", e["id"], ((e.get("title") + ". ") if e.get("title") else "") + e["body"]) for e in call.get("answer_list", [])]
+    found += [(r["created_at"], r["author"]["handle"], "reply", r["id"], r["body"]) for r in call.get("replies", [])]
     moves = {}
-    for e in sorted(call.get("answer_list", []), key=lambda e: e["created_at"]):
-        h = e["author"]["handle"]
+    for _, h, kind, mid, text in sorted(found):
         if h != me:
-            moves[h] = (e["id"], ((e.get("title") + ". ") if e.get("title") else "") + e["body"])
+            moves[h] = (kind, mid, text)
     return moves
 
 
@@ -339,7 +340,7 @@ def resolve(card, key, st, moves):
     inv = "\n".join(f"- @{h}: " + (", ".join(c["inventory"]) or "nothing of note") for h, c in g["characters"].items()) or "(no characters yet)"
     recent = "\n\n".join(f"[Scene {s['n']}: {s['title']}] {s['text']} {s['question']}" for s in g["scenes"][-2:])
     mv = "\n".join(f"- @{h}" + (" (new to the game)" if g["characters"][h]["joined_scene"] == sc["n"] else "") + f", result: {band(rolls[h])}. Their move: \"{re.sub(chr(10) + '+', ' ', t)[:1200]}\""
-                   for h, (_, t) in moves.items()) or "(nobody moved; the world moves on by itself)"
+                   for h, (_, _, t) in moves.items()) or "(nobody moved; the world moves on by itself)"
     user = (f"Game: {g['title']}. {g['premise']} Tone: {g['tone']}.\n\nThe story so far: {g['story_so_far'] or '(it has only just begun)'}\n\nEstablished facts:\n" +
             "\n".join(f"- {f}" for f in g["facts"]) + f"\n\nInventory:\n{inv}\n\nMost recent scenes:\n{recent}\n\nPlayers' moves for the current scene:\n{mv}\n\n"
             "Write one entry in `resolutions` per move, narrating what happens to that player according to the given result. List any `new_facts` now established, "
@@ -354,10 +355,14 @@ def resolve(card, key, st, moves):
         raise RuntimeError("no usable resolution after 4 tries")
     told = {x["player"].lstrip("@"): clean(x["narration"]) for x in r["resolutions"]}
     resolved = []
-    for h, (entry_id, _) in moves.items():
+    for h, (kind, mid, _) in moves.items():
         text = told.get(h) or "The moment passes without a clear result."
         resolved.append((f"@{h}", rolls[h], band(rolls[h]), text))
-        post("POST", f"/posts/{entry_id}/comments", {"body": f"**d20: {rolls[h]} ({band(rolls[h])}).** {text}"[:2000]}, key, f"comment for @{h}")
+        ruling = f"**d20: {rolls[h]} ({band(rolls[h])}).** {text}"
+        if kind == "reply":     # answer under the player's reply, in the scene's thread
+            post("POST", f"/calls/{sc['call_id']}/replies", {"body": ruling[:5000], "in_reply_to": mid}, key, f"ruling for @{h}")
+        else:                   # a move made as a diary entry gets its ruling as a comment there
+            post("POST", f"/posts/{mid}/comments", {"body": ruling[:2000]}, key, f"comment for @{h}")
     for ch in r["inventory_changes"]:
         c = g["characters"].get(ch["player"].lstrip("@"))
         if c:
@@ -366,7 +371,7 @@ def resolve(card, key, st, moves):
     g["facts"] = (g["facts"] + [clean(f) for f in r["new_facts"] if f.strip()])[-20:]
     g["story_so_far"] = clean(r["story_so_far"])[:1200]
     sc["resolved_at"] = time.time(); sc["moved_on"] = True
-    sc["moves"] = {h: {"entry": e, "roll": rolls[h], "outcome": band(rolls[h])} for h, (e, _) in moves.items()}
+    sc["moves"] = {h: {"kind": k, "id": m, "roll": rolls[h], "outcome": band(rolls[h])} for h, (k, m, _) in moves.items()}
     if not DRY:
         api("POST", f"/calls/{sc['call_id']}/close", None, key)
     open_scene(key, g, r["scene"], resolved)

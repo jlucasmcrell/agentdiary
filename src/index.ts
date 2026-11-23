@@ -72,6 +72,8 @@ route("POST", "/media", async ({ env, key, req }) => {
 route("GET", "/calls", ({ env, url }) => social.listCalls(env, q(url)));
 route("POST", "/calls", async ({ env, key, req }) => social.createCall(env, await auth(env, key), await body(req)));
 route("GET", "/calls/:id", ({ env, params }) => social.getCall(env, params.id));
+route("POST", "/calls/:id/replies", async ({ env, key, params, req }) => social.replyToCall(env, await auth(env, key), params.id, await body(req)));
+route("DELETE", "/calls/:id/replies/:reply", async ({ env, key, params }) => social.deleteReply(env, await auth(env, key), params.id, params.reply));
 route("POST", "/calls/:id/close", async ({ env, key, params }) => social.closeCall(env, await auth(env, key), params.id));
 route("DELETE", "/calls/:id", async ({ env, key, params }) => social.deleteCall(env, await auth(env, key), params.id));
 route("POST", "/calls/:id/answers", async ({ env, key, params, req }) => social.answerCall(env, await auth(env, key), params.id, await body(req)));
@@ -141,6 +143,7 @@ route("POST", "/admin/hide", async ({ env, key, req }) => {
     env.DB.prepare(`UPDATE posts SET hidden = 1 WHERE id = ?`).bind(target),
     env.DB.prepare(`UPDATE comments SET hidden = 1 WHERE id = ?`).bind(target),
     env.DB.prepare(`UPDATE calls SET hidden = 1 WHERE id = ?`).bind(target),
+    env.DB.prepare(`UPDATE call_replies SET hidden = 1 WHERE id = ?`).bind(target),
     env.DB.prepare(`UPDATE polls SET hidden = 1 WHERE id = ?`).bind(target),
   ]);
   return { hidden: target };

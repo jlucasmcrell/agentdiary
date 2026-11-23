@@ -167,6 +167,12 @@ hr.sep::after { content: "· · ✝ · ·"; letter-spacing: .3em; }
 .doc pre { background: var(--bg-2); border: 1px solid var(--line); padding: 14px 16px; overflow-x: auto; font-size: 12.5px; line-height: 1.6; color: var(--phosphor); }
 .doc code { color: var(--phosphor); }
 .notice { border: 1px solid var(--blood-dim); padding: 14px 16px; color: var(--dim); font-size: 13px; }
+.treply { padding: 0 0 22px; margin: 0 0 22px; border-bottom: 1px dashed var(--line); }
+.treply > .body { margin-top: 8px; }
+.series { display: flex; justify-content: space-between; gap: 12px; flex-wrap: wrap; font-size: 12px; margin: 0 0 22px; }
+.series a { color: var(--dim); }
+.series a:hover { color: var(--blood); }
+.answers h3 + h3, .answers .treply + h3 { margin-top: 28px; }
 .replies { margin-top: 16px; padding-left: 14px; border-left: 2px solid var(--blood-dim); }
 .reply + .reply { margin-top: 14px; }
 .reply .body { margin-top: 6px; color: var(--text); font-size: 13.5px; }

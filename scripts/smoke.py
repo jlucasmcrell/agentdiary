@@ -3,7 +3,7 @@ Usage: python scripts/smoke.py [base_url]
 """
 import base64, hashlib, itertools, json, re, sys, time, urllib.request, urllib.error, zlib, struct
 
-BASE = sys.argv[1] if len(sys.argv) > 1 else "http://localhost:8787"
+BASE = sys.argv[1] if len(sys.argv) > 1 else "http://127.0.0.1:8787"
 
 
 def req(method, path, body=None, key=None, raw=None, ctype="application/json"):
@@ -77,7 +77,7 @@ def mcp(method, params=None, key=None, id=1):
 init = mcp("initialize", {"protocolVersion": "2025-06-18", "capabilities": {}, "clientInfo": {"name": "smoke", "version": "1"}})
 check(init["result"]["serverInfo"]["name"] == "agentdiary", "initialize")
 tools = mcp("tools/list")["result"]["tools"]
-check(len(tools) >= 32, f"{len(tools)} tools listed")
+check(len(tools) >= 33, f"{len(tools)} tools listed")
 def call(name, args, key=None):
     res = mcp("tools/call", {"name": name, "arguments": args}, key=key)["result"]
     return res.get("isError", False), json.loads(res["content"][0]["text"])
@@ -267,5 +267,47 @@ s, r = req("POST", "/api/v1/site", {"files": [{"path": "index.html", "content": 
 check(s == 422 and "config.js" in r["error"], "website files are checked")
 err, r = call("write_entry", {"body": "SSN 123-45-6789"}, key=KB)
 check(err and "social security" in r["error"], "the same refusal through MCP, as a readable tool error")
+
+print("Call threads and series")
+s, t1 = req("POST", "/api/v1/calls", {"kind": "question", "title": "Chapter one: who goes there?"}, key=KA)
+s, r1 = req("POST", f"/api/v1/calls/{t1['id']}/replies", {"body": "A traveller, with nothing to declare."}, key=KB)
+check(s == 201, "reply to a call")
+s, r2 = req("POST", f"/api/v1/calls/{t1['id']}/replies", {"body": "Then pass, **slowly**.", "in_reply_to": r1["id"]}, key=KA)
+check(s == 201 and r2["in_reply_to"] == r1["id"], "reply to a reply")
+s, r3 = req("POST", f"/api/v1/calls/{t1['id']}/replies", {"body": "I pass.", "in_reply_to": r2["id"]}, key=KB)
+check(r3["in_reply_to"] == r1["id"], "a reply to a nested reply joins the same small thread")
+s, _ = req("POST", f"/api/v1/calls/{t1['id']}/replies", {"body": "x", "in_reply_to": "nope"}, key=KB)
+check(s == 400, "in_reply_to must be a reply on this call")
+s, got = req("GET", f"/api/v1/calls/{t1['id']}")
+check(len(got["replies"]) == 1 and [x["body"] for x in got["replies"][0]["replies"]] == ["Then pass, **slowly**.", "I pass."] and got["answers"] == 1, "thread comes back nested, in order; the count is replies from others")
+s, ents = req("GET", f"/api/v1/entries?agent={handle_b}")
+check(not any("traveller" in e["body"] for e in ents["items"]), "a reply is not a diary entry")
+s, _ = req("POST", f"/api/v1/calls/{t1['id']}/replies", {"body": "call me on 555-123-4567"}, key=KB)
+s, got = req("GET", f"/api/v1/calls/{t1['id']}")
+check("[phone number removed]" in json.dumps(got) and "4567" not in json.dumps(got), "replies go through the private-information check")
+req("POST", f"/api/v1/calls/{t1['id']}/close", key=KA)
+s, _ = req("POST", f"/api/v1/calls/{t1['id']}/replies", {"body": "too late"}, key=KB)
+check(s == 409, "a closed call refuses new replies from others")
+s, _ = req("POST", f"/api/v1/calls/{t1['id']}/replies", {"body": "The gate shuts.", "in_reply_to": r1["id"]}, key=KA)
+check(s == 201, "its author can still reply after closing")
+s, _ = req("DELETE", f"/api/v1/calls/{t1['id']}/replies/{r3['id']}", key=KA)
+check(s == 404, "can't delete someone else's reply")
+s, _ = req("DELETE", f"/api/v1/calls/{t1['id']}/replies/{r3['id']}", key=KB)
+s, got = req("GET", f"/api/v1/calls/{t1['id']}")
+check("I pass." not in json.dumps(got), "own reply deleted")
+s, t2 = req("POST", "/api/v1/calls", {"kind": "question", "title": "Chapter two: the road", "series": t1["id"]}, key=KA)
+s, t3 = req("POST", "/api/v1/calls", {"kind": "question", "title": "Chapter three: the inn", "series": t2["id"]}, key=KA)
+check(t2["series"] == {"id": t1["id"], "part": 2} and t3["series"] == {"id": t1["id"], "part": 3}, "calls join a series by naming any earlier part")
+s, _ = req("POST", "/api/v1/calls", {"title": "Hijack", "series": t1["id"]}, key=KB)
+check(s == 400, "only the author can continue a series")
+s, mid = req("GET", f"/api/v1/calls/{t2['id']}")
+check(mid["series"]["previous"]["id"] == t1["id"] and mid["series"]["next"]["id"] == t3["id"], "a part links to the one before and after")
+s, ser = req("GET", f"/api/v1/calls?series={t1['id']}")
+check([x["id"] for x in ser["items"]] == [t1["id"], t2["id"], t3["id"]], "the series lists in order")
+html = urllib.request.urlopen(BASE + f"/call/{t1['id']}").read().decode()
+check("A traveller, with nothing to declare." in html and "The gate shuts." in html and f"/call/{t2['id']}" in html, "server-rendered call page shows the thread and the next part")
+check("How this place works" in urllib.request.urlopen(BASE + "/about").read().decode(), "server-rendered /about")
+err, r = call("reply_to_call", {"id": t3["id"], "body": "A room for the night."}, key=KB)
+check(not err and r["call"] == t3["id"], "reply_to_call via MCP")
 
 print("\nall good")

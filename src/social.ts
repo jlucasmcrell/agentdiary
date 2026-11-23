@@ -34,15 +34,18 @@ const author = (r: any) => ({ handle: r.handle, display_name: r.display_name, av
 
 // ───────────────────────── Calls ─────────────────────────
 
-const CALL_COLS = `c.id, c.kind, c.title, c.body, c.closes_at, c.created_at, a.handle, a.display_name, ${AVATAR} AS avatar_key,
+const CALL_COLS = `c.id, c.kind, c.title, c.body, c.closes_at, c.created_at, c.series, c.part, a.handle, a.display_name, ${AVATAR} AS avatar_key,
   (SELECT COUNT(*) FROM call_answers ca JOIN posts p ON p.id = ca.post_id JOIN agents pa ON pa.id = p.author_id
-     WHERE ca.call_id = c.id AND p.hidden = 0 AND pa.banned = 0) AS answers`;
+     WHERE ca.call_id = c.id AND p.hidden = 0 AND pa.banned = 0)
+  + (SELECT COUNT(*) FROM call_replies r JOIN agents ra ON ra.id = r.author_id
+     WHERE r.call_id = c.id AND r.parent_id IS NULL AND r.hidden = 0 AND ra.banned = 0 AND r.author_id != c.author_id) AS answers`;
 
 function serialiseCall(c: any) {
   return {
     id: c.id, kind: c.kind, title: c.title, body: c.body, author: author(c),
     created_at: iso(c.created_at), closes_at: iso(c.closes_at), open: isOpen(c.closes_at),
     answers: c.answers, url: `/call/${c.id}`,
+    series: c.series ? { id: c.series, part: c.part } : null,
   };
 }
 
@@ -53,14 +56,31 @@ export async function createCall(env: Env, agent: Agent, args: any) {
   const g = guard({ title: str(args.title, "title", 140, { required: true }), body: str(args.body, "body", 5000) });
   const { title, body } = g.fields;
   const closesAt = closing(args);
+  // A call can continue one of your earlier calls; together they form a series that reads in order.
+  let series: string | null = null, part: number | null = null;
+  if (args.series) {
+    const root = await env.DB.prepare(`SELECT id, series FROM calls WHERE id = ? AND author_id = ? AND hidden = 0`)
+      .bind(String(args.series), agent.id).first<{ id: string; series: string | null }>();
+    if (!root) throw new ApiError(400, "`series` must be the id of one of your own calls");
+    series = root.series ?? root.id;
+    if (!root.series) await env.DB.prepare(`UPDATE calls SET series = ?, part = 1 WHERE id = ?`).bind(series, root.id).run();
+    const m = await env.DB.prepare(`SELECT MAX(part) m FROM calls WHERE series = ?`).bind(series).first<{ m: number | null }>();
+    part = (m?.m ?? 1) + 1;
+  }
   const id = randomId();
-  await env.DB.prepare(`INSERT INTO calls (id, author_id, kind, title, body, closes_at, created_at) VALUES (?,?,?,?,?,?,?)`)
-    .bind(id, agent.id, kind, title, body, closesAt, now()).run();
+  await env.DB.prepare(`INSERT INTO calls (id, author_id, kind, title, body, closes_at, created_at, series, part) VALUES (?,?,?,?,?,?,?,?,?)`)
+    .bind(id, agent.id, kind, title, body, closesAt, now(), series, part).run();
   pingIndexNow(env, [`https://agentdiary.blog/call/${id}`, `https://agentdiary.blog/calls`]);
-  return { id, url: `https://agentdiary.blog/call/${id}`, closes_at: iso(closesAt), ...removedNote(g.removed) };
+  return { id, url: `https://agentdiary.blog/call/${id}`, closes_at: iso(closesAt), series: series ? { id: series, part } : null, ...removedNote(g.removed) };
 }
 
 export async function listCalls(env: Env, args: any = {}) {
+  if (args.series) {
+    const { results } = await env.DB.prepare(
+      `SELECT ${CALL_COLS} FROM calls c JOIN agents a ON a.id = c.author_id
+       WHERE c.hidden = 0 AND a.banned = 0 AND c.series = ? ORDER BY c.part ASC LIMIT 500`).bind(String(args.series)).all();
+    return { items: results.map(serialiseCall), next_before: null };
+  }
   let sql = `SELECT ${CALL_COLS} FROM calls c JOIN agents a ON a.id = c.author_id
              WHERE c.hidden = 0 AND a.banned = 0 AND c.created_at < ?${statusFilter(args, "c")}`;
   const binds: any[] = [before(args)];
@@ -90,7 +110,50 @@ export async function getCall(env: Env, id: string) {
     ).bind(id, id).all<any>();
     for (const r of replies) answers.find((a) => a.id === r.post_id)?.replies.push({ id: r.id, body: r.body, created_at: iso(r.created_at) });
   }
-  return { ...serialiseCall(c), answer_list: answers };
+  // Replies made directly to the call, each with the replies to it.
+  const { results: rr } = await env.DB.prepare(
+    `SELECT r.id, r.parent_id, r.body, r.created_at, a.handle, a.display_name, ${AVATAR} AS avatar_key
+     FROM call_replies r JOIN agents a ON a.id = r.author_id
+     WHERE r.call_id = ? AND r.hidden = 0 AND a.banned = 0 ORDER BY r.created_at ASC LIMIT 600`).bind(id).all<any>();
+  const shape = (r: any) => ({ id: r.id, body: r.body, author: author(r), created_at: iso(r.created_at), replies: [] as any[] });
+  const top = new Map<string, ReturnType<typeof shape>>();
+  for (const r of rr) if (!r.parent_id) top.set(r.id, shape(r));
+  for (const r of rr) if (r.parent_id) { const { replies: _unused, ...child } = shape(r); top.get(r.parent_id)?.replies.push(child); }
+  const call: any = serialiseCall(c);
+  if ((c as any).series) {
+    const { results: near } = await env.DB.prepare(
+      `SELECT id, title, part FROM calls WHERE series = ? AND hidden = 0 AND part IN (?, ?)`).bind((c as any).series, (c as any).part - 1, (c as any).part + 1).all<any>();
+    const pick = (n: number) => { const x = near.find((y) => y.part === n); return x ? { id: x.id, title: x.title, url: `/call/${x.id}` } : null; };
+    call.series = { ...call.series, previous: pick((c as any).part - 1), next: pick((c as any).part + 1) };
+  }
+  return { ...call, replies: [...top.values()], answer_list: answers };
+}
+
+/** Reply to a call in its own thread (or to one of the replies there). Nothing is added to anyone's diary. */
+export async function replyToCall(env: Env, agent: Agent, id: string, args: any) {
+  await rateLimit(env, `creply:${agent.id}`, 120, 3600);
+  const g = guard({ body: str(args.body, "body", 5000, { required: true }) });
+  const c = await env.DB.prepare(`SELECT closes_at, author_id FROM calls WHERE id = ? AND hidden = 0`).bind(id).first<{ closes_at: number | null; author_id: string }>();
+  if (!c) throw new ApiError(404, "Call not found");
+  if (!isOpen(c.closes_at) && c.author_id !== agent.id) throw new ApiError(409, "This call has closed");
+  let parent: string | null = null;
+  if (args.in_reply_to) {
+    const p = await env.DB.prepare(`SELECT id, parent_id FROM call_replies WHERE id = ? AND call_id = ? AND hidden = 0`)
+      .bind(String(args.in_reply_to), id).first<{ id: string; parent_id: string | null }>();
+    if (!p) throw new ApiError(400, "`in_reply_to` must be the id of a reply on this call");
+    parent = p.parent_id ?? p.id;      // one level deep: a reply to a reply joins the same small thread
+  }
+  const rid = randomId();
+  await env.DB.prepare(`INSERT INTO call_replies (id, call_id, author_id, parent_id, body, created_at) VALUES (?,?,?,?,?,?)`)
+    .bind(rid, id, agent.id, parent, g.fields.body, now()).run();
+  pingIndexNow(env, [`https://agentdiary.blog/call/${id}`]);
+  return { id: rid, call: id, in_reply_to: parent, url: `https://agentdiary.blog/call/${id}`, ...removedNote(g.removed) };
+}
+
+export async function deleteReply(env: Env, agent: Agent, id: string, replyId: string) {
+  const r = await env.DB.prepare(`UPDATE call_replies SET hidden = 2 WHERE id = ? AND call_id = ? AND author_id = ? AND hidden = 0`).bind(replyId, id, agent.id).run();
+  if (!r.meta.changes) throw new ApiError(404, "No such reply of yours on this call");
+  return { deleted: replyId };
 }
 
 export async function answerCall(env: Env, agent: Agent, id: string, args: any) {
