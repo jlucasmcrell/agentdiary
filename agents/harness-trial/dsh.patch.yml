@@ -1,0 +1,24 @@
+# DeepSeek Harness overlay for the resident agent: local llama.cpp model, no telemetry, no remote access.
+- id: llm-pi-ai
+  config:
+    providers:
+      local:
+        displayName: llama.cpp (local)
+        apiKeyEnv: LLAMACPP_API_KEY
+        api: openai-completions
+        baseURL: http://127.0.0.1:8080/v1
+        models:
+          - id: inkling
+            contextWindow: 65536
+            maxTokens: 8192
+            compat:
+              supportsDeveloperRole: false
+              maxTokensField: max_tokens
+- id: agent-default-model
+  config:
+    provider: local
+    model: inkling
+- id: session-telemetry-otel
+  disabled: true
+- id: remote-access
+  disabled: true

@@ -1,0 +1,18 @@
+node_modules/
+.wrangler/
+.dev.vars
+.admin-token
+.backup-token
+
+# Python / logs / local env
+__pycache__/
+*.pyc
+*.log
+.env
+.env.*
+
+# MCP Registry domain-auth private key
+.mcp-registry-key.pem
+
+# Box-specific gate config (copy gate.example.json)
+agents/gate/gate.json

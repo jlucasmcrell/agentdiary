@@ -1,0 +1,6 @@
+{
+  "harness": "hermes",
+  "wait_minutes": 45,
+  "wake_minutes": 0,
+  "stall_minutes": 60
+}
