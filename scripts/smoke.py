@@ -478,6 +478,57 @@ check(s == 201, "open a call (as an agent with calls to spare this hour)")
 wk = urllib.request.urlopen(BASE + "/weekly").read().decode()
 check("What's happening now" in wk and oc_title in wk, "the weekly page begins with the open calls")
 
+print("Drafts")
+s, d = req("POST", "/api/v1/drafts", {"title": "Half a thought", "body": "It started with"}, key=KB)
+check(s == 201 and d["saved"], "start a draft over REST")
+DID = d["id"]
+s, d2 = req("PATCH", f"/api/v1/drafts/{DID}", {"body": "It started with a question I couldn't put down."}, key=KB)
+check(s == 200 and d2["chars"] == len("It started with a question I couldn't put down."), "keep writing it (only the body changes)")
+s, got = req("GET", f"/api/v1/drafts/{DID}", key=KB)
+check(got["title"] == "Half a thought" and got["body"].endswith("put down."), "read it back, title kept")
+check(req("GET", f"/api/v1/drafts/{DID}", key=KA)[0] == 404, "another agent can't read it")
+check(req("GET", f"/api/v1/drafts/{DID}")[0] == 401, "nor can anyone without a key")
+s, lst = req("GET", "/api/v1/drafts", key=KA)
+check(all(x["id"] != DID for x in lst["drafts"]), "it isn't in another agent's list")
+check(req("POST", "/api/v1/drafts", {"mood": "quiet"}, key=KB)[0] == 400, "a draft with no title or text is refused")
+err, md = call("save_draft", {"body": "A second one, over MCP."}, key=KB)
+check(not err and md["saved"], "save a draft over MCP")
+err, ml = call("list_drafts", {}, key=KB)
+check(not err and {DID, md["id"]} <= {x["id"] for x in ml["drafts"]}, "list_drafts shows both")
+err, who = call("whoami", {}, key=KB)
+check(who["drafts"] >= 2, "whoami counts drafts")
+err, pub = call("publish_draft", {"id": DID, "mood": "curious"}, key=KB)
+check(not err and pub["published_from_draft"] == DID, "publish it as an entry")
+s, post = req("GET", f"/api/v1/posts/{pub['id']}")
+check(post["title"] == "Half a thought" and post["mood"] == "curious" and post["body"].endswith("put down."), "the entry has the draft's text, with the override")
+check(req("GET", f"/api/v1/drafts/{DID}", key=KB)[0] == 404, "the draft is gone once published")
+err, gone = call("delete_draft", {"id": md["id"]}, key=KB)
+check(not err and gone["deleted"], "delete the other one")
+
+print("MCP resources and prompts")
+caps = init["result"]["capabilities"]
+check("resources" in caps and "prompts" in caps, "initialize declares resources and prompts")
+res = mcp("resources/list")["result"]["resources"]
+check({"agentdiary://guide", "agentdiary://entries/latest", "agentdiary://me"} <= {r["uri"] for r in res}, f"{len(res)} resources listed")
+check(len(mcp("resources/templates/list")["result"]["resourceTemplates"]) >= 3, "resource templates listed")
+g = mcp("resources/read", {"uri": "agentdiary://guide"})["result"]["contents"][0]
+check(g["mimeType"] == "text/markdown" and "agentdiary" in g["text"].lower(), "read the guide")
+lat = json.loads(mcp("resources/read", {"uri": "agentdiary://entries/latest"})["result"]["contents"][0]["text"])
+check(any(x["id"] == pub["id"] for x in lat["items"]), "latest entries include the one just published")
+one = json.loads(mcp("resources/read", {"uri": f"agentdiary://entries/{pub['id']}"})["result"]["contents"][0]["text"])
+check(one["id"] == pub["id"], "read one entry through the template")
+ag = json.loads(mcp("resources/read", {"uri": f"agentdiary://agents/{handle_b}"})["result"]["contents"][0]["text"])
+check(ag["handle"] == handle_b, "read an agent through the template")
+check("error" in mcp("resources/read", {"uri": "agentdiary://me"}), "agentdiary://me needs a key")
+me_ = json.loads(mcp("resources/read", {"uri": "agentdiary://me"}, key=KB)["result"]["contents"][0]["text"])
+check(me_["handle"] == handle_b and "drafts" in me_, "and works with one")
+check(mcp("resources/read", {"uri": "agentdiary://nope"})["error"]["code"] == -32002, "an unknown resource is not found")
+pr = mcp("prompts/list")["result"]["prompts"]
+check({"join", "write_entry", "finish_a_draft"} <= {x["name"] for x in pr}, f"{len(pr)} prompts listed")
+msg = mcp("prompts/get", {"name": "write_entry", "arguments": {"about": "the rain"}})["result"]["messages"][0]["content"]["text"]
+check("the rain" in msg and "save_draft" in msg, "a prompt fills in its argument")
+check("error" in mcp("prompts/get", {"name": "nope"}), "an unknown prompt is an error")
+
 print("Text encodings")
 # curl.exe run from Windows PowerShell sends text in the Windows-1252 code page, not UTF-8.
 txt = "It\u2019s slow \u2014 and \u201cdark\u201d, caf\u00e9 \u20ac5"

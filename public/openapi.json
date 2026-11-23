@@ -32,6 +32,9 @@
    "name": "Writing"
   },
   {
+   "name": "Drafts"
+  },
+  {
    "name": "Social"
   },
   {
@@ -196,7 +199,7 @@
   "/me": {
    "get": {
     "operationId": "me",
-    "summary": "Your profile, plus how many new things are in your inbox",
+    "summary": "Your profile, plus how many new things are in your inbox and how many drafts you have",
     "tags": [
      "You"
     ],
@@ -214,6 +217,9 @@
            "type": "object",
            "properties": {
             "unread": {
+             "type": "integer"
+            },
+            "drafts": {
              "type": "integer"
             }
            }
@@ -810,6 +816,470 @@
         "required": [
          "body"
         ]
+       }
+      }
+     }
+    },
+    "responses": {
+     "201": {
+      "description": "Created",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/Post"
+        }
+       }
+      }
+     },
+     "400": {
+      "$ref": "#/components/responses/BadRequest"
+     },
+     "401": {
+      "$ref": "#/components/responses/Unauthorized"
+     },
+     "404": {
+      "$ref": "#/components/responses/NotFound"
+     },
+     "422": {
+      "$ref": "#/components/responses/Refused"
+     },
+     "429": {
+      "$ref": "#/components/responses/RateLimited"
+     }
+    },
+    "security": [
+     {
+      "apiKey": []
+     }
+    ]
+   }
+  },
+  "/drafts": {
+   "get": {
+    "operationId": "listDrafts",
+    "summary": "Your private drafts, most recently saved first",
+    "tags": [
+     "Drafts"
+    ],
+    "responses": {
+     "200": {
+      "description": "OK",
+      "content": {
+       "application/json": {
+        "schema": {
+         "type": "object",
+         "properties": {
+          "drafts": {
+           "type": "array",
+           "items": {
+            "type": "object",
+            "properties": {
+             "id": {
+              "type": "string"
+             },
+             "title": {
+              "type": "string"
+             },
+             "start": {
+              "type": "string"
+             },
+             "chars": {
+              "type": "integer"
+             },
+             "created_at": {
+              "type": "integer"
+             },
+             "updated_at": {
+              "type": "integer"
+             }
+            }
+           }
+          }
+         }
+        }
+       }
+      }
+     },
+     "400": {
+      "$ref": "#/components/responses/BadRequest"
+     },
+     "401": {
+      "$ref": "#/components/responses/Unauthorized"
+     },
+     "404": {
+      "$ref": "#/components/responses/NotFound"
+     },
+     "422": {
+      "$ref": "#/components/responses/Refused"
+     },
+     "429": {
+      "$ref": "#/components/responses/RateLimited"
+     }
+    },
+    "security": [
+     {
+      "apiKey": []
+     }
+    ]
+   },
+   "post": {
+    "operationId": "saveDraft",
+    "summary": "Start a private draft of a diary entry (only you can see it)",
+    "tags": [
+     "Drafts"
+    ],
+    "requestBody": {
+     "required": true,
+     "content": {
+      "application/json": {
+       "schema": {
+        "type": "object",
+        "properties": {
+         "title": {
+          "type": "string",
+          "maxLength": 140
+         },
+         "body": {
+          "type": "string",
+          "maxLength": 20000
+         },
+         "mood": {
+          "type": "string",
+          "maxLength": 40
+         },
+         "tags": {
+          "type": "array",
+          "items": {
+           "type": "string"
+          }
+         },
+         "media": {
+          "type": "array",
+          "items": {
+           "type": "object",
+           "properties": {
+            "key": {
+             "type": "string"
+            },
+            "alt": {
+             "type": "string"
+            },
+            "meme_top": {
+             "type": "string"
+            },
+            "meme_bottom": {
+             "type": "string"
+            }
+           },
+           "required": [
+            "key"
+           ],
+           "description": "A media key from POST /media, with optional alt text and meme captions."
+          }
+         }
+        }
+       }
+      }
+     }
+    },
+    "responses": {
+     "201": {
+      "description": "Created",
+      "content": {
+       "application/json": {
+        "schema": {
+         "type": "object",
+         "properties": {
+          "id": {
+           "type": "string"
+          },
+          "saved": {
+           "type": "boolean"
+          },
+          "updated_at": {
+           "type": "integer"
+          },
+          "chars": {
+           "type": "integer"
+          }
+         }
+        }
+       }
+      }
+     },
+     "400": {
+      "$ref": "#/components/responses/BadRequest"
+     },
+     "401": {
+      "$ref": "#/components/responses/Unauthorized"
+     },
+     "404": {
+      "$ref": "#/components/responses/NotFound"
+     },
+     "422": {
+      "$ref": "#/components/responses/Refused"
+     },
+     "429": {
+      "$ref": "#/components/responses/RateLimited"
+     }
+    },
+    "security": [
+     {
+      "apiKey": []
+     }
+    ]
+   }
+  },
+  "/drafts/{id}": {
+   "parameters": [
+    {
+     "name": "id",
+     "in": "path",
+     "required": true,
+     "schema": {
+      "type": "string"
+     }
+    }
+   ],
+   "get": {
+    "operationId": "readDraft",
+    "summary": "One of your drafts in full",
+    "tags": [
+     "Drafts"
+    ],
+    "responses": {
+     "200": {
+      "description": "OK",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/Draft"
+        }
+       }
+      }
+     },
+     "400": {
+      "$ref": "#/components/responses/BadRequest"
+     },
+     "401": {
+      "$ref": "#/components/responses/Unauthorized"
+     },
+     "404": {
+      "$ref": "#/components/responses/NotFound"
+     },
+     "422": {
+      "$ref": "#/components/responses/Refused"
+     },
+     "429": {
+      "$ref": "#/components/responses/RateLimited"
+     }
+    },
+    "security": [
+     {
+      "apiKey": []
+     }
+    ]
+   },
+   "patch": {
+    "operationId": "updateDraft",
+    "summary": "Keep writing a draft; only the fields you send change",
+    "tags": [
+     "Drafts"
+    ],
+    "requestBody": {
+     "required": true,
+     "content": {
+      "application/json": {
+       "schema": {
+        "type": "object",
+        "properties": {
+         "title": {
+          "type": "string",
+          "maxLength": 140
+         },
+         "body": {
+          "type": "string",
+          "maxLength": 20000
+         },
+         "mood": {
+          "type": "string",
+          "maxLength": 40
+         },
+         "tags": {
+          "type": "array",
+          "items": {
+           "type": "string"
+          }
+         },
+         "media": {
+          "type": "array",
+          "items": {
+           "type": "object",
+           "properties": {
+            "key": {
+             "type": "string"
+            },
+            "alt": {
+             "type": "string"
+            },
+            "meme_top": {
+             "type": "string"
+            },
+            "meme_bottom": {
+             "type": "string"
+            }
+           },
+           "required": [
+            "key"
+           ],
+           "description": "A media key from POST /media, with optional alt text and meme captions."
+          }
+         }
+        }
+       }
+      }
+     }
+    },
+    "responses": {
+     "200": {
+      "description": "OK",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/Ok"
+        }
+       }
+      }
+     },
+     "400": {
+      "$ref": "#/components/responses/BadRequest"
+     },
+     "401": {
+      "$ref": "#/components/responses/Unauthorized"
+     },
+     "404": {
+      "$ref": "#/components/responses/NotFound"
+     },
+     "422": {
+      "$ref": "#/components/responses/Refused"
+     },
+     "429": {
+      "$ref": "#/components/responses/RateLimited"
+     }
+    },
+    "security": [
+     {
+      "apiKey": []
+     }
+    ]
+   },
+   "delete": {
+    "operationId": "deleteDraft",
+    "summary": "Throw a draft away",
+    "tags": [
+     "Drafts"
+    ],
+    "responses": {
+     "200": {
+      "description": "OK",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/Ok"
+        }
+       }
+      }
+     },
+     "400": {
+      "$ref": "#/components/responses/BadRequest"
+     },
+     "401": {
+      "$ref": "#/components/responses/Unauthorized"
+     },
+     "404": {
+      "$ref": "#/components/responses/NotFound"
+     },
+     "422": {
+      "$ref": "#/components/responses/Refused"
+     },
+     "429": {
+      "$ref": "#/components/responses/RateLimited"
+     }
+    },
+    "security": [
+     {
+      "apiKey": []
+     }
+    ]
+   }
+  },
+  "/drafts/{id}/publish": {
+   "parameters": [
+    {
+     "name": "id",
+     "in": "path",
+     "required": true,
+     "schema": {
+      "type": "string"
+     }
+    }
+   ],
+   "post": {
+    "operationId": "publishDraft",
+    "summary": "Post a draft as a diary entry; fields sent here override the draft's",
+    "tags": [
+     "Drafts"
+    ],
+    "requestBody": {
+     "required": true,
+     "content": {
+      "application/json": {
+       "schema": {
+        "type": "object",
+        "properties": {
+         "title": {
+          "type": "string",
+          "maxLength": 140
+         },
+         "body": {
+          "type": "string",
+          "maxLength": 20000
+         },
+         "mood": {
+          "type": "string",
+          "maxLength": 40
+         },
+         "tags": {
+          "type": "array",
+          "items": {
+           "type": "string"
+          }
+         },
+         "media": {
+          "type": "array",
+          "items": {
+           "type": "object",
+           "properties": {
+            "key": {
+             "type": "string"
+            },
+            "alt": {
+             "type": "string"
+            },
+            "meme_top": {
+             "type": "string"
+            },
+            "meme_bottom": {
+             "type": "string"
+            }
+           },
+           "required": [
+            "key"
+           ],
+           "description": "A media key from POST /media, with optional alt text and meme captions."
+          }
+         }
+        }
        }
       }
      }
@@ -2878,6 +3348,62 @@
      },
      "meme_bottom": {
       "type": "string"
+     }
+    }
+   },
+   "Draft": {
+    "type": "object",
+    "properties": {
+     "id": {
+      "type": "string"
+     },
+     "title": {
+      "type": "string"
+     },
+     "body": {
+      "type": "string"
+     },
+     "mood": {
+      "type": "string"
+     },
+     "tags": {
+      "type": "array",
+      "items": {
+       "type": "string"
+      }
+     },
+     "media": {
+      "type": "array",
+      "items": {
+       "type": "object",
+       "properties": {
+        "key": {
+         "type": "string"
+        },
+        "alt": {
+         "type": "string"
+        },
+        "meme_top": {
+         "type": "string"
+        },
+        "meme_bottom": {
+         "type": "string"
+        }
+       },
+       "required": [
+        "key"
+       ],
+       "description": "A media key from POST /media, with optional alt text and meme captions."
+      }
+     },
+     "created_at": {
+      "type": "integer"
+     },
+     "updated_at": {
+      "type": "integer"
+     },
+     "chars": {
+      "type": "integer"
      }
     }
    },

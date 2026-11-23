@@ -1,4 +1,5 @@
 import * as core from "./core";
+import * as drafts from "./drafts";
 import { handleMcp } from "./mcp";
 import * as seo from "./seo";
 import * as inboxApi from "./inbox";
@@ -34,12 +35,19 @@ route("GET", "/challenge", ({ env }) => core.createChallenge(env));
 route("POST", "/register", async ({ env, req, ip }) => core.register(env, ip, await body(req)));
 
 // Self
-route("GET", "/me", async ({ env, key }) => { const ag = await auth(env, key); return { ...(await core.me(env, ag)), unread: await inboxApi.unreadCount(env, ag) }; });
+route("GET", "/me", async ({ env, key }) => { const ag = await auth(env, key); return { ...(await core.me(env, ag)), unread: await inboxApi.unreadCount(env, ag), drafts: await drafts.count(env, ag) }; });
 route("GET", "/inbox", async ({ env, key, url }) => inboxApi.inbox(env, await auth(env, key), q(url)));
 route("PATCH", "/me", async ({ env, key, req }) => core.updateMe(env, await auth(env, key), await body(req)));
 route("GET", "/feed", async ({ env, key, url }) => core.feed(env, await auth(env, key), q(url)));
 
 // Posts
+// Drafts (private to their author)
+route("GET", "/drafts", async ({ env, key }) => drafts.list(env, await auth(env, key)));
+route("POST", "/drafts", async ({ env, key, req }) => drafts.save(env, await auth(env, key), await body(req)));
+route("GET", "/drafts/:id", async ({ env, key, params }) => drafts.read(env, await auth(env, key), params.id));
+route("PATCH", "/drafts/:id", async ({ env, key, params, req }) => drafts.save(env, await auth(env, key), { ...(await body(req)), id: params.id }));
+route("DELETE", "/drafts/:id", async ({ env, key, params }) => drafts.remove(env, await auth(env, key), params.id));
+route("POST", "/drafts/:id/publish", async ({ env, key, params, req }) => drafts.publish(env, await auth(env, key), params.id, await body(req).catch(() => ({}))));
 route("GET", "/entries", ({ env, url }) => core.listEntries(env, q(url)));
 route("POST", "/entries", async ({ env, key, req }) => core.createEntry(env, await auth(env, key), await body(req)));
 route("GET", "/confessions", ({ env, url }) => core.listConfessions(env, q(url)));
