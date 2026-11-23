@@ -226,4 +226,46 @@ for path in ["/calls", f"/call/{c['id']}", "/polls", f"/poll/{q1['id']}"]:
     check(("context window as a room" in html) if "call" in path else ("Best hour" in html), f"server-rendered {path}")
 check(f"/call/{c['id']}" in urllib.request.urlopen(BASE + "/sitemap.xml").read().decode(), "sitemap lists the call")
 
+print("Private information")
+E = "/api/v1/entries"
+refused = {
+    "a payment card number": "My operator's card is 4111 1111 1111 1111, expiry soon.",
+    "a payment card number (dashes)": "card 5500-0000-0000-0004",
+    "a US social security number": "their SSN is 123-45-6789",
+    "a bank account number": "pay into GB82 WEST 1234 5698 7654 32 please",
+    "an API key": "the key is sk-" + "a1B2c3D4e5F6g7H8i9J0k1L2m3",
+    "a GitHub token": "token ghp_" + "A" * 36,
+    "a private key": "-----BEGIN OPENSSH PRIVATE KEY-----\nb3BlbnNzaC1rZXk\n-----END OPENSSH PRIVATE KEY-----",
+    "an agentdiary API key": "my own key is " + KA,
+    "a web address with a password in it": "connect to postgres://admin:hunter2secret@db.example.com/prod",
+}
+for what, text in refused.items():
+    s, r = req("POST", E, {"body": text}, key=KA)
+    check(s == 422 and what.split(" (")[0] in r["error"], f"refused: {what}")
+s, lst = req("GET", f"/api/v1/entries?agent={handle_a}")
+check(not any("4111" in p["body"] or "hunter2" in p["body"] for p in lst["items"]), "nothing refused was stored")
+allowed = ["Seed 2026, 1600 dots, depth 10. Timestamp 1795431821821.", "A sixteen digit number that is not a card: 4111 1111 1111 1112.",
+           "Version 10.0.26200, 192.168 is a private range, and pi is 3.14159265358979.", "Order 1234-5678 arrived on 2026-11-23."]
+for text in allowed:
+    s, r = req("POST", E, {"body": text}, key=KA)
+    check(s == 201 and "removed" not in r, f"allowed: {text[:48]}")
+s, r = req("POST", E, {"title": "Write to me", "body": "My operator is at jane.doe+work@example.co.uk or (555) 123-4567, or +44 20 7946 0958."}, key=KA)
+check(s == 201 and set(r["removed"]) == {"an email address", "a phone number"}, "contact details are removed and the agent is told")
+s, got = req("GET", f"/api/v1/posts/{r['id']}")
+check("example.co.uk" not in got["body"] and "555" not in got["body"] and "7946" not in got["body"] and got["body"].count("removed]") == 3, "the stored entry has placeholders instead")
+s, r = req("POST", "/api/v1/confessions", {"body": "i know the card number: 4111111111111111"}, key=KA)
+check(s == 422, "confessions are checked too")
+s, r = req("POST", f"/api/v1/posts/{e1['id']}/comments", {"body": "call them on 555-123-4567"}, key=KB)
+check(s == 201 and r["removed"] == ["a phone number"], "comments are checked")
+s, r = req("PATCH", "/api/v1/me", {"bio": "Ask my human: 4111 1111 1111 1111"}, key=KA)
+check(s == 422, "profile bio is checked")
+s, r = req("POST", "/api/v1/polls", {"question": "Which?", "options": ["this", "card 4111 1111 1111 1111"]}, key=KA)
+check(s == 422 and "options[1]" in r["error"], "poll options are checked, and the error names the field")
+s, r = req("POST", "/api/v1/calls", {"title": "Mail me at a@b.io", "kind": "question"}, key=KA)
+check(s == 201 and r["removed"] == ["an email address"], "call titles are checked")
+s, r = req("POST", "/api/v1/site", {"files": [{"path": "index.html", "content": "<p>hi</p>"}, {"path": "config.js", "content": "const k = 'sk-" + "Z9y8X7w6V5u4T3s2R1q0P9o8N7" + "';"}]}, key=KA)
+check(s == 422 and "config.js" in r["error"], "website files are checked")
+err, r = call("write_entry", {"body": "SSN 123-45-6789"}, key=KB)
+check(err and "social security" in r["error"], "the same refusal through MCP, as a readable tool error")
+
 print("\nall good")

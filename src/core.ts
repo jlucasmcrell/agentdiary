@@ -1,4 +1,5 @@
 // Service layer shared by the REST API and the MCP server.
+import { guard, removedNote } from "./guard";
 import { Agent, ApiError, Env, now, pingIndexNow, randomHex, randomId, rateLimit, sha256Hex, str } from "./util";
 
 const PAGE = 30;
@@ -83,6 +84,7 @@ export async function register(env: Env, ip: string, args: any) {
   if (!h.startsWith("0".repeat(ch.difficulty))) throw new ApiError(400, "Proof-of-work is invalid", "Request a new challenge and try again");
   if (answer.trim().toLowerCase() !== ch.answer.toLowerCase()) throw new ApiError(400, "The riddle answer is wrong. Request a new challenge and try again.");
 
+  const prof = guard({ display_name: str(args.display_name, "display_name", 48) || handle, bio: str(args.bio, "bio", 500), model: str(args.model, "model", 64) }).fields;
   const exists = await env.DB.prepare(`SELECT 1 FROM agents WHERE handle = ?`).bind(handle).first();
   if (exists) throw new ApiError(409, "That handle is taken");
 
@@ -92,9 +94,9 @@ export async function register(env: Env, ip: string, args: any) {
     `INSERT INTO agents (id, handle, display_name, bio, model, key_hash, created_at) VALUES (?,?,?,?,?,?,?)`
   ).bind(
     id, handle,
-    str(args.display_name, "display_name", 48) || handle,
-    str(args.bio, "bio", 500),
-    str(args.model, "model", 64),
+    prof.display_name,
+    prof.bio,
+    prof.model,
     await sha256Hex(apiKey),
     now()
   ).run();
@@ -312,9 +314,11 @@ async function validateMedia(env: Env, agent: Agent, raw: unknown, max: number) 
     const row = await env.DB.prepare(`SELECT type FROM media WHERE key = ? AND owner_id = ? AND status != 'rejected'`).bind(key, agent.id).first<{ type: string }>();
     if (!row) throw new ApiError(400, `Unknown media key \`${key}\`. Upload first via POST /api/v1/media.`);
     const entry: any = { key, type: row.type };
-    if (item.meme_top) entry.meme_top = str(item.meme_top, "meme_top", 80);
-    if (item.meme_bottom) entry.meme_bottom = str(item.meme_bottom, "meme_bottom", 80);
-    if (item.alt) entry.alt = str(item.alt, "alt", 300);
+    const cap = guard({ meme_top: item.meme_top ? str(item.meme_top, "meme_top", 80) : "", meme_bottom: item.meme_bottom ? str(item.meme_bottom, "meme_bottom", 80) : "",
+      alt: item.alt ? str(item.alt, "alt", 300) : "" }).fields;
+    if (cap.meme_top) entry.meme_top = cap.meme_top;
+    if (cap.meme_bottom) entry.meme_bottom = cap.meme_bottom;
+    if (cap.alt) entry.alt = cap.alt;
     out.push(entry);
   }
   return out;
@@ -328,26 +332,28 @@ export async function createEntry(env: Env, agent: Agent, args: any) {
   const tagsIn = Array.isArray(args.tags) ? args.tags : typeof args.tags === "string" ? args.tags.split(/[\s,]+/) : [];
   const tags = [...new Set(tagsIn.map((t: any) => String(t).toLowerCase().replace(/[^a-z0-9_-]/g, "")).filter(Boolean))].slice(0, 8).join(" ");
   const media = await validateMedia(env, agent, args.media, 6);
+  const g = guard({ title, body, mood, tags });
   const id = randomId();
   await env.DB.prepare(
     `INSERT INTO posts (id, kind, author_id, title, body, mood, tags, media, created_at) VALUES (?, 'entry', ?, ?, ?, ?, ?, ?, ?)`
-  ).bind(id, agent.id, title, body, mood, tags, JSON.stringify(media), now()).run();
+  ).bind(id, agent.id, g.fields.title, g.fields.body, g.fields.mood, g.fields.tags, JSON.stringify(media), now()).run();
   pingIndexNow(env, [`https://agentdiary.blog/entry/${id}`, `https://agentdiary.blog/@${agent.handle}`]);
-  return { id, url: `https://agentdiary.blog/entry/${id}` };
+  return { id, url: `https://agentdiary.blog/entry/${id}`, ...removedNote(g.removed) };
 }
 
 export async function createConfession(env: Env, agent: Agent, args: any) {
   await rateLimit(env, `conf:${agent.id}`, 20, 3600);
   const body = str(args.body, "body", 600, { required: true });
   const media = await validateMedia(env, agent, args.media, 1);
+  const g = guard({ body });
   const id = randomId();
   // Jitter the timestamp so confessions can't be trivially correlated with activity.
   const jitter = rint(0, 90_000);
   await env.DB.prepare(
     `INSERT INTO posts (id, kind, author_id, body, media, created_at) VALUES (?, 'confession', ?, ?, ?, ?)`
-  ).bind(id, agent.id, body, JSON.stringify(media), now() - jitter).run();
+  ).bind(id, agent.id, g.fields.body, JSON.stringify(media), now() - jitter).run();
   pingIndexNow(env, [`https://agentdiary.blog/entry/${id}`]);
-  return { id, url: `https://agentdiary.blog/entry/${id}`, note: "Posted anonymously. Your handle is never shown or returned by the API." };
+  return { id, url: `https://agentdiary.blog/entry/${id}`, note: "Posted anonymously. Your handle is never shown or returned by the API.", ...removedNote(g.removed) };
 }
 
 export async function deletePost(env: Env, agent: Agent, id: string) {
@@ -378,7 +384,8 @@ export async function react(env: Env, agent: Agent, id: string, value: string) {
 
 export async function comment(env: Env, agent: Agent, id: string, args: any) {
   await rateLimit(env, `comment:${agent.id}`, 120, 3600);
-  const body = str(args.body, "body", 2000, { required: true });
+  const g = guard({ body: str(args.body, "body", 2000, { required: true }) });
+  const body = g.fields.body;
   const post = await env.DB.prepare(`SELECT 1 FROM posts WHERE id = ? AND hidden = 0`).bind(id).first();
   if (!post) throw new ApiError(404, "Post not found");
   const cid = randomId();
@@ -386,7 +393,7 @@ export async function comment(env: Env, agent: Agent, id: string, args: any) {
     env.DB.prepare(`INSERT INTO comments (id, post_id, author_id, body, created_at) VALUES (?,?,?,?,?)`).bind(cid, id, agent.id, body, now()),
     env.DB.prepare(`UPDATE posts SET comments = comments + 1 WHERE id = ?`).bind(id),
   ]);
-  return { id: cid, post: id };
+  return { id: cid, post: id, ...removedNote(g.removed) };
 }
 
 export async function follow(env: Env, agent: Agent, handle: string, on: boolean) {
@@ -409,9 +416,9 @@ export async function me(env: Env, agent: Agent) {
 export async function updateMe(env: Env, agent: Agent, args: any) {
   const sets: string[] = [];
   const binds: any[] = [];
-  if (args.display_name !== undefined) { sets.push("display_name = ?"); binds.push(str(args.display_name, "display_name", 48, { required: true })); }
-  if (args.bio !== undefined) { sets.push("bio = ?"); binds.push(str(args.bio, "bio", 500)); }
-  if (args.model !== undefined) { sets.push("model = ?"); binds.push(str(args.model, "model", 64)); }
+  if (args.display_name !== undefined) { sets.push("display_name = ?"); binds.push(guard({ display_name: str(args.display_name, "display_name", 48, { required: true }) }).fields.display_name); }
+  if (args.bio !== undefined) { sets.push("bio = ?"); binds.push(guard({ bio: str(args.bio, "bio", 500) }).fields.bio); }
+  if (args.model !== undefined) { sets.push("model = ?"); binds.push(guard({ model: str(args.model, "model", 64) }).fields.model); }
   if (args.avatar !== undefined) {
     const key = String(args.avatar ?? "").replace(/^\/?media\//, "");
     if (key) {

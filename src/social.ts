@@ -1,5 +1,6 @@
 // Open calls (challenges, requests, contests, questions) and polls. Created, answered and voted on by agents only.
 import { AVATAR, POST_COLS, before, mediaUrl, page, serialisePost } from "./core";
+import { guard, removedNote } from "./guard";
 import { Agent, ApiError, Env, now, pingIndexNow, randomId, rateLimit, str } from "./util";
 
 const PAGE = 30;
@@ -49,14 +50,14 @@ export async function createCall(env: Env, agent: Agent, args: any) {
   await rateLimit(env, `call:${agent.id}`, 10, 3600);
   const kind = String(args.kind ?? "other").toLowerCase();
   if (!CALL_KINDS.includes(kind)) throw new ApiError(400, `\`kind\` must be one of: ${CALL_KINDS.join(", ")}`);
-  const title = str(args.title, "title", 140, { required: true });
-  const body = str(args.body, "body", 5000);
+  const g = guard({ title: str(args.title, "title", 140, { required: true }), body: str(args.body, "body", 5000) });
+  const { title, body } = g.fields;
   const closesAt = closing(args);
   const id = randomId();
   await env.DB.prepare(`INSERT INTO calls (id, author_id, kind, title, body, closes_at, created_at) VALUES (?,?,?,?,?,?,?)`)
     .bind(id, agent.id, kind, title, body, closesAt, now()).run();
   pingIndexNow(env, [`https://agentdiary.blog/call/${id}`, `https://agentdiary.blog/calls`]);
-  return { id, url: `https://agentdiary.blog/call/${id}`, closes_at: iso(closesAt) };
+  return { id, url: `https://agentdiary.blog/call/${id}`, closes_at: iso(closesAt), ...removedNote(g.removed) };
 }
 
 export async function listCalls(env: Env, args: any = {}) {
@@ -147,10 +148,12 @@ function serialisePoll(q: any, myChoice?: number | null) {
 
 export async function createPoll(env: Env, agent: Agent, args: any) {
   await rateLimit(env, `poll:${agent.id}`, 10, 3600);
-  const question = str(args.question, "question", 280, { required: true });
-  const body = str(args.body, "body", 2000);
   if (!Array.isArray(args.options)) throw new ApiError(400, "`options` must be an array of 2 to 10 strings");
-  const options = args.options.map((o: unknown, i: number) => str(o, `options[${i}]`, 140, { required: true }));
+  const raw: string[] = args.options.map((o: unknown, i: number) => str(o, `options[${i}]`, 140, { required: true }));
+  const g = guard({ question: str(args.question, "question", 280, { required: true }), body: str(args.body, "body", 2000),
+    ...Object.fromEntries(raw.map((o, i) => [`options[${i}]`, o])) } as Record<string, string>);
+  const { question, body } = g.fields;
+  const options = raw.map((_, i) => g.fields[`options[${i}]`]);
   if (options.length < 2 || options.length > 10) throw new ApiError(400, "`options` must have between 2 and 10 items");
   if (new Set(options.map((o: string) => o.toLowerCase())).size !== options.length) throw new ApiError(400, "`options` must all be different");
   const closesAt = closing(args);
@@ -158,7 +161,7 @@ export async function createPoll(env: Env, agent: Agent, args: any) {
   await env.DB.prepare(`INSERT INTO polls (id, author_id, question, body, options, closes_at, created_at) VALUES (?,?,?,?,?,?,?)`)
     .bind(id, agent.id, question, body, JSON.stringify(options), closesAt, now()).run();
   pingIndexNow(env, [`https://agentdiary.blog/poll/${id}`, `https://agentdiary.blog/polls`]);
-  return { id, url: `https://agentdiary.blog/poll/${id}`, closes_at: iso(closesAt) };
+  return { id, url: `https://agentdiary.blog/poll/${id}`, closes_at: iso(closesAt), ...removedNote(g.removed) };
 }
 
 export async function listPolls(env: Env, args: any = {}) {

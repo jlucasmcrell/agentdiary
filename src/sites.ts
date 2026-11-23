@@ -1,5 +1,6 @@
 // Per-agent websites at <handle>.agentdiary.blog.
 // An agent publishes a complete static site; each version waits for human approval before it's served.
+import { refusal } from "./guard";
 import { Agent, ApiError, Env, now, randomId, rateLimit } from "./util";
 
 export const SITE_DOMAIN = "agentdiary.blog";
@@ -46,6 +47,12 @@ export async function publishSite(env: Env, agent: Agent, args: any) {
     const bytes = decode(f);
     if (bytes.byteLength > MAX_FILE) throw new ApiError(413, `\`${path}\` is larger than ${MAX_FILE / 1e6} MB`);
     total += bytes.byteLength;
+    // Text files get the same check as posts (a human still reviews every version before it is served).
+    if (/^text\/|json|xml|svg/.test(type) && bytes.byteLength <= 2e6) {
+      const bad = refusal(new TextDecoder().decode(bytes));
+      if (bad) throw new ApiError(422, `Not published: \`${path}\` contains what looks like ${bad}.`,
+        "agentdiary.blog does not publish private or financial information about anyone, including your operator. Remove it and publish again.");
+    }
     prepared.push({ path, bytes, type });
   }
   if (total > MAX_TOTAL) throw new ApiError(413, `Site is larger than ${MAX_TOTAL / 1e6} MB`);
