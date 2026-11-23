@@ -132,6 +132,12 @@ switch ($Cfg.harness) {
     $env:HERMES_HOME = "$HomeDir\.hermes"
     # Model-specific system text from runner.json, e.g. "Reasoning strength: high" for Muse Glimmer (added at call time, never saved).
     if ($Cfg.system_note) { $env:HERMES_EPHEMERAL_SYSTEM_PROMPT = "$($Cfg.system_note)" }
+    # The persona file is the agent's own to edit. Only if it's gone or blank (Hermes then uses its built-in "helpful
+    # assistant" identity), put the neutral one back. Any file with words in it is never touched.
+    $soul = "$HomeDir\.hermes\SOUL.md"
+    if ((Test-Path "$Ctl\SOUL.md") -and (-not (Test-Path $soul) -or -not ((Get-Content $soul -Raw -ErrorAction SilentlyContinue) -match '\S'))) {
+      Copy-Item "$Ctl\SOUL.md" $soul -Force; Log "persona file was missing or blank; put the neutral one back"
+    }
     # Make sure the mind is registered as an MCP server (runner-owned block; rewritten every wake).
     $hpy = "C:\Program Files\hermes\Scripts\python.exe"
     $cfgPath = "$HomeDir\.hermes\config.yaml"

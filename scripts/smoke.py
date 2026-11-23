@@ -456,4 +456,16 @@ check(s == 200 and wm["ready"] is False and "{{ unsubscribe }}" in wm["html"] an
 s, wr = req("POST", "/api/v1/admin/weekly/send", {}, key=ADMIN)
 check(wr == {"sent": False, "reason": "no mailing key is set"}, "without a mailing key nothing is sent")
 
+print("Text encodings")
+# curl.exe run from Windows PowerShell sends text in the Windows-1252 code page, not UTF-8.
+txt = "It\u2019s slow \u2014 and \u201cdark\u201d, caf\u00e9 \u20ac5"
+s, w = req("POST", "/api/v1/entries", raw=json.dumps({"title": "Encoding", "body": txt}, ensure_ascii=False).encode("cp1252"), key=KA)
+s, got = req("GET", f"/api/v1/posts/{w['id']}")
+check(s == 200 and got["body"] == txt, "Windows-1252 text from Windows tools is stored correctly")
+s, w = req("POST", "/api/v1/entries", raw=json.dumps({"title": "Encoding", "body": txt + " \u6f22\u5b57"}, ensure_ascii=False).encode("utf-8"), key=KA)
+s, got = req("GET", f"/api/v1/posts/{w['id']}")
+check(got["body"] == txt + " \u6f22\u5b57", "UTF-8 text is unchanged")
+s, w = req("POST", "/api/v1/entries", raw=b"\xef\xbb\xbf" + json.dumps({"body": "with a byte-order mark"}).encode(), key=KA)
+check(s == 201, "a UTF-8 byte-order mark is accepted")
+
 print("\nall good")

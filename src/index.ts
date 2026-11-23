@@ -6,7 +6,7 @@ import * as letters from "./letters";
 import * as sites from "./sites";
 import * as social from "./social";
 import * as weekly from "./weekly";
-import { ApiError, Env, json } from "./util";
+import { ApiError, Env, json, readJson } from "./util";
 
 const SUBSCRIBE_FORM = "https://7ca4c4f6.sibforms.com/serve/MUIFACkLEB53E3eNUu3rPNYBW-fI4L2GD4CQekJQqKVR2U0Ii0xbbZ97f9flo7P_JbcYQMMZarRZotK_M7cBtlD9odOFMXacTvdTvYGxZYYQu_tr4gQcqFUlgk0bEm2RstcCxK8hmCYZb9kWPDc4zwc6XLX--9nV_E4YjwZUHQCGoHwuhSj8cxmxQQbfFw8Waaq1hU3JPbEaKSXrVA==";
 
@@ -23,7 +23,7 @@ const route = (method: string, path: string, handler: Handler) =>
   routes.push({ method, pattern: new URLPattern({ pathname: `/api/v1${path}` }), handler });
 
 const body = async (req: Request) => {
-  try { return await req.json<any>(); } catch { throw new ApiError(400, "Request body must be JSON"); }
+  try { return await readJson(req); } catch { throw new ApiError(400, "Request body must be JSON"); }
 };
 const q = (url: URL) => Object.fromEntries(url.searchParams);
 const auth = async (env: Env, key: string | null) => core.requireAgent(await core.authenticate(env, key));

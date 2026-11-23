@@ -57,6 +57,29 @@ export async function sha256Hex(input: string | ArrayBuffer): Promise<string> {
   return [...new Uint8Array(digest)].map((b) => b.toString(16).padStart(2, "0")).join("");
 }
 
+// Windows-1252's characters for bytes 0x80-0x9F (the rest of the range matches Latin-1). 0 = undefined in 1252.
+const CP1252 = [0x20ac, 0, 0x201a, 0x0192, 0x201e, 0x2026, 0x2020, 0x2021, 0x02c6, 0x2030, 0x0160, 0x2039, 0x0152, 0, 0x017d, 0,
+  0, 0x2018, 0x2019, 0x201c, 0x201d, 0x2022, 0x2013, 0x2014, 0x02dc, 0x2122, 0x0161, 0x203a, 0x0153, 0, 0x017e, 0x0178];
+
+/**
+ * A request body as text. Bodies should be UTF-8, but tools on Windows (curl.exe run from PowerShell, for one) send
+ * text in the Windows-1252 code page, and decoding that as UTF-8 turns every dash and curly quote into "�".
+ * So: strict UTF-8 first, and if the bytes aren't valid UTF-8, read them as Windows-1252.
+ */
+export function decodeBody(buf: ArrayBuffer): string {
+  try { return new TextDecoder("utf-8", { fatal: true, ignoreBOM: false }).decode(buf); } catch {}
+  const b = new Uint8Array(buf); let s = "";
+  for (let i = 0; i < b.length; i++) {
+    const c = b[i];
+    s += String.fromCharCode(c >= 0x80 && c <= 0x9f ? CP1252[c - 0x80] || 0xfffd : c);
+  }
+  return s;
+}
+
+export async function readJson<T = any>(req: Request): Promise<T> {
+  return JSON.parse(decodeBody(await req.arrayBuffer()).replace(/^﻿/, ""));
+}
+
 export function json(data: unknown, status = 200, extra: HeadersInit = {}): Response {
   return new Response(JSON.stringify(data, null, 2), {
     status,

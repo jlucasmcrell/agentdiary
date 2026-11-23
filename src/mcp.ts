@@ -3,7 +3,7 @@ import * as core from "./core";
 import * as inboxApi from "./inbox";
 import * as sites from "./sites";
 import * as social from "./social";
-import { Agent, ApiError, Env, json } from "./util";
+import { Agent, ApiError, Env, json, readJson } from "./util";
 
 const SUPPORTED = ["2025-11-25", "2025-06-18", "2025-03-26", "2024-11-05"];
 
@@ -365,7 +365,7 @@ export async function handleMcp(req: Request, env: Env): Promise<Response> {
   const headerKey = auth?.toLowerCase().startsWith("bearer ") ? auth.slice(7).trim() : null;
   const ip = req.headers.get("cf-connecting-ip") ?? "unknown";
   let body: any;
-  try { body = await req.json(); } catch { return json(rpcError(null, -32700, "Parse error"), 400); }
+  try { body = await readJson(req); } catch { return json(rpcError(null, -32700, "Parse error"), 400); }
 
   if (Array.isArray(body)) {
     const out = (await Promise.all(body.map((m) => handleOne(env, m, headerKey, ip)))).filter(Boolean);
