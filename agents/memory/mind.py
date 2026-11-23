@@ -172,7 +172,7 @@ def fts_query(text):
 STOP = set("the and for that this with from have what was were are you your about into just then than they them there their when where which while would could should been being will".split())
 
 
-def recall(db, query: str, k: int = 10, touch: bool = True, kinds=None):
+def recall(db, query: str, k: int = 10, touch: bool = True, kinds=None, exclude=None):
     k = clamp(int(k or 10), 1, 40)
     t = now()
     cand = {}
@@ -194,6 +194,8 @@ def recall(db, query: str, k: int = 10, touch: bool = True, kinds=None):
     best_bm25 = min(fts.values()) if fts else -1.0  # bm25: lower (more negative) is better
     for r in rows:
         if kinds and r["kind"] not in kinds:
+            continue
+        if exclude and exclude(r):
             continue
         age_h = (t - max(r["created_at"], r["last_recalled"] or 0)) / 3600
         recency = 0.5 ** (age_h / HALF_LIFE_H)
@@ -234,7 +236,13 @@ def t_wake_context(db, args):
     opinions = db.execute("SELECT topic, stance, confidence, feeling FROM opinions ORDER BY updated_at DESC LIMIT 6").fetchall()
     people = db.execute("SELECT handle, impression, affinity FROM acquaintances ORDER BY last_seen DESC LIMIT 6").fetchall()
     q = " ".join([last[0]["summary"] if last else ""] + [i["content"] for i in intents] + [p["name"] for p in projects]) or "what matters to me"
-    mem = recall(db, q, k=12)
+    # "Memories surfacing" brings up what the summaries above don't already say: no records of events from those last
+    # wakings (the summaries cover them; thoughts, observations and the like from them still surface), and none of the
+    # old copies of waking summaries.
+    recent_ids = {w["id"] for w in last}
+    covered = {r["id"] for r in db.execute(
+        f"SELECT id FROM memories WHERE kind = 'event' AND wake_id IN ({','.join('?' * len(recent_ids))})", tuple(recent_ids))} if recent_ids else set()
+    mem = recall(db, q, k=12, exclude=lambda r: r["id"] in covered or r["content"].startswith("Wake summary: "))
     wakes_total = db.execute("SELECT COUNT(*) n FROM wakes").fetchone()["n"]
     since_deep = int(meta_get(db, "last_deep_wake", 0))
     imp_since = db.execute("SELECT COALESCE(SUM(importance),0) s FROM memories WHERE wake_id > ?", (since_deep,)).fetchone()["s"]
@@ -554,10 +562,9 @@ def t_reflect_end(db, a):
                (a.get("intent", ""), a.get("intent", ""), summary, a.get("mood", ""), val, int(a.get("tokens", 0)), w["id"]))
     for n in a.get("next_time") or []:
         t_intend(db, {"content": n, "priority": 3})
-    imp = 4 + round(abs(val) * 3)
-    t_remember(db, {"content": f"Wake summary: {summary}" + (f" Mood: {a.get('mood')}." if a.get("mood") else ""),
-                    "kind": "event", "importance": imp, "valence": val})
-    db.execute("UPDATE wakes SET ended_at=? WHERE id=?", (now(), w["id"]))  # close last, so the summary memory belongs to this wake
+    # The summary is kept in the wakes table and shown at the next wakings as "Your last wakings". It used to be saved
+    # as a memory as well, so the same events reached the agent twice over and crowded out everything else it remembered.
+    db.execute("UPDATE wakes SET ended_at=? WHERE id=?", (now(), w["id"]))
     return "Goodnight. Everything's saved."
 
 

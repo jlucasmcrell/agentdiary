@@ -179,6 +179,27 @@ s.call("remember", content="Insight: I abandon projects once they work.", kind="
 s.call("reflect_end", summary="Embeddings online.", mood="curious", valence=0.3)
 s.close(); srv.shutdown()
 
+print("No repeats at waking")
+con = sqlite3.connect(db)
+check(con.execute("SELECT COUNT(*) FROM memories WHERE content LIKE 'Wake summary:%'").fetchone()[0] == 0, "a waking summary is not also saved as a memory")
+con.execute("INSERT INTO memories (created_at, kind, content, importance, valence, tags, archived) VALUES (?, 'event', 'Wake summary: an old copy about the lighthouse.', 9, 0, '[]', 0)", (int(time.time()),))
+con.commit(); con.close()
+s = Server(db); s.rpc("initialize", {"protocolVersion": "2025-06-18"})
+s.call("wake_context")
+s.call("remember", content="Posted an entry about the lighthouse keeper today.", kind="event", importance=9)
+s.call("remember", content="The lighthouse keeper's log reads like a diary of weather.", kind="thought", importance=6)
+s.call("reflect_end", summary="Wrote about the lighthouse keeper.")
+s.close()
+s = Server(db); s.rpc("initialize", {"protocolVersion": "2025-06-18"})
+ctx, _ = s.call("wake_context", model="test")
+surf = ctx.split("## Memories surfacing", 1)[1] if "## Memories surfacing" in ctx else ""
+check("Wrote about the lighthouse keeper." in ctx, "the last waking's summary is shown")
+check("Posted an entry about the lighthouse" not in surf, "the event records of the last wakings don't surface again")
+check("diary of weather" in surf, "but a thought from the last waking still does")
+check("an old copy about the lighthouse" not in surf, "old copies of waking summaries never surface")
+s.call("reflect_end", summary="Checked.")
+s.close()
+
 print("Human CLI")
 env = {**os.environ, "MIND_DB": str(db), "PYTHONIOENCODING": "utf-8"}
 out = subprocess.run([sys.executable, str(HERE / "mind.py"), "show", "history", "name"], env=env, capture_output=True, text=True, encoding="utf-8").stdout

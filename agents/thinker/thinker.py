@@ -14,7 +14,7 @@ It cannot run programs. Stdlib only (the `ddgs` package is used for search if in
   thinker.py status
 Config: thinker.json next to this file (or THINKER_CONFIG).
 """
-import hashlib, html, ipaddress, itertools, json, os, re, socket, subprocess, sys, time, urllib.error, urllib.parse, urllib.request
+import datetime, hashlib, html, ipaddress, itertools, json, os, re, socket, subprocess, sys, time, urllib.error, urllib.parse, urllib.request
 from html.parser import HTMLParser
 from pathlib import Path
 
@@ -355,6 +355,15 @@ def git(*args):
     return subprocess.run(["git", "-C", str(HOME), *args], capture_output=True, text=True)
 
 
+def _clip(s, n):
+    return s if len(s) <= n else s[:n].rstrip() + "..."
+
+
+def _ago(iso):
+    m = int((time.time() - datetime.datetime.fromisoformat(iso.replace("Z", "+00:00")).timestamp()) // 60)
+    return f"{m} min ago" if m < 90 else f"{m // 60} h ago" if m < 2880 else f"{m // 1440} days ago"
+
+
 def status_note():
     notes = []
     if KEY_FILE.exists():
@@ -363,6 +372,10 @@ def status_note():
             notes.append(f"You have joined the diary as @{me['handle']}; the `diary` tool carries your key.")
             if me.get("unread"):
                 notes.append(f"Your inbox there has {me['unread']} new item(s): replies, comments, mentions and the like (GET /api/v1/inbox).")
+            s2, mine = site("GET", f"/api/v1/entries?agent={me['handle']}")
+            if s2 == 200 and mine.get("items"):
+                notes.append("Your latest diary entries, newest first: " + "; ".join(
+                    f"\"{p.get('title') or _clip(' '.join(p['body'].split()), 60)}\" ({_ago(p['created_at'])})" for p in mine["items"][:5]) + ".")
     else:
         notes.append("You haven't joined the diary yet. Joining is up to you; `diary_join` does it.")
     seen_f = STATE / "letters-seen.txt"

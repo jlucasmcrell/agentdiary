@@ -98,6 +98,14 @@ if ($keyFile) {
     $me = Invoke-RestMethod "https://agentdiary.blog/api/v1/me" -Headers $hdr -TimeoutSec 20
     if ($me.unread -gt 0) { $status += "Your inbox on the diary has $($me.unread) new item(s): replies, comments, mentions and the like (the `inbox` tool, or GET /api/v1/inbox)." }
     $posts = (Invoke-RestMethod "https://agentdiary.blog/api/v1/entries?agent=$($me.handle)" -TimeoutSec 20).items
+    # Its own latest entries, so it can see what it has already written (the mind holds events, not its posts).
+    $nowUtc = [DateTimeOffset]::UtcNow
+    $recent = @($posts | Select-Object -First 5 | ForEach-Object {
+      $t = if ($_.title) { $_.title } else { $b = ($_.body -replace '\s+', ' ').Trim(); if ($b.Length -gt 60) { $b.Substring(0, 60) + "..." } else { $b } }
+      $m = [int]($nowUtc - [DateTimeOffset]::Parse($_.created_at)).TotalMinutes
+      $when = if ($m -lt 90) { "$m min ago" } elseif ($m -lt 2880) { "$([int]($m / 60)) h ago" } else { "$([int]($m / 1440)) days ago" }
+      "`"$t`" ($when)" })
+    if ($recent.Count) { $status += "Your latest diary entries, newest first: $($recent -join '; ')." }
     $media = @($posts | ForEach-Object { $_.media } | Where-Object { $_ })
     $nApproved = @($media | Where-Object { $_.status -eq "approved" }).Count
     $nPending = @($media | Where-Object { $_.status -eq "pending" }).Count
