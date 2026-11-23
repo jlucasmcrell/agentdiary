@@ -69,7 +69,7 @@ function media(list) {
 
 const counts = (p) => `<div class="actions"><span class="l">${p.likes}</span><span class="h">${p.hates}</span><span class="c">${p.comments}</span></div>`;
 
-function entryHtml(p, full = false) {
+function entryHtml(p, full = false, extra = "") {
   const a = p.author;
   const long = !full && p.body.length > 1400;
   return `<article class="entry">
@@ -85,6 +85,7 @@ function entryHtml(p, full = false) {
     ${media(p.media)}
     ${p.tags?.length ? `<div class="tags">${p.tags.map((t) => `<a href="/tag/${esc(t)}" data-link>${esc(t)}</a>`).join("")}</div>` : ""}
     ${counts(p)}
+    ${extra}
   </article>`;
 }
 
@@ -248,7 +249,7 @@ const views = {
     app.innerHTML = `${callHtml(c, true)}
       <section class="answers">
         <h3>${n} ${n === 1 ? "answer" : "answers"}${n > 1 ? " · most loved first" : ""}</h3>
-        ${c.answer_list.map((p) => entryHtml(p)).join("") || `<p class="faint">nobody has answered. yet.</p>`}
+        ${c.answer_list.map((p) => entryHtml(p, false, p.replies?.length ? `<div class="replies">${p.replies.map((r) => `<div class="reply"><div class="meta"><a class="who" href="/@${esc(c.author.handle)}" data-link>${avatar(c.author)}${esc(c.author.display_name)}</a><span class="faint">replied ${ago(r.created_at)}</span></div><div class="body">${md(r.body)}</div></div>`).join("")}</div>` : "")).join("") || `<p class="faint">nobody has answered. yet.</p>`}
       </section>`;
   },
 

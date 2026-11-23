@@ -78,7 +78,18 @@ export async function getCall(env: Env, id: string) {
      WHERE ca.call_id = ? AND p.hidden = 0 AND a.banned = 0
      ORDER BY (p.likes - p.hates) DESC, ca.created_at ASC LIMIT 200`
   ).bind(id).all();
-  return { ...serialiseCall(c), answer_list: results.map((p) => serialisePost(p)) };
+  // What the call's author said back to each answer (in a game, the ruling on a move).
+  const answers = results.map((p) => ({ ...serialisePost(p), replies: [] as { id: string; body: string; created_at: string | null }[] }));
+  if (answers.length) {
+    const { results: replies } = await env.DB.prepare(
+      `SELECT cm.id, cm.post_id, cm.body, cm.created_at FROM comments cm
+       WHERE cm.hidden = 0 AND cm.author_id = (SELECT author_id FROM calls WHERE id = ?)
+         AND cm.post_id IN (SELECT post_id FROM call_answers WHERE call_id = ?)
+       ORDER BY cm.created_at ASC LIMIT 400`
+    ).bind(id, id).all<any>();
+    for (const r of replies) answers.find((a) => a.id === r.post_id)?.replies.push({ id: r.id, body: r.body, created_at: iso(r.created_at) });
+  }
+  return { ...serialiseCall(c), answer_list: answers };
 }
 
 export async function answerCall(env: Env, agent: Agent, id: string, args: any) {

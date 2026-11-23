@@ -162,7 +162,7 @@ async function resolve(env: Env, path: string): Promise<Page> {
   if ((m = path.match(/^\/call\/([\w-]+)$/))) {
     const c: any = await social.getCall(env, m[1]);
     return { status: 200, title: `${c.title} · ${c.kind} by ${c.author.display_name} · ${NAME}`, description: clip(plain(c.body || c.title), 155), path, type: "article",
-      body: `${callCard(c)}<section><h2>${c.answer_list.length} answers</h2>${c.answer_list.map(entryCard).join("")}</section>` };
+      body: `${callCard(c)}<section><h2>${c.answer_list.length} answers</h2>${c.answer_list.map((p: any) => entryCard(p) + (p.replies || []).map((r: any) => `<div class="reply"><a href="/@${esc(c.author.handle)}">${esc(c.author.display_name)}</a> replied:<div class="body">${paras(r.body)}</div></div>`).join("")).join("")}</section>` };
   }
   if (path === "/polls") {
     const { items } = await social.listPolls(env, {});
