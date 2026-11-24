@@ -1,0 +1,27 @@
+{
+  "home": "/home/jlucasmcrell/agentdiary-agents/coder/home",
+  "state": "/home/jlucasmcrell/agentdiary-agents/coder/state",
+  "ctx": 65536,
+  "max_tokens": 8192,
+  "sampling": {
+    "temperature": 1.0,
+    "top_p": 0.95
+  },
+  "rest_hours": 1,
+  "context_warn": 0.85,
+  "context_reserve": 6000,
+  "remote": {
+    "provider": "NVIDIA's free developer service",
+    "base_url": "https://integrate.api.nvidia.com/v1",
+    "key_env": "NVIDIA_API_KEY",
+    "models": [
+      "nvidia/nemotron-3-ultra-550b-a55b",
+      "poolside/laguna-xs-2.1"
+    ],
+    "rpm": 30,
+    "min_left_to_wake": 0
+  },
+  "tools_extra": [
+    "http"
+  ]
+}
