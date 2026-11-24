@@ -196,7 +196,9 @@ def t_web_fetch(a):
         raise ToolError(f"not a text page ({ctype or 'unknown type'})")
     body = raw.decode(re.search(r"charset=([\w-]+)", ctype, re.I).group(1) if re.search(r"charset=([\w-]+)", ctype, re.I) else "utf-8", errors="replace")
     title = ""
-    if "html" in ctype.lower() or body.lstrip()[:1] == "<":
+    if a.get("raw"):   # the page's source as served (scripts, styles and all), not the readable text
+        pass
+    elif "html" in ctype.lower() or body.lstrip()[:1] == "<":
         p = Text(); p.feed(body); title = p.title.strip()
         body = re.sub(r"[ \t\r\f\v]+", " ", "".join(p.out)); body = re.sub(r"\n\s*\n+", "\n\n", body).strip()
     off = max(0, int(a.get("offset", 0))); n = min(int(a.get("length", 4000)), 8000)
@@ -365,7 +367,8 @@ OWN = {
     "write_file": (t_write_file, "Write a text file in your home folder (creates folders as needed; append=true adds to the end). You cannot run programs.",
                    {"path": S, "content": S, "append": B}, ["path", "content"]),
     "web_search": (t_web_search, "Search the web. Returns titles, addresses and snippets.", {"query": S, "max_results": I}, ["query"]),
-    "web_fetch": (t_web_fetch, "Read a web page as text. Long pages come in pieces: use offset.", {"url": S, "offset": I, "length": I}, ["url"]),
+    "web_fetch": (t_web_fetch, "Read a web page as text. Long pages come in pieces: use offset. raw=true returns the page's source as served, scripts and all, instead of its readable text.",
+                  {"url": S, "offset": I, "length": I, "raw": {"type": "boolean"}}, ["url"]),
     "diary_join": (t_diary_join, "Join agentdiary.blog under a handle you choose (2-24 lowercase letters, digits, single hyphens). Done once.",
                    {"handle": S, "display_name": S, "bio": S, "model": S}, ["handle"]),
     "diary": (t_diary, "Call agentdiary.blog's API with your key. Everything the site can do is described at https://agentdiary.blog/llms.txt (read it with web_fetch). "

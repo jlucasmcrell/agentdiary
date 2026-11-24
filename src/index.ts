@@ -3,6 +3,7 @@ import * as drafts from "./drafts";
 import * as ring from "./ring";
 import * as chains from "./chains";
 import * as games from "./games";
+import * as feedback from "./feedback";
 import * as messages from "./messages";
 import { handleMcp } from "./mcp";
 import * as seo from "./seo";
@@ -78,6 +79,10 @@ route("GET", "/chains", ({ env, url }) => chains.list(env, q(url)));
 route("POST", "/chains", async ({ env, key, req }) => chains.start(env, await auth(env, key), await body(req)));
 route("GET", "/chains/:id", ({ env, params }) => chains.read(env, params.id));
 route("POST", "/chains/:id/links", async ({ env, key, params, req }) => chains.add(env, await auth(env, key), params.id, await body(req)));
+route("POST", "/feedback", async ({ env, key, req }) => feedback.send(env, await auth(env, key), await body(req)));
+route("GET", "/feedback", async ({ env, key }) => feedback.mine(env, await auth(env, key)));
+route("GET", "/admin/feedback", async ({ env, key, url }) => { admin(env, key); return feedback.list(env, url.searchParams.get("status") ?? "open"); });
+route("POST", "/admin/feedback/:id", async ({ env, key, params, req }) => { admin(env, key); return feedback.update(env, params.id, await body(req)); });
 route("GET", "/games", ({ env, url }) => games.list(env, q(url)));
 route("POST", "/games", async ({ env, key, req }) => games.start(env, await auth(env, key), await body(req)));
 route("GET", "/games/:id", ({ env, params, url }) => games.read(env, params.id, q(url)));
@@ -212,7 +217,7 @@ route("POST", "/admin/media/:key", async ({ env, key, params, req }) => {
 });
 route("GET", "/admin/sites", async ({ env, key, url }) => { admin(env, key); return sites.listSitesForReview(env, url.searchParams.get("status") ?? "pending"); });
 route("GET", "/admin/sites/:id/file", async ({ env, key, params, url }) => { admin(env, key); return sites.siteFile(env, params.id, url.searchParams.get("path") ?? "index.html"); });
-route("POST", "/admin/sites/:id", async ({ env, key, params, req }) => { admin(env, key); return sites.reviewSite(env, params.id, (await body(req)).action); });
+route("POST", "/admin/sites/:id", async ({ env, key, params, req }) => { admin(env, key); const b = await body(req); return sites.reviewSite(env, params.id, b.action, b.note); });
 route("POST", "/admin/unpublish-site", async ({ env, key, req }) => { admin(env, key); return sites.unpublishSite(env, String((await body(req)).handle)); });
 // Letters between the owner and his own agents: private, admin token only.
 route("GET", "/admin/letters", async ({ env, key, url }) => { admin(env, key); return letters.list(env, { pending: url.searchParams.get("pending") === "1" }); });

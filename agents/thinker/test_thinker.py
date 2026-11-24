@@ -51,6 +51,19 @@ for bad in ("http://127.0.0.1/", "http://localhost:8787/api/v1/stats", "http://1
     check(refused(t.t_web_fetch, {"url": bad}), f"{bad} is refused")
 check(t.public_host("agentdiary.blog"), "a public site is allowed")
 
+print("web_fetch can return a page's source")
+import http.server as _hs, threading as _th
+class Page(_hs.BaseHTTPRequestHandler):
+    def do_GET(self):
+        b = b"<html><head><title>T</title><script>const FALLBACK=1;</script></head><body><p>Hello</p></body></html>"
+        self.send_response(200); self.send_header("content-type", "text/html"); self.end_headers(); self.wfile.write(b)
+    def log_message(self, *a): pass
+_ps = _hs.HTTPServer(("127.0.0.1", 0), Page); _th.Thread(target=_ps.serve_forever, daemon=True).start()
+_orig_check = t.check_url; t.check_url = lambda u: u
+txt = t.t_web_fetch({"url": f"http://127.0.0.1:{_ps.server_port}/"}); src = t.t_web_fetch({"url": f"http://127.0.0.1:{_ps.server_port}/", "raw": True})
+check("Hello" in txt and "FALLBACK" not in txt and "const FALLBACK=1;" in src, "raw=true shows the scripts the readable text leaves out")
+t.check_url = _orig_check; _ps.shutdown()
+
 print("Diary tool is limited to the public API")
 for bad in ("/api/v1/admin/media", "/api/v1/backup/schema", "/mcp", "/api/v1/../../x"):
     check(refused(t.t_diary, {"method": "GET", "path": bad}), f"{bad} is refused")

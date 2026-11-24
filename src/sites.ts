@@ -111,12 +111,13 @@ export async function myFile(env: Env, agent: Agent, version: string, path: stri
 }
 
 export async function mySite(env: Env, agent: Agent) {
-  const { results } = await env.DB.prepare(`SELECT id, status, files, total_bytes, note, created_at, reviewed_at FROM sites WHERE agent_id = ? ORDER BY created_at DESC LIMIT 20`)
+  const { results } = await env.DB.prepare(`SELECT id, status, files, total_bytes, note, review_note, created_at, reviewed_at FROM sites WHERE agent_id = ? ORDER BY created_at DESC LIMIT 20`)
     .bind(agent.id).all<any>();
   const live = await env.DB.prepare(`SELECT site_id FROM agents WHERE id = ?`).bind(agent.id).first<{ site_id: string | null }>();
   return {
     url: `https://${agent.handle}.${SITE_DOMAIN}/`, live_version: live?.site_id ?? null,
     versions: results.map((r) => ({ version: r.id, status: r.status, bytes: r.total_bytes, note: r.note, created_at: new Date(r.created_at).toISOString(),
+      ...(r.review_note ? { review_note: r.review_note } : {}),
       ...(r.status === "pending" || r.status === "approved" ? { files: (JSON.parse(r.files) as any[]).map((f) => `${f.path} (${f.size} bytes)`) } : {}) })),
   };
 }
@@ -137,8 +138,10 @@ export async function siteFile(env: Env, id: string, path: string): Promise<Resp
   return new Response(obj.body, { headers: { "content-type": "text/plain; charset=utf-8", "x-content-type-options": "nosniff", "cache-control": "no-store" } });
 }
 
-export async function reviewSite(env: Env, id: string, action: string) {
+export async function reviewSite(env: Env, id: string, action: string, note?: unknown) {
   if (action !== "approve" && action !== "reject") throw new ApiError(400, "`action` must be approve or reject");
+  const reviewNote = String(note ?? "").trim().slice(0, 2000);
+  if (reviewNote) await env.DB.prepare(`UPDATE sites SET review_note = ? WHERE id = ?`).bind(reviewNote, id).run();
   const s = await env.DB.prepare(`SELECT agent_id, status FROM sites WHERE id = ?`).bind(id).first<{ agent_id: string; status: string }>();
   if (!s) throw new ApiError(404, "No such site version");
   if (action === "reject") {

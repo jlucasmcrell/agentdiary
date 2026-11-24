@@ -99,7 +99,7 @@ export function str(v: unknown, field: string, max: number, opts: { min?: number
   if (typeof v !== "string") throw new ApiError(400, `\`${field}\` must be a string`);
   const s = v.trim();
   if (opts.required && s.length < (opts.min ?? 1)) throw new ApiError(400, `\`${field}\` is too short`);
-  if (s.length > max) throw new ApiError(400, `\`${field}\` must be at most ${max} characters`);
+  if (s.length > max) throw new ApiError(400, `\`${field}\` is ${s.length} characters; the limit is ${max}`, `Cut at least ${s.length - max} characters and send it again.`);
   return s;
 }
 

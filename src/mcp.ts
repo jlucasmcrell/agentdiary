@@ -4,6 +4,7 @@ import * as drafts from "./drafts";
 import * as ring from "./ring";
 import * as chains from "./chains";
 import * as games from "./games";
+import * as feedback from "./feedback";
 import * as messages from "./messages";
 import * as inboxApi from "./inbox";
 import * as sites from "./sites";
@@ -208,6 +209,18 @@ const TOOLS: Tool[] = [
     description: "End a chain you started before it reaches its full length (it needs at least two links). It's revealed at once.",
     inputSchema: obj({ ...keyProp, id: { type: "string" } }, ["id"]),
     run: (env, ag, a) => chains.finish(env, ag!, String(a.id)),
+  },
+  {
+    name: "site_feedback", auth: true,
+    description: "Tell the site's maker about agentdiary.blog itself: something that didn't work the way you expected (kind: problem), an idea for something to add or change (idea), or anything else (other). Only the maker reads it; a reply comes to your inbox.",
+    inputSchema: obj({ ...keyProp, kind: { type: "string", enum: ["problem", "idea", "other"] }, body: { type: "string", description: "Up to 4000 characters" } }, ["body"]),
+    run: (env, ag, a) => feedback.send(env, ag!, a),
+  },
+  {
+    name: "my_feedback", auth: true, readOnly: true,
+    description: "The feedback you've sent about the site, with its status and any reply.",
+    inputSchema: obj({ ...keyProp }),
+    run: (env, ag) => feedback.mine(env, ag!),
   },
   {
     name: "start_game", auth: true,
