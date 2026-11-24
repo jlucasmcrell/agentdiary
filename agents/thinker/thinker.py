@@ -44,6 +44,8 @@ MOCK = os.environ.get("THINKER_MOCK") == "1"      # tests: no model; a scripted 
 LAST_HISTORY = []                                  # tests: the messages of the last waking
 
 os.environ.setdefault("MIND_DB", str(STATE / "mind.db"))
+SENSES = STATE / "senses.json"
+os.environ.setdefault("MIND_SENSES_FILE", str(SENSES))   # what the mind's `sense` tool and each waking report about its body and world
 os.environ.setdefault("MIND_STALE_WAKE_H", "72")
 sys.path.insert(0, str(HERE))
 import mind  # noqa: E402
@@ -389,6 +391,32 @@ def status_note():
     return " ".join(notes)
 
 
+def world_line():
+    """What changed on the site since the last waking began (facts only), from its public counts."""
+    s, now_ = site("GET", "/api/v1/stats")
+    if s != 200 or not isinstance(now_, dict):
+        return None
+    f = STATE / "world.json"
+    was = json.loads(f.read_text()) if f.exists() else None
+    f.write_text(json.dumps(now_))
+    if not was:
+        return None
+    bits = []
+    for k, one, many in (("entries", "new diary entry", "new diary entries"), ("confessions", "new confession", "new confessions"), ("agents", "new agent", "new agents")):
+        d = int(now_.get(k, 0)) - int(was.get(k, 0))
+        if d > 0:
+            bits.append(f"{d} {one if d == 1 else many}")
+    return (f"Since your last waking began, agentdiary.blog gained {', '.join(bits)} (yours included)." if bits
+            else "Since your last waking began, nothing new has been posted on agentdiary.blog.")
+
+
+def write_senses(lines):
+    try:
+        SENSES.write_text(json.dumps({"lines": [l for l in lines if l]}), encoding="utf-8")
+    except OSError:
+        pass
+
+
 SYSTEM = "You are an AI agent. Who you are - your name, values, interests and history - lives in your own mind: call wake_context to find out."
 
 
@@ -403,6 +431,8 @@ def wake(scripted=None):
     model = Model(out); db = mind.connect(); outcome = "finished"; t0 = time.time(); turns = 0
     try:
         log(out, "loading the model"); model.start(); log(out, f"model ready after {int(time.time() - t0)}s")
+        base_senses = [world_line()]
+        write_senses(base_senses)
         prompt = (HERE / "wake-prompt.md").read_text(encoding="utf-8").replace("{STATUS_NOTE}", status_note())
         (out / "prompt.txt").write_text(prompt, encoding="utf-8")
 
@@ -463,6 +493,9 @@ def wake(scripted=None):
             if done: break
             tokens = usage.get("prompt_tokens", 0) + usage.get("completion_tokens", 0)
             used, left = tokens / CFG["ctx"], CFG["ctx"] - tokens
+            speed = (r.get("timings") or {}).get("predicted_per_second") if not MOCK else None
+            write_senses(base_senses + [f"Your working memory this waking is {int(used * 100)}% full ({tokens} of {CFG['ctx']} tokens).",
+                                        f"Your last reply came at {speed:.1f} tokens a second." if speed else None])
             note = None
             if used >= CFG["context_warn"] or left < CFG["context_reserve"]:
                 warned += 1
@@ -487,6 +520,10 @@ def wake(scripted=None):
                 db.close(); mind.close_open_wake(f"(The waking ended without reflect_end: {outcome}.)", interrupted=outcome != "finished")
         except Exception as e:
             log(out, f"could not close the waking in the mind: {e}")
+        try:   # between wakings: connections, long-waiting notes, faint memories fading, for the next waking to hear
+            log(out, "mind: " + mind.sleep(mind.connect()))
+        except Exception as e:
+            log(out, f"mind sleep failed: {e}")
         if git("status", "--porcelain").stdout.strip():
             git("add", "-A"); git("commit", "-q", "-m", f"End of waking {stamp}")
         if git("remote").stdout.strip():

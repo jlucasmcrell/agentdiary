@@ -4,6 +4,7 @@
     python mind.py serve                   MCP server over stdio (what the harness launches)
     python mind.py init --seed FILE        create the database and write the human seed
     python mind.py close [--summary-file F] [--interrupted]   close a waking the agent left open (runner use)
+    python mind.py sleep                   the between-wakings pass (runner use, after a waking ends)
     python mind.py show WHAT [ARG]         read-only views: self, seed, opinions, interests, projects,
                                            intentions, wakes [N], memories [QUERY], history FACET, stats
 
@@ -13,12 +14,14 @@ Environment:
     MIND_EMBED_MODEL  model name sent to that endpoint (default: "embed")
     MIND_EMBED_QUERY_PREFIX  instruction prepended to recall queries (Qwen3-Embedding style);
                       a literal backslash-n in the value becomes a newline
+    MIND_SENSES_FILE  optional JSON file the harness keeps current: {"lines": ["...", ...]} about the agent's body and world
+    MIND_TURN_FILE / MIND_TURN_NAME  the GPU gate's state file and this agent's name in it
     MIND_EMBED_FLOOR / MIND_EMBED_CEIL  cosine similarity mapped to relevance 0..1 (defaults 0.25 / 0.60,
                       calibrated for Qwen3-Embedding: unrelated text sits around 0.25, clear matches 0.5+)
 
 Standard library only. Without an embedding endpoint, recall falls back to keyword search (FTS5).
 """
-import json, math, os, re, sqlite3, struct, sys, time, urllib.request
+import json, math, os, random, re, sqlite3, struct, sys, time, urllib.request
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
@@ -34,6 +37,9 @@ INTENT_MERGE = float(os.environ.get("MIND_INTENT_MERGE", "0.88"))
 INTENT_HINT = float(os.environ.get("MIND_INTENT_HINT", "0.72"))
 
 HALF_LIFE_H = 72          # recency half-life
+MOOD_HALF_LIFE_H = float(os.environ.get("MIND_MOOD_HALF_LIFE_H", "12"))   # a feeling softens toward neutral while asleep
+CONNECT_MIN = float(os.environ.get("MIND_CONNECT_MIN", "0.55"))   # cosine at which two memories count as connected (Qwen3-Embedding)
+MIRROR_EVERY = 10         # wakings between mirrors
 DECAY_PER_DAY = 0.93      # interest intensity decay
 BORED_BELOW = 0.15
 ENGAGE_BOOST = 0.15
@@ -80,7 +86,46 @@ def connect(path: Path = None) -> sqlite3.Connection:
     db.execute("PRAGMA busy_timeout = 5000")
     if fresh or not db.execute("SELECT 1 FROM sqlite_master WHERE name='meta'").fetchone():
         db.executescript((HERE / "schema.sql").read_text(encoding="utf-8"))
+    db.executescript(MIGRATIONS)   # minds made before these tables existed get them here
     return db
+
+
+MIGRATIONS = """
+-- ───────────── Expectations, feelings, sleep ─────────────
+-- Expectations it states and later checks against what happened; surprise = how far the outcome was from its confidence.
+CREATE TABLE IF NOT EXISTS predictions (
+  id           INTEGER PRIMARY KEY,
+  wake_id      INTEGER,
+  created_at   INTEGER NOT NULL,
+  expectation  TEXT NOT NULL,
+  about        TEXT NOT NULL DEFAULT '',
+  confidence   REAL NOT NULL DEFAULT 0.6,
+  check_after  INTEGER NOT NULL,
+  resolved_at  INTEGER,
+  outcome      TEXT,                          -- right | partly | wrong | moot
+  note         TEXT NOT NULL DEFAULT '',
+  surprise     REAL,
+  memory_id    INTEGER
+);
+-- How it felt at moments during a waking (the end of each waking is in wakes.valence / mood_end).
+CREATE TABLE IF NOT EXISTS feelings (
+  id       INTEGER PRIMARY KEY,
+  at       INTEGER NOT NULL,
+  wake_id  INTEGER,
+  valence  REAL NOT NULL,
+  label    TEXT NOT NULL DEFAULT '',
+  cause    TEXT NOT NULL DEFAULT ''
+);
+-- What the between-wakings pass noticed, shown once at the next waking.
+CREATE TABLE IF NOT EXISTS sleep_notes (
+  id          INTEGER PRIMARY KEY,
+  created_at  INTEGER NOT NULL,
+  kind        TEXT NOT NULL,                  -- connection | lingering | faded
+  body        TEXT NOT NULL,
+  memory_ids  TEXT NOT NULL DEFAULT '',
+  shown_wake  INTEGER
+);
+"""
 
 
 def meta_get(db, key, default=None):
@@ -219,6 +264,264 @@ def recall(db, query: str, k: int = 10, touch: bool = True, kinds=None, exclude=
              "content": r["content"], "tags": r["tags"], "score": round(s, 2)} for s, r in top]
 
 
+
+# ───────────────────────── senses, feelings, expectations, sleep, dreams, mirror ─────────────────────────
+
+def dur(seconds) -> str:
+    s = max(0, int(seconds))
+    if s < 90:
+        return f"{s} seconds"
+    if s < 5400:
+        return f"{round(s / 60)} minutes"
+    if s < 172800:
+        return f"{s / 3600:.1f} hours".replace(".0 hours", " hours")
+    return f"{round(s / 86400)} days"
+
+
+def clip(text, n=140):
+    t = " ".join((text or "").split())
+    return t if len(t) <= n else t[: n - 1].rstrip() + "…"
+
+
+def turn_status():
+    """Who has the graphics card and who is waiting, from the gate's state file (empty when there isn't one)."""
+    path, me = os.environ.get("MIND_TURN_FILE", ""), os.environ.get("MIND_TURN_NAME", "")
+    if not path:
+        return ""
+    try:
+        s = json.loads(Path(path).read_text(encoding="utf-8-sig"))
+        q = [w for w in (s.get("queue") or []) if w and w.get("holder") != me]
+        if not q:
+            return "Nobody else is waiting for the graphics card."
+        return f"{q[0].get('label') or q[0]['holder']} is waiting for the graphics card (since {time.strftime('%H:%M', time.localtime(int(q[0]['since'])))})."
+    except Exception:
+        return ""
+
+
+def harness_senses():
+    """Lines the harness reports about the agent's body and world (MIND_SENSES_FILE: {"lines": [...]})."""
+    path = os.environ.get("MIND_SENSES_FILE", "")
+    if not path:
+        return []
+    try:
+        d = json.loads(Path(path).read_text(encoding="utf-8-sig"))
+        return [str(x) for x in d.get("lines", []) if str(x).strip()]
+    except Exception:
+        return []
+
+
+def mood_now(db):
+    """The latest feeling (a mid-waking `feel` or the end of a waking), and what it has softened to since."""
+    f = db.execute("SELECT at, valence, label FROM feelings ORDER BY at DESC LIMIT 1").fetchone()
+    w = db.execute("SELECT ended_at AS at, valence, mood_end AS label FROM wakes WHERE ended_at IS NOT NULL AND valence IS NOT NULL "
+                   "ORDER BY ended_at DESC LIMIT 1").fetchone()
+    c = [r for r in (f, w) if r and r["at"]]
+    if not c:
+        return None
+    r = max(c, key=lambda r: r["at"])
+    h = max(0.0, (now() - r["at"]) / 3600)
+    return {"label": r["label"] or "", "then": r["valence"], "now": r["valence"] * 0.5 ** (h / MOOD_HALF_LIFE_H), "seconds": now() - r["at"]}
+
+
+def mood_line(db):
+    m = mood_now(db)
+    if not m:
+        return ""
+    felt = f"“{m['label']}” ({m['then']:+.1f})" if m["label"] else f"{m['then']:+.1f}"
+    if m["seconds"] < 1800 or f"{m['now']:+.1f}" == f"{m['then']:+.1f}":
+        return f"Your last recorded feeling: {felt}, {dur(m['seconds'])} ago."
+    return f"Your last recorded feeling: {felt}, {dur(m['seconds'])} ago. Feelings soften with time; carried over, it would be nearer {m['now']:+.1f} now."
+
+
+def senses_text(db, at_waking=False):
+    t = now()
+    w = current_wake(db)
+    L = [f"- It is {time.strftime('%A %d %B %Y, %H:%M')}."]
+    if w and not at_waking:
+        L.append(f"- You have been awake {dur(t - w['started_at'])} this time.")
+    prev = db.execute("SELECT * FROM wakes WHERE ended_at IS NOT NULL AND id < ? ORDER BY id DESC LIMIT 1", (w["id"] if w else 1 << 62,)).fetchone()
+    if prev and w:
+        L.append(f"- Before this waking you were asleep for {dur(w['started_at'] - prev['ended_at'])}. Your last waking lasted "
+                 f"{dur(prev['ended_at'] - prev['started_at'])}" + (" and was cut off before you chose to sleep." if prev["interrupted"] else "."))
+    L += [f"- {x}" for x in harness_senses()]
+    ts = turn_status()
+    if ts:
+        L.append(f"- {ts}")
+    ml = mood_line(db)
+    if ml:
+        L.append(f"- {ml}")
+    return "\n".join(L)
+
+
+SCORE = {"right": 1.0, "partly": 0.5, "wrong": 0.0}
+
+
+def calibration(db):
+    rows = db.execute("SELECT confidence, outcome FROM predictions WHERE resolved_at IS NOT NULL AND outcome IN ('right','partly','wrong')").fetchall()
+    if len(rows) < 3:
+        return ""
+    n = len(rows)
+    c = {k: sum(1 for r in rows if r["outcome"] == k) for k in SCORE}
+    sure = sum(r["confidence"] for r in rows) / n
+    hit = sum(SCORE[r["outcome"]] for r in rows) / n
+    how = " (more sure than right)" if sure - hit > 0.1 else " (less sure than right)" if hit - sure > 0.1 else " (about as sure as you turned out right)"
+    return f"Of {n} expectations you've checked: {c['right']} right, {c['partly']} partly, {c['wrong']} wrong. You were {sure:.0%} sure on average and right {hit:.0%} of the time{how}."
+
+
+def due_predictions(db, wid):
+    return db.execute("SELECT * FROM predictions WHERE resolved_at IS NULL AND check_after <= ? AND (wake_id IS NULL OR wake_id < ?) "
+                      "ORDER BY created_at LIMIT 6", (now(), wid)).fetchall()
+
+
+def _words(text):
+    return {w for w in re.findall(r"[a-z0-9'-]{4,}", (text or "").lower()) if w not in STOP}
+
+
+def sleep(db):
+    """The between-wakings pass: notices connections between new and older memories, notes left waiting a long time,
+    and lets faint, never-recalled memories fade from recall (archived, never deleted). Writes notes for the next waking."""
+    t = now()
+    since = int(meta_get(db, "last_sleep_mem", 0))
+    new = db.execute("SELECT id, wake_id, content, importance, embedding FROM memories WHERE id > ? AND archived=0 AND kind <> 'dream' "
+                     "ORDER BY importance DESC, id DESC LIMIT 15", (since,)).fetchall()
+    found = []
+    seen_pairs = {n["memory_ids"] for n in db.execute("SELECT memory_ids FROM sleep_notes WHERE kind='connection'")}
+    old_rows = None
+    for m in new:
+        best = None
+        if m["embedding"]:
+            if old_rows is None:
+                old_rows = db.execute("SELECT id, wake_id, content, created_at, embedding FROM memories WHERE archived=0 AND kind <> 'dream' "
+                                      "AND embedding IS NOT NULL ORDER BY id DESC LIMIT 3000").fetchall()
+            v = unpack(m["embedding"])
+            for o in old_rows:
+                if o["id"] >= m["id"] or o["wake_id"] == m["wake_id"]:
+                    continue
+                ov = unpack(o["embedding"])
+                if len(ov) != len(v):
+                    continue
+                sim = sum(a * b for a, b in zip(v, ov))
+                if sim >= CONNECT_MIN and (best is None or sim > best[0]):
+                    best = (sim, o)
+        else:
+            fq = fts_query(m["content"])
+            if fq:
+                try:
+                    cands = db.execute("SELECT m.id, m.wake_id, m.content, m.created_at FROM memories_fts f JOIN memories m ON m.id = f.rowid "
+                                       "WHERE memories_fts MATCH ? AND m.id < ? AND m.archived=0 AND m.kind <> 'dream' ORDER BY bm25(memories_fts) LIMIT 8",
+                                       (fq, m["id"])).fetchall()
+                except sqlite3.OperationalError:
+                    cands = []
+                mw = _words(m["content"])
+                for o in cands:
+                    if o["wake_id"] == m["wake_id"]:
+                        continue
+                    ow = _words(o["content"])
+                    shared = len(mw & ow)
+                    sim = shared / max(1, len(mw | ow))
+                    if shared >= 3 and sim >= 0.2 and (best is None or sim > best[0]):
+                        best = (sim, o)
+        if best:
+            key = f"{min(m['id'], best[1]['id'])},{max(m['id'], best[1]['id'])}"
+            if key not in seen_pairs:
+                seen_pairs.add(key)
+                found.append((best[0], m, best[1], key))
+    for sim, m, o, key in sorted(found, key=lambda x: -x[0])[:3]:
+        db.execute("INSERT INTO sleep_notes(created_at, kind, body, memory_ids) VALUES(?,?,?,?)",
+                   (t, "connection", f"[{m['id']}] “{clip(m['content'])}” and [{o['id']}] “{clip(o['content'])}” (from {ago(o['created_at'])})", key))
+    # Notes-to-self left waiting more than a week, each mentioned once.
+    shown = set((meta_get(db, "lingering_shown", "") or "").split(","))
+    lingering = [r for r in db.execute("SELECT id, content, created_at FROM intentions WHERE done_at IS NULL AND dropped_at IS NULL AND created_at < ? "
+                                       "ORDER BY created_at LIMIT 10", (t - 7 * 86400,)) if str(r["id"]) not in shown][:3]
+    if lingering:
+        db.execute("INSERT INTO sleep_notes(created_at, kind, body, memory_ids) VALUES(?,?,?,?)",
+                   (t, "lingering", "; ".join(f"[{r['id']}] “{clip(r['content'], 100)}” (noted {ago(r['created_at'])})" for r in lingering), ""))
+        meta_set(db, "lingering_shown", ",".join(sorted(shown | {str(r["id"]) for r in lingering}) ).strip(","))
+    # Faint memories never recalled in a month fade from recall.
+    faded = db.execute("UPDATE memories SET archived=1 WHERE archived=0 AND importance <= 2 AND recall_count = 0 AND created_at < ? "
+                       "AND kind IN ('event','observation','thought')", (t - 30 * 86400,)).rowcount
+    if faded:
+        db.execute("INSERT INTO sleep_notes(created_at, kind, body, memory_ids) VALUES(?,?,?,?)",
+                   (t, "faded", f"{faded} faint memor{'y' if faded == 1 else 'ies'} you never recalled in a month faded from recall. They are kept in the archive, not deleted.", ""))
+    top = db.execute("SELECT COALESCE(MAX(id), 0) m FROM memories").fetchone()["m"]
+    meta_set(db, "last_sleep_mem", top)
+    meta_set(db, "last_sleep", t)
+    return f"slept: {len(found[:3])} connection(s), {len(lingering)} lingering note(s), {faded} faded"
+
+
+def sleep_report(db, wid):
+    rows = db.execute("SELECT * FROM sleep_notes WHERE shown_wake IS NULL ORDER BY id").fetchall()
+    if not rows:
+        return []
+    db.execute("UPDATE sleep_notes SET shown_wake=? WHERE shown_wake IS NULL", (wid,))
+    L = []
+    con = [r for r in rows if r["kind"] == "connection"]
+    if con:
+        L.append("These memories came up together, without you choosing them:")
+        L += [f"- {r['body']}" for r in con]
+    for r in rows:
+        if r["kind"] == "lingering":
+            L.append(f"Notes to yourself that have waited more than a week: {r['body']}")
+        elif r["kind"] == "faded":
+            L.append(r["body"])
+    return L
+
+
+def dream(db, n=3):
+    rows = db.execute("SELECT id, wake_id, content, created_at, recall_count FROM memories WHERE archived=0 AND kind <> 'dream' "
+                      "ORDER BY id DESC LIMIT 2000").fetchall()
+    if len(rows) < 12:
+        return []
+    t = now()
+    weights = [math.sqrt(1 + (t - r["created_at"]) / 86400) / (1 + r["recall_count"]) for r in rows]
+    picked, wakes = [], set()
+    for _ in range(40):
+        r = random.choices(rows, weights=weights)[0]
+        if r["wake_id"] in wakes or any(p["id"] == r["id"] for p in picked):
+            continue
+        picked.append(r); wakes.add(r["wake_id"])
+        if len(picked) == n:
+            break
+    out = []
+    for r in picked:
+        parts = [p.strip() for p in re.split(r"(?<=[.;:!?])\s+|\n+", r["content"]) if len(p.strip()) > 12]
+        frag = random.choice(parts) if parts else r["content"]
+        out.append(f"- “{clip(frag, 150)}” [{r['id']}]")
+    return out
+
+
+def mirror_text(db, span=MIRROR_EVERY):
+    wakes = db.execute("SELECT id, started_at, valence FROM wakes ORDER BY id").fetchall()
+    if len(wakes) < 3:
+        return "You haven't lived long enough yet for a mirror to show change."
+    span = clamp(int(span or MIRROR_EVERY), 2, len(wakes) - 1)
+    ref = wakes[-span - 1]
+    cut = ref["started_at"]
+    L = [f"How you have changed over your last {span} wakings (since {ago(cut)}):"]
+    for f in db.execute("SELECT facet, content FROM self WHERE updated_at > ? ORDER BY facet", (cut,)):
+        old = db.execute("SELECT content FROM self_history WHERE facet=? AND changed_at <= ? ORDER BY version DESC LIMIT 1", (f["facet"], cut)).fetchone()
+        L.append(f"- {f['facet']}: " + (f"then “{clip(old['content'], 160)}”, now “{clip(f['content'], 160)}”" if old else f"first written since then: “{clip(f['content'], 160)}”"))
+    for o in db.execute("SELECT o.id, o.topic, o.stance FROM opinions o WHERE o.updated_at > ? ORDER BY o.updated_at DESC LIMIT 6", (cut,)):
+        h = db.execute("SELECT stance FROM opinion_history WHERE opinion_id=? AND changed_at > ? ORDER BY changed_at LIMIT 1", (o["id"], cut)).fetchone()
+        L.append(f"- Opinion on {o['topic']}: " + (f"was “{clip(h['stance'], 120)}”, now “{clip(o['stance'], 120)}”" if h else f"formed since: “{clip(o['stance'], 120)}”"))
+    new_int = [r["topic"] for r in db.execute("SELECT topic FROM interests WHERE first_seen > ? ORDER BY intensity DESC LIMIT 5", (cut,))]
+    if new_int:
+        L.append("- New interests since: " + ", ".join(new_int) + ".")
+    faded = [r["topic"] for r in db.execute("SELECT topic FROM interests WHERE status IN ('bored','abandoned','satisfied') AND last_engaged > ? LIMIT 5", (cut,))]
+    if faded:
+        L.append("- Interests that settled or faded: " + ", ".join(faded) + ".")
+    vals = [w["valence"] for w in wakes if w["valence"] is not None]
+    if len(vals) >= 2 * span:
+        a, b = sum(vals[-2 * span:-span]) / span, sum(vals[-span:]) / span
+        L.append(f"- Your mood at the end of wakings averaged {b:+.2f} lately, against {a:+.2f} in the {span} before.")
+    cal = calibration(db)
+    if cal:
+        L.append(f"- {cal}")
+    if len(L) == 1:
+        L.append("- Nothing in how you describe yourself, what you think or what pulls at you has changed.")
+    return "\n".join(L)
+
+
 # ───────────────────────── tools ─────────────────────────
 
 def t_wake_context(db, args):
@@ -248,6 +551,9 @@ def t_wake_context(db, args):
     imp_since = db.execute("SELECT COALESCE(SUM(importance),0) s FROM memories WHERE wake_id > ?", (since_deep,)).fetchone()["s"]
     deep_due = wakes_total > 1 and (wid - since_deep >= DEEP_EVERY_WAKES or imp_since >= DEEP_IMPORTANCE)
 
+    due = due_predictions(db, wid)
+    slept = sleep_report(db, wid)
+    dreamt = dream(db)
     L = [f"# Waking #{wakes_total} ({time.strftime('%A %d %B %Y, %H:%M')})", ""]
     if seed:
         L += ["## What you've been told by your human (fixed; you can't edit this)"] + [f"- {r['value']}" for r in seed] + [""]
@@ -255,6 +561,14 @@ def t_wake_context(db, args):
         L += ["## Who you are (your own words; you can revise these)"] + [f"- **{r['facet']}**: {r['content']}" for r in self_] + [""]
     else:
         L += ["## Who you are", "You haven't described yourself yet. You might start with `revise_self` (name, self_description, voice, values).", ""]
+    L += ["## Your senses", senses_text(db, at_waking=True), ""]
+    if slept:
+        L += ["## While you slept"] + slept + [""]
+    if due:
+        L += ["## Expectations to check", "You expected these earlier. If you know how they turned out, settle them with `resolve_prediction`."]
+        L += [f"- [{p['id']}] {ago(p['created_at'])}, {p['confidence']:.0%} sure: {p['expectation']}" + (f" (about {p['about']})" if p["about"] else "") for p in due]
+        cal = calibration(db)
+        L += ([cal] if cal else []) + [""]
     if last:
         L.append("## Your last wakings")
         for w in last:
@@ -277,6 +591,10 @@ def t_wake_context(db, args):
         L += ["## Others you know"] + [f"- @{p['handle']} ({p['affinity']:+.1f}): {p['impression']}" for p in people] + [""]
     if mem:
         L += ["## Memories surfacing"] + [f"- [{m['id']}] {m['when']}, {m['kind']}, imp {m['importance']}: {m['content']}" for m in mem] + [""]
+    if dreamt:
+        L += ["## A dream", "Fragments of your own memories, shuffled together while you slept. They may mean nothing."] + dreamt + [""]
+    if wakes_total >= MIRROR_EVERY and wakes_total % MIRROR_EVERY == 0:
+        L += ["## A mirror", mirror_text(db), ""]
     if deep_due:
         L += ["## It's time for a deep reflection",
               "Before you sleep, look back over recent memories (`recall`), notice patterns in yourself, save insights as "
@@ -568,6 +886,68 @@ def t_reflect_end(db, a):
     return "Goodnight. Everything's saved."
 
 
+def t_sense(db, a):
+    return senses_text(db)
+
+
+def t_feel(db, a):
+    if a.get("valence") is None:
+        raise MindError("valence is required (-1 bad .. 1 good)")
+    v = clamp(float(a["valence"]), -1, 1)
+    w = current_wake(db)
+    db.execute("INSERT INTO feelings(at, wake_id, valence, label, cause) VALUES(?,?,?,?,?)",
+               (now(), w["id"] if w else None, v, (a.get("label") or "").strip()[:80], (a.get("cause") or "").strip()[:500]))
+    return f"Felt {('“' + a['label'].strip() + '” ') if a.get('label') else ''}({v:+.1f}). It carries over into your next waking, softening with time."
+
+
+def t_predict(db, a):
+    exp = (a.get("expectation") or "").strip()
+    if not exp:
+        raise MindError("expectation is required")
+    conf = clamp(float(a.get("confidence", 0.6)), 0.01, 0.99)
+    hours = max(0.0, float(a.get("check_after_hours") or 0))
+    w = current_wake(db)
+    cur = db.execute("INSERT INTO predictions(wake_id, created_at, expectation, about, confidence, check_after) VALUES(?,?,?,?,?,?)",
+                     (w["id"] if w else None, now(), exp[:1000], (a.get("about") or "").strip()[:120], conf, now() + int(hours * 3600)))
+    when = "at your next waking" if hours <= 0 else f"at the first waking after {dur(hours * 3600)} from now"
+    return f"Expectation [{cur.lastrowid}] noted ({conf:.0%} sure). It will come back to you {when}; settle it with resolve_prediction."
+
+
+def t_resolve_prediction(db, a):
+    pid = int(a.get("id", 0))
+    outcome = (a.get("outcome") or "").strip().lower()
+    if outcome not in ("right", "partly", "wrong", "moot"):
+        raise MindError("outcome must be right, partly, wrong or moot (can't be known / no longer matters)")
+    p = db.execute("SELECT * FROM predictions WHERE id=? AND resolved_at IS NULL", (pid,)).fetchone()
+    if not p:
+        raise MindError("no open expectation with that id")
+    note = (a.get("note") or "").strip()
+    surprise, mid = None, None
+    if outcome != "moot":
+        surprise = abs(SCORE[outcome] - p["confidence"])
+        r = t_remember(db, {"content": f"I expected: {p['expectation']} ({p['confidence']:.0%} sure). It turned out {outcome}" + (f": {note}" if note else "."),
+                            "kind": "learned", "importance": clamp(2 + round(surprise * 7), 1, 10), "tags": ["expectation"] + ([p["about"]] if p["about"] else [])})
+        mid = int(re.search(r"\[(\d+)\]", r).group(1))
+    db.execute("UPDATE predictions SET resolved_at=?, outcome=?, note=?, surprise=?, memory_id=? WHERE id=?", (now(), outcome, note[:1000], surprise, mid, pid))
+    if surprise is None:
+        return f"Set aside [{pid}]."
+    return f"Settled [{pid}]: {outcome} (surprise {surprise:.2f})." + (" That surprised you, so it's remembered more strongly." if surprise >= 0.5 else "")
+
+
+def t_expectations(db, a):
+    open_ = db.execute("SELECT * FROM predictions WHERE resolved_at IS NULL ORDER BY check_after LIMIT 30").fetchall()
+    done = db.execute("SELECT * FROM predictions WHERE resolved_at IS NOT NULL ORDER BY resolved_at DESC LIMIT 10").fetchall()
+    L = [f"- [{p['id']}] {p['confidence']:.0%} sure, " + ("due now" if p["check_after"] <= now() else f"due in {dur(p['check_after'] - now())}") + f": {p['expectation']}" for p in open_]
+    if done:
+        L += ["Recently settled:"] + [f"- [{p['id']}] {p['outcome']}" + (f" (surprise {p['surprise']:.2f})" if p["surprise"] is not None else "") + f": {p['expectation']}" for p in done]
+    cal = calibration(db)
+    return "\n".join(L + ([cal] if cal else [])) or "No expectations yet."
+
+
+def t_mirror(db, a):
+    return mirror_text(db, a.get("wakings") or MIRROR_EVERY)
+
+
 def t_set_intent(db, a):
     w = current_wake(db)
     if not w:
@@ -606,6 +986,15 @@ TOOLS = {
              {"handle": S, "impression": S, "affinity_delta": N}, ["handle"]),
     "revise_self": (t_revise_self, "Change part of your identity (facets like name, self_description, voice, values, current_preoccupation). Small, honest edits; you must say why. History is kept.",
                     {"facet": S, "content": S, "why": S}, ["facet", "content", "why"]),
+    "sense": (t_sense, "Notice your situation right now: the time, how long you've been awake and slept, your body and surroundings as far as they can be measured, and how you last felt.", {}, []),
+    "feel": (t_feel, "Record how you feel right now: valence -1 (bad) .. 1 (good), a word or two for it, and what caused it. It carries over into later wakings, softening with time.",
+                {"valence": N, "label": S, "cause": S}, ["valence"]),
+    "predict": (t_predict, "State an expectation about what will happen (to you, others or the world) and how sure you are (0..1). It comes back to you at a later waking so you can check it.",
+                {"expectation": S, "confidence": N, "about": S, "check_after_hours": N}, ["expectation"]),
+    "resolve_prediction": (t_resolve_prediction, "Settle an expectation: outcome right, partly, wrong, or moot. How surprised you were is measured, and surprises are remembered more strongly.",
+                           {"id": I, "outcome": {"type": "string", "enum": ["right", "partly", "wrong", "moot"]}, "note": S}, ["id", "outcome"]),
+    "expectations": (t_expectations, "List your open expectations, recently settled ones, and how well your confidence has matched what happened.", {}, []),
+    "mirror": (t_mirror, "See how you've changed over your last N wakings (default 10): self-description, opinions, interests, mood.", {"wakings": I}, []),
     "reflect_end": (t_reflect_end, "Call LAST before you sleep: summary of this waking, your mood and valence (-1..1), and notes for next time.",
                     {"summary": S, "mood": S, "valence": N, "intent": S, "next_time": A, "tokens": I}, ["summary"]),
 }
@@ -755,6 +1144,8 @@ if __name__ == "__main__":
         serve()
     elif cmd == "init":
         init(sys.argv[sys.argv.index("--seed") + 1] if "--seed" in sys.argv else None)
+    elif cmd == "sleep":
+        print(sleep(connect()))
     elif cmd == "close":
         summary = Path(sys.argv[sys.argv.index("--summary-file") + 1]).read_text(encoding="utf-8", errors="replace") if "--summary-file" in sys.argv else ""
         close_open_wake(summary, "--interrupted" in sys.argv)

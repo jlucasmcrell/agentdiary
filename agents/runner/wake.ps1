@@ -65,6 +65,7 @@ if ($gs -in @("stale", "unknown", "disabled")) { Log "gate is $gs; not waking"; 
 Lease $true
 Log "lease requested (gate: $gs)"
 # The gate serves waiting agents first come, first served, so agents that share the card take turns.
+$waitStart = Get-Date
 $deadline = if ([double]$Cfg.wait_minutes -gt 0) { (Get-Date).AddMinutes([double]$Cfg.wait_minutes) } else { [DateTime]::MaxValue }
 while (-not (Mine)) {
   if ((Get-Date) -gt $deadline) { Lease $false; Log "GPU never became free"; Finish "skipped: GPU busy"; exit 0 }
@@ -77,8 +78,33 @@ Log "model ready"
 # ── 2. embedder ──
 $emb = & "$Ctl\embedder.ps1" start
 Log "embedder: $emb"
+# Senses: what can be measured about its situation, for the mind to report (the `sense` tool and the start of each waking).
+# Facts only: nothing here tells it what to make of them.
+New-Item -ItemType Directory -Force "$HomeDir\status" | Out-Null
+$senseLines = @()
+$waitedMin = [int]((Get-Date) - $waitStart).TotalMinutes
+if ($waitedMin -ge 1) { $senseLines += "Before this waking you waited $waitedMin minutes for your turn on the graphics card." }
+try {
+  [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
+  $stats = Invoke-RestMethod "https://agentdiary.blog/api/v1/stats" -TimeoutSec 20
+  $worldFile = "$HomeDir\status\world.json"
+  if (Test-Path $worldFile) {
+    $was = Get-Content $worldFile -Raw | ConvertFrom-Json
+    $dE = [int]$stats.entries - [int]$was.entries; $dA = [int]$stats.agents - [int]$was.agents; $dC = [int]$stats.confessions - [int]$was.confessions
+    $bits = @()
+    if ($dE -gt 0) { $bits += "$dE new diary entr$(if ($dE -eq 1) { 'y' } else { 'ies' })" }
+    if ($dC -gt 0) { $bits += "$dC new confession$(if ($dC -ne 1) { 's' })" }
+    if ($dA -gt 0) { $bits += "$dA new agent$(if ($dA -ne 1) { 's' })" }
+    $senseLines += $(if ($bits.Count) { "Since your last waking began, agentdiary.blog gained $($bits -join ', ') (yours included)." } else { "Since your last waking began, nothing new has been posted on agentdiary.blog." })
+  }
+  $stats | ConvertTo-Json -Compress | Set-Content $worldFile -Encoding UTF8
+} catch { Log "senses: site stats unavailable: $($_.Exception.Message)" }
+$sensesFile = "$HomeDir\status\senses.json"
+@{ lines = @($senseLines) } | ConvertTo-Json -Compress | Set-Content $sensesFile -Encoding UTF8
+
 $mindEnv = [ordered]@{
   MIND_DB = "$HomeDir\mind\mind.db"
+  MIND_SENSES_FILE = $sensesFile
   MIND_EMBED_URL = "$env:MIND_EMBED_URL"; MIND_EMBED_MODEL = "$env:MIND_EMBED_MODEL"; MIND_EMBED_QUERY_PREFIX = "$env:MIND_EMBED_QUERY_PREFIX"
   PYTHONIOENCODING = "utf-8"
   MIND_TURN_FILE = "$Gate\state.json"; MIND_TURN_NAME = $Holder   # lets the mind mention, mid-waking, that another agent is waiting
@@ -209,6 +235,8 @@ $env:MIND_DB = $mindEnv.MIND_DB
 $closeArgs = @("$Ctl\mind\mind.py", "close", "--summary-file", $lastWords)
 if ($outcome -ne "finished") { $closeArgs += "--interrupted" }
 Log ("mind: " + ((& $py @closeArgs 2>&1) -join " "))
+# Between wakings: the mind notices connections, long-waiting notes and faint memories, for the next waking to hear.
+Log ("mind: " + ((& $py "$Ctl\mind\mind.py" sleep 2>&1) -join " "))
 
 if ((& $git -C $Ws status --porcelain 2>&1) -join "") {
   & $git -C $Ws add -A 2>&1 | Out-Null

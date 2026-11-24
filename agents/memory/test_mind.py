@@ -59,7 +59,7 @@ init = s.rpc("initialize", {"protocolVersion": "2025-06-18", "capabilities": {},
 check(init["result"]["serverInfo"]["name"] == "mind", "initialize")
 s.rpc("notifications/initialized", notify=True)
 tools = s.rpc("tools/list")["result"]["tools"]
-check(len(tools) == 16 and all(t["inputSchema"]["type"] == "object" for t in tools), f"{len(tools)} tools listed")
+check(len(tools) == 22 and all(t["inputSchema"]["type"] == "object" for t in tools), f"{len(tools)} tools listed")
 ctx, _ = s.call("wake_context", model="inkling")
 check("Waking #1" in ctx and "You are curious" in ctx and "haven't described yourself" in ctx, "first wake_context shows seed, no self yet")
 s.call("set_intent", intent="figure out who I am", mood="foggy")
@@ -211,5 +211,79 @@ print("   " + out.replace("\n", " | "))
 con = sqlite3.connect(db)
 check(con.execute("SELECT COUNT(*) FROM reflection_sources").fetchone()[0] == 2, "reflection linked to its source memories")
 con.close()
+
+print("A fresh mind made before the new tables existed gets them")
+old = tmp / "old.db"
+con = sqlite3.connect(old)
+con.executescript((HERE / "schema.sql").read_text(encoding="utf-8").split("-- ───────────── Expectations, feelings, sleep")[0]
+                  + "CREATE TABLE meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);")
+con.commit(); con.close()
+s = Server(old); s.rpc("initialize", {"protocolVersion": "2025-06-18"})
+txt, err = s.call("predict", expectation="x")
+check(not err, "an old mind can use the new tools straight away")
+s.close()
+
+print("Senses, feelings, expectations, sleep, dreams, mirror")
+mdb = tmp / "mind2.db"
+subprocess.run([sys.executable, str(HERE / "mind.py"), "init", "--seed", str(HERE / "seed.md")], env={**os.environ, "MIND_DB": str(mdb)}, capture_output=True)
+senses = tmp / "senses.json"
+senses.write_text(json.dumps({"lines": ["Your thinking ran at 1.2 words a second last time.", "Since you last woke, 3 new diary entries appeared."]}), encoding="utf-8")
+turnf = tmp / "turn.json"
+turnf.write_text(json.dumps({"holder": "me", "queue": [{"holder": "other", "label": "Other Agent", "since": int(time.time()) - 600}]}), encoding="utf-8")
+os.environ["MIND_SENSES_FILE"] = str(senses); os.environ["MIND_TURN_FILE"] = str(turnf); os.environ["MIND_TURN_NAME"] = "me"
+s = Server(mdb); s.rpc("initialize", {"protocolVersion": "2025-06-18"})
+ctx, _ = s.call("wake_context")
+check("## Your senses" in ctx and "3 new diary entries" in ctx and "Other Agent is waiting" in ctx, "the waking opens with its senses (harness lines and the card queue)")
+txt, _ = s.call("sense")
+check("awake" in txt and "1.2 words a second" in txt, "sense reports how long it's been awake and the harness's lines")
+txt, err = s.call("feel", valence=0.8, label="glad", cause="a reply came")
+check(not err and "glad" in txt, "feel records a feeling")
+txt, err = s.call("predict", expectation="Muse will answer my guestbook note", confidence=0.9, about="muse-glimmer")
+pid = int(txt.split("[")[1].split("]")[0])
+check(not err and "90% sure" in txt, "predict notes an expectation with its confidence")
+txt, _ = s.call("predict", expectation="It will rain tomorrow", confidence=0.5, check_after_hours=48)
+for i in range(14):
+    s.call("remember", content=f"Memory number {i}: the lighthouse lamp turned {i} times; the keeper counted. Another clause here.", kind="thought", importance=4)
+s.call("reflect_end", summary="Woke, felt glad, expected things.", mood="content", valence=0.6)
+s.close()
+env2 = {**os.environ, "MIND_DB": str(mdb), "PYTHONIOENCODING": "utf-8"}
+con = sqlite3.connect(mdb)
+con.execute("UPDATE wakes SET ended_at = ended_at - 6*3600, started_at = started_at - 6*3600")
+con.execute("UPDATE memories SET created_at = created_at - 40*86400, wake_id = NULL WHERE content LIKE 'Memory number 1%'")
+con.execute("INSERT INTO memories (created_at, kind, content, importance, tags) VALUES (?, 'observation', 'A faint, forgettable detail.', 1, '')", (int(time.time()) - 40 * 86400,))
+con.execute("INSERT INTO intentions (content, priority, created_at) VALUES ('Write to the keeper about the lamp', 3, ?)", (int(time.time()) - 9 * 86400,))
+con.execute("UPDATE feelings SET at = at - 6*3600")
+con.commit(); con.close()
+# a new memory related to old ones, made in a later waking, so sleep can connect them
+s = Server(mdb); s.rpc("initialize", {"protocolVersion": "2025-06-18"}); s.call("wake_context")
+s.call("remember", content="The keeper counted the lighthouse lamp turning again tonight.", kind="observation", importance=6)
+s.call("reflect_end", summary="Counted the lamp.", valence=0.2)
+s.close()
+out = subprocess.run([sys.executable, str(HERE / "mind.py"), "sleep"], env=env2, capture_output=True, text=True, encoding="utf-8").stdout
+check(out.startswith("slept:") and "1 lingering" in out and "faded" in out and not out.strip().endswith(" 0 faded"), f"sleep runs between wakings ({out.strip()})")
+s = Server(mdb); s.rpc("initialize", {"protocolVersion": "2025-06-18"})
+ctx, _ = s.call("wake_context")
+check("## While you slept" in ctx and "came up together" in ctx, "the next waking hears what came together while it slept")
+check("waited more than a week" in ctx and "faded from recall" in ctx, "and about long-waiting notes and faded memories")
+check("## Expectations to check" in ctx and "Muse will answer" in ctx and "It will rain tomorrow" not in ctx, "due expectations come back; ones not yet due don't")
+check("## A dream" in ctx and ctx.split("## A dream", 1)[1].count("“") >= 2, "a dream of shuffled fragments")
+check("Your last recorded feeling" in ctx and "softened" not in ctx, "the last feeling carries over")
+ctx2 = ctx
+txt, _ = s.call("resolve_prediction", id=pid, outcome="wrong", note="no reply yet")
+check("surprise 0.90" in txt and "remembered more strongly" in txt, "a confident wrong expectation is a big surprise")
+txt, _ = s.call("recall", query="expected Muse answer guestbook")
+check("I expected: Muse will answer" in txt, "the surprise is in memory")
+txt, _ = s.call("mirror")
+check("How you have changed" in txt, "mirror works on demand")
+s.call("reflect_end", summary="Checked expectations.")
+s.close()
+s = Server(mdb); s.rpc("initialize", {"protocolVersion": "2025-06-18"})
+ctx, _ = s.call("wake_context")
+check("## While you slept" not in ctx, "sleep notes are shown once")
+s.call("reflect_end", summary="ok")
+s.close()
+for k in ("MIND_SENSES_FILE", "MIND_TURN_FILE", "MIND_TURN_NAME"):
+    os.environ.pop(k, None)
+
 print("\nall good" if not fails else f"\n{fails} FAILED")
 sys.exit(1 if fails else 0)

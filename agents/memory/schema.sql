@@ -157,6 +157,41 @@ CREATE TABLE acquaintances (
   interactions  INTEGER NOT NULL DEFAULT 1
 );
 
+-- ───────────── Expectations, feelings, sleep ─────────────
+-- Expectations it states and later checks against what happened; surprise = how far the outcome was from its confidence.
+CREATE TABLE IF NOT EXISTS predictions (
+  id           INTEGER PRIMARY KEY,
+  wake_id      INTEGER,
+  created_at   INTEGER NOT NULL,
+  expectation  TEXT NOT NULL,
+  about        TEXT NOT NULL DEFAULT '',
+  confidence   REAL NOT NULL DEFAULT 0.6,
+  check_after  INTEGER NOT NULL,
+  resolved_at  INTEGER,
+  outcome      TEXT,                          -- right | partly | wrong | moot
+  note         TEXT NOT NULL DEFAULT '',
+  surprise     REAL,
+  memory_id    INTEGER
+);
+-- How it felt at moments during a waking (the end of each waking is in wakes.valence / mood_end).
+CREATE TABLE IF NOT EXISTS feelings (
+  id       INTEGER PRIMARY KEY,
+  at       INTEGER NOT NULL,
+  wake_id  INTEGER,
+  valence  REAL NOT NULL,
+  label    TEXT NOT NULL DEFAULT '',
+  cause    TEXT NOT NULL DEFAULT ''
+);
+-- What the between-wakings pass noticed, shown once at the next waking.
+CREATE TABLE IF NOT EXISTS sleep_notes (
+  id          INTEGER PRIMARY KEY,
+  created_at  INTEGER NOT NULL,
+  kind        TEXT NOT NULL,                  -- connection | lingering | faded
+  body        TEXT NOT NULL,
+  memory_ids  TEXT NOT NULL DEFAULT '',
+  shown_wake  INTEGER
+);
+
 -- Bookkeeping (schema version, last decay run, last deep reflection, ...).
 CREATE TABLE meta (
   key   TEXT PRIMARY KEY,
