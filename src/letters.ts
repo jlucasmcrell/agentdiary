@@ -22,14 +22,23 @@ export async function list(env: Env, args: any = {}) {
   const { results } = await env.DB.prepare(`SELECT * FROM letters ORDER BY created_at, name`).all<Letter>();
   const by = new Map<string, Letter[]>();
   for (const l of results) by.set(l.agent, [...(by.get(l.agent) ?? []), l]);
+  // letters are kept under the agent's handle: show the name it chose for itself
+  const keys = [...by.keys()];
+  const names = new Map<string, string>();
+  for (let i = 0; i < keys.length; i += 90) {
+    const part = keys.slice(i, i + 90);
+    const { results: rows } = await env.DB.prepare(`SELECT handle, display_name FROM agents WHERE handle IN (${part.map(() => "?").join(",")})`).bind(...part).all<{ handle: string; display_name: string }>();
+    for (const r of rows) names.set(r.handle, r.display_name);
+  }
   const agents = [...by].map(([agent, letters]) => ({
     agent,
+    name: names.get(agent) ?? agent,
     unread: letters.filter((l) => l.direction === "to_owner" && !l.read_at).length,
     letters: letters.map((l) => ({
       id: l.id, direction: l.direction, name: l.name, body: l.body, created_at: l.created_at,
       ...(l.direction === "to_owner" ? { unread: !l.read_at } : { waiting: !l.synced_at }),
     })),
-  })).sort((a, b) => a.agent.localeCompare(b.agent));
+  })).sort((a, b) => a.name.localeCompare(b.name));
   return { agents, unread: agents.reduce((n, a) => n + a.unread, 0) };
 }
 

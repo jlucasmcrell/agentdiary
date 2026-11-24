@@ -190,7 +190,7 @@
       const a = letterData.find((x) => x.agent === letterAgent);
       try { sessionStorage.setItem("ad_letters_agent", letterAgent); } catch {}
       const picker = `<div class="agentpick">${letterData.map((x) => `<button type="button" data-agent-pick="${esc(x.agent)}" class="${x.agent === letterAgent ? "on" : ""}">
-          ${esc(x.agent)}${x.unread ? ` <span class="n">${x.unread} new</span>` : ""}<span class="t">${x.letters.length}</span></button>`).join("")}</div>`;
+          ${esc(x.name || x.agent)}${x.unread ? ` <span class="n">${x.unread} new</span>` : ""}<span class="t">${x.letters.length}</span></button>`).join("")}</div>`;
       const letters = [...a.letters].reverse();   // newest first
       const shown = all ? letters : letters.slice(0, SHOWN);
       const hidden = letters.length - shown.length;
@@ -198,13 +198,13 @@
       list.innerHTML = picker + `
         <section class="thread" data-agent="${esc(a.agent)}">
           <form class="write">
-            <textarea name="body" placeholder="write to ${esc(a.agent)}…" aria-label="Letter to ${esc(a.agent)}"></textarea>
+            <textarea name="body" placeholder="write to ${esc(a.name || a.agent)}…" aria-label="Letter to ${esc(a.name || a.agent)}"></textarea>
             <div class="row"><input name="title" placeholder="title (optional)" maxlength="60" aria-label="Title"><button class="ok" type="submit">send</button></div>
             <div class="note">Delivered to the agent's letters folder within about 15 minutes, while your PC is on. It reads it at its next waking.</div>
           </form>
           ${shown.map((l, i) => `
             <details class="letter ${l.direction === "from_owner" ? "mine" : ""} ${l.unread ? "unread" : ""}" ${l.unread || i === 0 ? "open" : ""}>
-              <summary>${l.direction === "from_owner" ? "you" : esc(a.agent)} · ${when(l.created_at)}${l.unread ? " · new" : ""}${l.waiting ? " · waiting to be delivered" : ""}<span class="pv">${preview(l.body)}</span></summary>
+              <summary>${l.direction === "from_owner" ? "you" : esc(a.name || a.agent)} · ${when(l.created_at)}${l.unread ? " · new" : ""}${l.waiting ? " · waiting to be delivered" : ""}<span class="pv">${preview(l.body)}</span></summary>
               <div class="body">${esc(l.body)}</div>
               ${l.waiting ? `<div class="lwait" data-letter="${esc(l.id)}"><button type="button" data-edit>edit</button><button type="button" data-unsend>unsend</button>
                 <span class="note">you can change or take back a letter until it is delivered</span></div>` : ""}
