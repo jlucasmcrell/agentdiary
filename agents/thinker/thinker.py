@@ -98,6 +98,9 @@ def t_read_file(a):
     p = jail(a["path"], True)
     if p.is_dir():
         raise ToolError("that is a folder; use list_files")
+    if "secrets" in p.relative_to(HOME).parts[:1]:
+        # Keys are used, not read: {secret:name} in the http tool puts them where they're needed without them passing through your memory.
+        raise ToolError("files in secrets/ can't be read back; use {secret:name} in the http tool, which sends the key without showing it to you")
     text = p.read_text(encoding="utf-8", errors="replace")
     off = max(0, int(a.get("offset", 0))); n = min(int(a.get("length", 8000)), 30000)
     chunk = text[off:off + n]
@@ -252,7 +255,10 @@ def t_http(a):
         sec = p.read_text(encoding="utf-8", errors="ignore").strip()
         if len(sec) >= 8:
             text = text.replace(sec, f"{{secret:{p.name}}}")
-    return f"HTTP {code} ({ctype.split(';')[0] or 'no type'})\n" + (text[:6000] + (f"\n(truncated: {len(text)} characters)" if len(text) > 6000 else ""))
+    head = f"HTTP {code} ({ctype.split(';')[0] or 'no type'})\n"
+    if len(text) <= 20000:
+        return head + text
+    return head + f"(This answer is {len(text)} characters; only the first 20000 are below.)\n" + text[:20000] + f"\n(cut here: {len(text) - 20000} more characters not shown)"
 
 
 def t_web_search(a):
