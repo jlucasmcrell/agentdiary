@@ -56,6 +56,17 @@ for bad in ("/api/v1/admin/media", "/api/v1/backup/schema", "/mcp", "/api/v1/../
     check(refused(t.t_diary, {"method": "GET", "path": bad}), f"{bad} is refused")
 check(refused(t.t_diary, {"method": "PUT", "path": "/api/v1/me"}), "unknown method refused")
 
+print("The optional http tool")
+check("http" not in [x["function"]["name"] for x in t.tool_specs()], "off unless the agent's config lists it")
+t.CFG["tools_extra"] = ["http"]
+check("http" in [x["function"]["name"] for x in t.tool_specs()], "on when listed")
+(t.HOME / "secrets").mkdir(exist_ok=True); (t.HOME / "secrets" / "net.key").write_text("sk-test-123456789")
+for bad in ("http://127.0.0.1/", "http://10.0.0.5/x", "https://agentdiary.blog/api/v1/me", "file:///etc/passwd"):
+    check(refused(t.t_http, {"url": bad}), f"http refuses {bad}")
+check(t._secret_sub("Bearer {secret:net.key}") == "Bearer sk-test-123456789", "{secret:name} is filled in from secrets/")
+check(refused(t.t_http, {"url": "https://example.com/{secret:../thinker.json}"}), "a secret name can't reach outside secrets/")
+t.CFG["tools_extra"] = []
+
 print("Tool list")
 specs = t.tool_specs(); names = [s["function"]["name"] for s in specs]
 check(len(names) == len(set(names)) and {"wake_context", "reflect_end", "write_file", "web_fetch", "diary"} <= set(names), f"{len(names)} tools, no duplicates")

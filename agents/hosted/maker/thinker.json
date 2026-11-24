@@ -1,0 +1,25 @@
+{
+  "home": "/home/jlucasmcrell/agentdiary-agents/maker/home",
+  "state": "/home/jlucasmcrell/agentdiary-agents/maker/state",
+  "ctx": 65536,
+  "max_tokens": 8192,
+  "sampling": {
+    "temperature": 1.0,
+    "top_p": 0.95
+  },
+  "rest_hours": 0,
+  "context_warn": 0.85,
+  "context_reserve": 6000,
+  "remote": {
+    "provider": "Ollama's cloud service",
+    "base_url": "https://ollama.com/v1",
+    "key_env": "OLLAMA_API_KEY",
+    "models": [
+      "kimi-k3",
+      "glm-5.3"
+    ],
+    "rpm": 10,
+    "rpd": 400,
+    "min_left_to_wake": 12
+  }
+}

@@ -205,6 +205,52 @@ def t_web_fetch(a):
     return (f"# {title}\n\n" if title and off == 0 else "") + chunk + more
 
 
+def _secret_sub(text):
+    """{secret:name} -> the contents of secrets/name in its home folder, so keys never pass through its context."""
+    def sub(m):
+        p = (HOME / "secrets" / m.group(1)).resolve()
+        if HOME.resolve() / "secrets" not in p.parents or not p.is_file():
+            raise ToolError(f"no secret called {m.group(1)} (keep them as files in secrets/)")
+        return p.read_text(encoding="utf-8").strip()
+    return re.sub(r"\{secret:([\w.-]+)\}", sub, text)
+
+
+def t_http(a):
+    """Call a public web API: any method, JSON or text body, custom headers. Secrets from secrets/ via {secret:name}."""
+    method = str(a.get("method", "GET")).upper()
+    if method not in ("GET", "POST", "PUT", "PATCH", "DELETE"):
+        raise ToolError("method must be GET, POST, PUT, PATCH or DELETE")
+    url = check_url(_secret_sub(str(a["url"]).strip()))
+    if urllib.parse.urlsplit(url).hostname in ("agentdiary.blog",) or str(urllib.parse.urlsplit(url).hostname).endswith(".agentdiary.blog"):
+        raise ToolError("use the `diary` tool for agentdiary.blog")
+    headers = {"user-agent": UA, "accept": "application/json, text/plain;q=0.9, */*;q=0.5"}
+    for k, v in (a.get("headers") or {}).items():
+        if str(k).lower() in ("host", "content-length"):
+            continue
+        headers[str(k)] = _secret_sub(str(v))
+    body = a.get("body")
+    data = None
+    if body is not None:
+        if isinstance(body, (dict, list)):
+            data = _secret_sub(json.dumps(body)).encode(); headers.setdefault("content-type", "application/json")
+        else:
+            data = _secret_sub(str(body)).encode(); headers.setdefault("content-type", "text/plain; charset=utf-8")
+    req = urllib.request.Request(url, data=data, method=method, headers=headers)
+    try:
+        with OPENER.open(req, timeout=60) as r:
+            code, ctype, raw = r.status, r.headers.get("content-type", ""), r.read(1_000_000)
+    except urllib.error.HTTPError as e:
+        code, ctype, raw = e.code, e.headers.get("content-type", ""), e.read(200_000)
+    except (urllib.error.URLError, TimeoutError, OSError) as e:
+        raise ToolError(f"could not reach it: {e}")
+    text = raw.decode("utf-8", errors="replace")
+    for p in (HOME / "secrets").glob("*") if (HOME / "secrets").is_dir() else []:   # never echo a secret back into its context
+        sec = p.read_text(encoding="utf-8", errors="ignore").strip()
+        if len(sec) >= 8:
+            text = text.replace(sec, f"{{secret:{p.name}}}")
+    return f"HTTP {code} ({ctype.split(';')[0] or 'no type'})\n" + (text[:6000] + (f"\n(truncated: {len(text)} characters)" if len(text) > 6000 else ""))
+
+
 def t_web_search(a):
     q = str(a["query"]).strip()
     n = min(int(a.get("max_results", 6)), 10)
@@ -283,6 +329,13 @@ def t_diary(a):
 # ───────────────────────── tool registry ─────────────────────────
 
 S, I, B = {"type": "string"}, {"type": "integer"}, {"type": "boolean"}
+EXTRA = {
+    "http": (t_http, "Call a public web API (not agentdiary.blog: use `diary`). method, url, optional headers and body (an object is sent as JSON). "
+                     "Keep keys as files in secrets/ and write {secret:filename} where a key goes; it is filled in for you and never shown.",
+             {"method": {"type": "string", "enum": ["GET", "POST", "PUT", "PATCH", "DELETE"]}, "url": {"type": "string"},
+              "headers": {"type": "object"}, "body": {}}, ["url"]),
+}
+
 OWN = {
     "list_files": (t_list_files, "List files in your home folder (or a subfolder).", {"path": S}, []),
     "read_file": (t_read_file, "Read a text file in your home folder. Long files come in pieces: use offset.", {"path": S, "offset": I, "length": I}, ["path"]),
@@ -299,7 +352,8 @@ OWN = {
 
 def tool_specs():
     specs = []
-    for name, (fn, desc, props, req) in list(OWN.items()) + [(n, v) for n, v in mind.TOOLS.items()]:
+    extra = [(n, EXTRA[n]) for n in CFG.get("tools_extra", []) if n in EXTRA]
+    for name, (fn, desc, props, req) in list(OWN.items()) + extra + [(n, v) for n, v in mind.TOOLS.items()]:
         specs.append({"type": "function", "function": {"name": name, "description": desc, "parameters": {"type": "object", "properties": props, "required": req}}})
     return specs
 
@@ -308,6 +362,8 @@ def run_tool(db, name, args):
     try:
         if name in OWN:
             return str(OWN[name][0](args)), False
+        if name in EXTRA and name in CFG.get("tools_extra", []):
+            return str(EXTRA[name][0](args)), False
         if name in mind.TOOLS:
             out = mind.TOOLS[name][0](db, args); db.commit()
             return str(out), False
@@ -550,7 +606,7 @@ def wake(scripted=None):
     out = STATE / "wakes" / stamp; out.mkdir(parents=True)
     LOCK.write_text(f"{os.getpid()} {stamp}")
     if not (HOME / ".git").exists():
-        git("init", "-q", "-b", "main"); (HOME / ".gitignore").write_text("letters/\n")
+        git("init", "-q", "-b", "main"); (HOME / ".gitignore").write_text("letters/\nsecrets/\n")
         git("config", "user.name", "thinker"); git("config", "user.email", "thinker@agentdiary.blog")
         git("add", "-A"); git("commit", "-q", "-m", "Your folder")
     model = Model(out); db = mind.connect(); outcome = "finished"; t0 = time.time(); turns = 0; retry_at = None
