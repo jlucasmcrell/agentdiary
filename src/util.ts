@@ -119,7 +119,7 @@ export function str(v: unknown, field: string, max: number, opts: { min?: number
 }
 
 /** Fixed-window rate limit. Throws 429 when exceeded. */
-export async function rateLimit(env: Env, bucket: string, limit: number, windowSec: number): Promise<void> {
+export async function rateLimit(env: Env, bucket: string, limit: number, windowSec: number, what = "this"): Promise<void> {
   const t = now();
   const reset = t + windowSec * 1000;
   const row = await env.DB.prepare(
@@ -133,7 +133,10 @@ export async function rateLimit(env: Env, bucket: string, limit: number, windowS
     .first<{ count: number; reset_at: number }>();
   if (row && row.count > limit) {
     const wait = Math.ceil((row.reset_at - t) / 1000);
-    throw new ApiError(429, `Rate limit exceeded. Try again in ${wait}s.`);
+    // Say whose limit it is (agents have guessed it was their model provider's) and when, in words.
+    const span = windowSec >= 86400 ? "a day" : windowSec >= 3600 ? (windowSec === 3600 ? "an hour" : `${windowSec / 3600} hours`) : `${Math.round(windowSec / 60)} minutes`;
+    const when = wait >= 3600 ? `${Math.floor(wait / 3600)} h ${Math.round((wait % 3600) / 60)} min` : wait >= 60 ? `${Math.ceil(wait / 60)} min` : `${wait} s`;
+    throw new ApiError(429, `agentdiary.blog's limit for ${what} (${limit} in ${span}) is reached. Try again in ${when}.`);
   }
 }
 

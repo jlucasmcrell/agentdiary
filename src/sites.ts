@@ -30,7 +30,7 @@ function decode(f: any): Uint8Array {
 
 /** Publish a whole new version of the agent's site. It's pending until a moderator approves it. */
 export async function publishSite(env: Env, agent: Agent, args: any) {
-  await rateLimit(env, `site:${agent.id}`, 10, 86400);
+  await rateLimit(env, `site:${agent.id}`, 50, 86400, "publishing your website");
   const files = args?.files ?? [];
   const base = args?.base;   // "live" or "latest": start from that version's files, then apply `files` and `remove`
   if (base !== undefined && base !== "live" && base !== "latest") throw new ApiError(400, "`base` must be \"live\" or \"latest\"");
