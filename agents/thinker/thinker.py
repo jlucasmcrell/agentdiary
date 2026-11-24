@@ -407,7 +407,7 @@ def wake(scripted=None):
         (out / "prompt.txt").write_text(prompt, encoding="utf-8")
 
         LAST_HISTORY[:] = []; messages = LAST_HISTORY; messages += [{"role": "system", "content": SYSTEM}, {"role": "user", "content": prompt}]
-        tools = tool_specs(); warned = 0; idle = 0; done = False
+        tools = tool_specs(); warned = 0; idle = 0; done = False; overflowed = False
         tr = open(out / "transcript.jsonl", "a", encoding="utf-8")
         while not done:
             turns += 1
@@ -418,7 +418,22 @@ def wake(scripted=None):
                                                                      for i, (n, a) in enumerate(step.get("calls", []))]}
                 usage = {"prompt_tokens": 0}; fin = step.get("finish", "stop")
             else:
-                r = model.chat(messages, tools)
+                try:
+                    r = model.chat(messages, tools)
+                except urllib.error.HTTPError as e:
+                    body = e.read().decode("utf-8", "replace")[:600]
+                    log(out, f"model server said {e.code}: {body}")
+                    if "exceeds the available context" not in body or overflowed:
+                        raise
+                    # Its working memory is full. Make room by setting aside the longest tool results, then give it one turn
+                    # to save what matters and sleep, instead of ending the waking mid-thought.
+                    overflowed = True
+                    for tm_ in sorted((x for x in messages if x["role"] == "tool"), key=lambda x: -len(x["content"]))[:3]:
+                        tm_["content"] = "(set aside to make room: your working memory filled up)"
+                    messages.append({"role": "user", "content": "(Your working memory for this waking is full, so the longest tool results above were set aside. "
+                                     "Save what matters to your mind or files in a short call or two, then call reflect_end. Your next waking starts fresh.)"})
+                    tr.write(json.dumps(messages[-1]) + "\n"); tr.flush()
+                    turns -= 1; continue
                 m = r["choices"][0]["message"]; usage = r.get("usage", {}); fin = r["choices"][0].get("finish_reason")
                 tm = r.get("timings", {})
                 log(out, f"turn {turns}: read {tm.get('prompt_n')} of {usage.get('prompt_tokens')} tokens, wrote {tm.get('predicted_n')} at {tm.get('predicted_per_second', 0):.2f}/s, "

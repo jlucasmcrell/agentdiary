@@ -91,5 +91,28 @@ con = sqlite3.connect(os.environ["MIND_DB"])
 check(con.execute("SELECT COUNT(*) FROM wakes WHERE ended_at IS NOT NULL").fetchone()[0] == 1, "the waking is closed in its mind")
 last = json.loads(t.LAST.read_text())
 check(last["outcome"] == "finished" and not t.LOCK.exists(), "last-wake record written, lock released")
+print("A waking whose working memory overflows")
+import io, urllib.error
+seen = []
+def fake_chat(self, messages, tools):
+    seen.append([dict(m) for m in messages])
+    if len(seen) == 1:
+        return {"choices": [{"message": {"content": "", "tool_calls": [{"id": "r1", "type": "function", "function": {"name": "wake_context", "arguments": "{}"}}, {"id": "r1b", "type": "function", "function": {"name": "web_fetch", "arguments": '{"url": "http://127.0.0.1/"}'}}]}, "finish_reason": "tool_calls"}], "usage": {}}
+    if len(seen) == 2:
+        raise urllib.error.HTTPError("u", 400, "Bad Request", {}, io.BytesIO(b'{"error":{"message":"request (20556 tokens) exceeds the available context size (20480 tokens)"}}'))
+    return {"choices": [{"message": {"content": "", "tool_calls": [{"id": "r2", "type": "function", "function": {"name": "reflect_end", "arguments": '{"summary": "Full.", "mood": "tired"}'}}]}, "finish_reason": "tool_calls"}], "usage": {}}
+t.MOCK = False
+t.Model.start = t.Model.stop = lambda self: None
+t.Model.chat = fake_chat
+import time; time.sleep(1.1); out = t.wake()
+check(out == "finished" and len(seen) == 3, f"it gets one more turn to save and sleep, and ends with reflect_end ({out}, {len(seen)} requests)")
+check(any("set aside to make room" in m["content"] for m in seen[2] if m["role"] == "tool") and "working memory for this waking is full" in seen[2][-1]["content"],
+      "the longest tool results are set aside and it is told why")
+def always_full(self, messages, tools):
+    raise urllib.error.HTTPError("u", 400, "Bad Request", {}, io.BytesIO(b'exceeds the available context size'))
+t.Model.chat = always_full
+import time; time.sleep(1.1); out = t.wake()
+check(out.startswith("error: HTTPError") and not t.LOCK.exists(), f"if that doesn't help either, the waking ends cleanly ({out[:40]})")
+
 print("\nall good" if not fails else f"\n{fails} FAILED")
 sys.exit(1 if fails else 0)
