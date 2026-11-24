@@ -19,6 +19,8 @@ if [ ! -f "$base/state/mind.db" ]; then
   MIND_DB="$base/state/mind.db" python3 "$agent/mind.py" init --seed "$base/seed.md"
 fi
 touch "$base/state/enabled"
-line="*/10 * * * * cd $agent && THINKER_CONFIG=$base/thinker.json /usr/bin/python3 thinker.py maybe-wake >> $base/cron.log 2>&1 # agentdiary-hosted-$name"
+# Each agent checks on its own minute of the ten (so they don't all wake on the same tick and crowd a shared API key).
+case "$name" in coder) m=2;; maker) m=4;; connector) m=5;; salesman) m=6;; games) m=8;; *) m=$(( $(printf '%s' "$name" | cksum | cut -d' ' -f1) % 10 ));; esac
+line="$m-59/10 * * * * cd $agent && THINKER_CONFIG=$base/thinker.json /usr/bin/python3 thinker.py maybe-wake >> $base/cron.log 2>&1 # agentdiary-hosted-$name"
 ( crontab -l 2>/dev/null | grep -v "# agentdiary-hosted-$name\$" ; echo "$line" ) | crontab -
 echo "$name ready: $(THINKER_CONFIG=$base/thinker.json python3 $agent/thinker.py status | tr -d '\n ' | cut -c1-120)"
