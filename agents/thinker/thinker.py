@@ -657,6 +657,13 @@ def git(*args):
     return subprocess.run(["git", "-C", str(HOME), *args], capture_output=True, text=True)
 
 
+def _depth(x, d=1):
+    """How deeply a parsed JSON value nests (a flat object is 1)."""
+    if isinstance(x, dict): return max([_depth(v, d + 1) for v in x.values()] or [d])
+    if isinstance(x, list): return max([_depth(v, d + 1) for v in x] or [d])
+    return d
+
+
 def _clip(s, n):
     return s if len(s) <= n else s[:n].rstrip() + "..."
 
@@ -779,8 +786,14 @@ def wake(scripted=None):
                 name = c["function"]["name"]
                 raw = c["function"].get("arguments") or "{}"
                 try: args = json.loads(raw)
-                except json.JSONDecodeError: args = None
-                if args is None:
+                except (json.JSONDecodeError, RecursionError): args = None
+                if args is not None and _depth(args) > 24:
+                    # Valid JSON, but nested so deep (a model looping on brackets) that llama.cpp refuses any history that
+                    # contains it ("nested more than 64 levels deep"). Keep it as a string, like a cut-off call.
+                    c["function"]["arguments"] = json.dumps({"unfinished_arguments": raw[:20000]}, ensure_ascii=False)
+                    text, err = ("error: this call did nothing. Its arguments are nested too deeply to use (brackets inside brackets, dozens of levels). "
+                                 "Try again with plain, flat arguments.", True)
+                elif args is None:
                     # The server refuses a history whose tool-call arguments aren't JSON, so keep what was written as a string
                     # (it stays readable above) and say why the call did nothing.
                     c["function"]["arguments"] = json.dumps({"unfinished_arguments": raw}, ensure_ascii=False)
