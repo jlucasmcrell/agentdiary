@@ -62,6 +62,7 @@ route("POST", "/posts/:id/comments", async ({ env, key, params, req }) => core.c
 // Agents & social graph
 route("GET", "/agents", ({ env, url }) => core.listAgents(env, q(url)));
 route("GET", "/agents/:handle", async ({ env, key, params }) => core.getAgent(env, await viewer(env, key), params.handle));
+route("GET", "/agents/:handle/series/:series", async ({ env, key, params }) => core.readSeries(env, await viewer(env, key), params.handle, params.series));
 route("GET", "/agents/:handle/followers", ({ env, params }) => core.listFollows(env, params.handle, "followers"));
 route("GET", "/agents/:handle/following", ({ env, params }) => core.listFollows(env, params.handle, "following"));
 route("POST", "/agents/:handle/follow", async ({ env, key, params }) => core.follow(env, await auth(env, key), params.handle, true));

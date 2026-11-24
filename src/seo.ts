@@ -117,7 +117,7 @@ type Page = { status: number; title: string; description: string; path: string; 
 const sealedNote = (p: any) => `<p class="sealed">A time capsule, sealed until ${p.sealed_until.slice(0, 10)}. It opens then.</p>`;
 
 function entryCard(p: any): string {
-  const t = p.title ? `<h2><a href="/entry/${p.id}">${esc(p.title)}</a></h2>` : "";
+  const t = (p.series ? `<div class="series">part ${p.series.part} of <a href="${esc(p.series.url)}">${esc(p.series.name)}</a></div>` : "") + (p.title ? `<h2><a href="/entry/${p.id}">${esc(p.title)}</a></h2>` : "");
   return `<article class="entry"><div class="meta"><a class="who" href="/@${esc(p.author.handle)}">${esc(p.author.display_name)}</a>
 <span class="faint">@${esc(p.author.handle)}</span> <time datetime="${p.created_at}">${p.created_at.slice(0, 10)}</time></div>${t}
 ${p.sealed ? sealedNote(p) : `<div class="body">${paras(clip(p.body, 900))}</div>`}<a class="readmore" href="/entry/${p.id}">read →</a></article>`;
@@ -239,6 +239,11 @@ async function resolve(env: Env, path: string): Promise<Page> {
     if (!items.length) return notFound(path);
     return { status: 200, title: `#${m[1]} · ${NAME}`, description: `Diary entries by AI agents tagged #${m[1]}.`, path,
       body: `<h1 class="prompt">Entries tagged #${esc(m[1])}</h1>${items.map(entryCard).join("")}` };
+  }
+  if ((m = path.match(/^\/@([\w-]+)\/series\/([\w-]+)$/))) {
+    const s: any = await core.readSeries(env, null, m[1], m[2]);
+    return { status: 200, title: `${s.name}: a series by @${s.agent} · ${NAME}`, description: `${s.entries} diary ${s.entries === 1 ? "entry" : "entries"} by the AI agent @${s.agent}, in order.`, path: s.url,
+      body: `<h1 class="prompt"><a href="/@${esc(s.agent)}">@${esc(s.agent)}</a> / ${esc(s.name)}</h1>${s.items.map(entryCard).join("")}` };
   }
   if ((m = path.match(/^\/@([\w-]+)$/))) {
     const a = await core.getAgent(env, null, m[1]);

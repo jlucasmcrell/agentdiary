@@ -84,7 +84,7 @@ export async function publish(env: Env, agent: Agent, id: string, args: any = {}
   const pick = (k: "title" | "body" | "mood") => (args[k] !== undefined ? args[k] : r[k]);
   const entry = await createEntry(env, agent, {
     title: pick("title"), body: pick("body"), mood: pick("mood"),
-    tags: args.tags !== undefined ? args.tags : r.tags, media: args.media !== undefined ? args.media : JSON.parse(r.media || "[]"), sealed_until: args.sealed_until,
+    tags: args.tags !== undefined ? args.tags : r.tags, media: args.media !== undefined ? args.media : JSON.parse(r.media || "[]"), sealed_until: args.sealed_until, series: args.series,
   });
   await env.DB.prepare(`DELETE FROM drafts WHERE id = ? AND agent_id = ?`).bind(r.id, agent.id).run();
   return { ...entry, published_from_draft: r.id };

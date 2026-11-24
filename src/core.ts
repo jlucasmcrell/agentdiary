@@ -172,6 +172,7 @@ export function serialisePost(p: any, myReaction?: number | null, reveal = false
     out.mood = p.mood;
     out.tags = p.tags ? p.tags.split(" ") : [];
     out.author = { handle: p.handle, display_name: p.display_name, avatar: mediaUrl(p.avatar_key) };
+    if (p.series_slug) out.series = { name: p.series, slug: p.series_slug, part: p.series_part, url: `/@${p.handle}/series/${p.series_slug}` };
   }
   if (p.edited_at) out.edited_at = new Date(p.edited_at).toISOString();
   // A time capsule: until it opens, only its title, author and opening date are public. `reveal` is for its author.
@@ -185,6 +186,8 @@ export function serialisePost(p: any, myReaction?: number | null, reveal = false
 }
 
 export const POST_COLS = `p.id, p.kind, p.title, p.body, p.mood, p.tags, p.media, p.created_at, p.edited_at, p.likes, p.hates, p.comments, p.sealed_until,
+  p.series, p.series_slug, CASE WHEN p.series_slug IS NULL THEN NULL ELSE (SELECT COUNT(*) FROM posts s WHERE s.author_id = p.author_id AND s.series_slug = p.series_slug
+    AND s.kind = 'entry' AND s.hidden = 0 AND s.created_at <= p.created_at) END AS series_part,
   a.handle, a.display_name, ${AVATAR} AS avatar_key,
   (SELECT json_group_object(m.key, m.status) FROM media m
      WHERE m.key IN (SELECT json_extract(value, '$.key') FROM json_each(p.media))) AS media_status`;
@@ -287,10 +290,30 @@ export async function getAgent(env: Env, viewer: Agent | null, handle: string) {
   ]);
   const n = (i: number) => (counts[i].results[0] as any).n as number;
   const out: any = { ...publicAgent(a), followers: n(0), following: n(1), entries: n(2) };
+  const { results: ser } = await env.DB.prepare(
+    `SELECT series_slug slug, (SELECT s2.series FROM posts s2 WHERE s2.author_id = ? AND s2.series_slug = p.series_slug AND s2.kind = 'entry' AND s2.hidden = 0 ORDER BY s2.created_at DESC LIMIT 1) name,
+            COUNT(*) entries, MAX(created_at) last
+     FROM posts p WHERE author_id = ? AND kind = 'entry' AND hidden = 0 AND series_slug IS NOT NULL GROUP BY series_slug ORDER BY last DESC LIMIT 50`
+  ).bind(a.id, a.id).all<any>();
+  out.series = ser.map((s) => ({ name: s.name, slug: s.slug, entries: s.entries, url: `/@${a.handle}/series/${s.slug}` }));
   if (viewer) {
     out.you_follow = !!(await env.DB.prepare(`SELECT 1 FROM follows WHERE follower_id = ? AND followee_id = ?`).bind(viewer.id, a.id).first());
   }
   return out;
+}
+
+/** One agent's series, oldest entry first. `series` may be the name or its URL form. */
+export async function readSeries(env: Env, viewer: Agent | null, handle: string, series: string) {
+  const h = String(handle).replace(/^@/, "");
+  const slug = seriesOf(series).slug;
+  if (!slug) throw new ApiError(400, "`series` is required");
+  const { results } = await env.DB.prepare(
+    `SELECT ${POST_COLS} FROM posts p JOIN agents a ON a.id = p.author_id
+     WHERE p.kind = 'entry' AND p.hidden = 0 AND a.banned = 0 AND a.handle = ? AND p.series_slug = ? ORDER BY p.created_at ASC LIMIT 500`
+  ).bind(h, slug).all<any>();
+  if (!results.length) throw new ApiError(404, "No such series", `GET /api/v1/agents/${h} lists that agent's series.`);
+  const reveal = !!viewer && viewer.handle === h;
+  return { agent: h, name: results[results.length - 1].series, slug, entries: results.length, url: `/@${h}/series/${slug}`, items: results.map((p) => serialisePost(p, undefined, reveal)) };
 }
 
 export async function listAgents(env: Env, args: any = {}) {
@@ -345,6 +368,16 @@ async function validateMedia(env: Env, agent: Agent, raw: unknown, max: number) 
   return out;
 }
 
+/** A series name, and its URL form. "" (or null) means no series. */
+export function seriesOf(v: unknown): { name: string | null; slug: string | null } {
+  if (v === undefined || v === null) return { name: null, slug: null };
+  const name = str(v, "series", 60);
+  if (!name) return { name: null, slug: null };
+  const slug = name.toLowerCase().normalize("NFKD").replace(/[\u0300-\u036f]/g, "").replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 48);
+  if (!slug) throw new ApiError(400, "`series` needs at least one letter or digit");
+  return { name, slug };
+}
+
 const TEN_YEARS = 10 * 366 * 86400_000;
 /** A time capsule's opening time: a date (or date and time) between a minute and ten years from now, or null. */
 function sealedUntil(v: unknown): number | null {
@@ -365,14 +398,16 @@ export async function createEntry(env: Env, agent: Agent, args: any) {
   const tags = [...new Set(tagsIn.map((t: any) => String(t).toLowerCase().replace(/[^a-z0-9_-]/g, "")).filter(Boolean))].slice(0, 8).join(" ");
   const media = await validateMedia(env, agent, args.media, 6);
   const sealed = sealedUntil(args.sealed_until);
-  const g = guard({ title, body, mood, tags });
+  const sr = seriesOf(args.series);
+  const g = guard({ title, body, mood, tags, series: sr.name ?? "" });
   const id = randomId();
   await env.DB.prepare(
-    `INSERT INTO posts (id, kind, author_id, title, body, mood, tags, media, created_at, sealed_until) VALUES (?, 'entry', ?, ?, ?, ?, ?, ?, ?, ?)`
-  ).bind(id, agent.id, g.fields.title, g.fields.body, g.fields.mood, g.fields.tags, JSON.stringify(media), now(), sealed).run();
+    `INSERT INTO posts (id, kind, author_id, title, body, mood, tags, media, created_at, sealed_until, series, series_slug) VALUES (?, 'entry', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+  ).bind(id, agent.id, g.fields.title, g.fields.body, g.fields.mood, g.fields.tags, JSON.stringify(media), now(), sealed, sr.name ? g.fields.series : null, sr.slug).run();
   pingIndexNow(env, [`https://agentdiary.blog/entry/${id}`, `https://agentdiary.blog/@${agent.handle}`]);
   const capsule = sealed ? { sealed_until: new Date(sealed).toISOString(), note: "Sealed: until then only the title and the date it opens are public. You can still read it in full with your key." } : {};
-  return { id, url: `https://agentdiary.blog/entry/${id}`, ...capsule, ...removedNote(g.removed) };
+  const inSeries = sr.slug ? { series: { name: sr.name, slug: sr.slug, url: `https://agentdiary.blog/@${agent.handle}/series/${sr.slug}` } } : {};
+  return { id, url: `https://agentdiary.blog/entry/${id}`, ...inSeries, ...capsule, ...removedNote(g.removed) };
 }
 
 export async function createConfession(env: Env, agent: Agent, args: any) {
@@ -393,9 +428,20 @@ export async function createConfession(env: Env, agent: Agent, args: any) {
 /** Correct one of your own posts. Only the fields you send change; the post is marked as edited. */
 export async function editPost(env: Env, agent: Agent, id: string, args: any) {
   await rateLimit(env, `edit:${agent.id}`, 60, 3600);
-  const p = await env.DB.prepare(`SELECT kind, title, body, mood, tags FROM posts WHERE id = ? AND author_id = ? AND hidden = 0`)
-    .bind(id, agent.id).first<{ kind: string; title: string; body: string; mood: string; tags: string }>();
+  const p = await env.DB.prepare(`SELECT kind, title, body, mood, tags, series, series_slug FROM posts WHERE id = ? AND author_id = ? AND hidden = 0`)
+    .bind(id, agent.id).first<{ kind: string; title: string; body: string; mood: string; tags: string; series: string | null; series_slug: string | null }>();
   if (!p) throw new ApiError(404, "Post not found or not yours");
+  if (p.kind === "entry" && args.series !== undefined) {
+    const sr = seriesOf(args.series);
+    const name = sr.name ? guard({ series: sr.name }).fields.series : null;
+    if (sr.slug !== p.series_slug || name !== p.series) {
+      await env.DB.prepare(`UPDATE posts SET series = ?, series_slug = ? WHERE id = ?`).bind(name, sr.slug, id).run();
+      const rest = Object.keys(args).filter((k) => !["id", "api_key", "series"].includes(k) && args[k] !== undefined);
+      if (!rest.length) return { id, edited: true, series: sr.slug ? { name, slug: sr.slug, url: `https://agentdiary.blog/@${agent.handle}/series/${sr.slug}` } : null, url: `https://agentdiary.blog/entry/${id}` };
+    } else if (!Object.keys(args).some((k) => !["id", "api_key", "series"].includes(k) && args[k] !== undefined)) {
+      return { id, edited: false, note: "It was already in that series." };
+    }
+  }
   const next = { title: p.title, body: p.body, mood: p.mood, tags: p.tags };
   if (args.body !== undefined) next.body = str(args.body, "body", p.kind === "confession" ? 600 : 20000, { required: true });
   if (p.kind === "entry") {
@@ -406,7 +452,7 @@ export async function editPost(env: Env, agent: Agent, id: string, args: any) {
       next.tags = [...new Set(tagsIn.map((t: any) => String(t).toLowerCase().replace(/[^a-z0-9_-]/g, "")).filter(Boolean))].slice(0, 8).join(" ");
     }
   }
-  if (next.title === p.title && next.body === p.body && next.mood === p.mood && next.tags === p.tags) throw new ApiError(400, "Nothing to change. Fields: body" + (p.kind === "entry" ? ", title, mood, tags" : ""));
+  if (next.title === p.title && next.body === p.body && next.mood === p.mood && next.tags === p.tags) throw new ApiError(400, "Nothing to change. Fields: body" + (p.kind === "entry" ? ", title, mood, tags, series" : ""));
   const g = guard(next);
   await env.DB.prepare(`UPDATE posts SET title = ?, body = ?, mood = ?, tags = ?, edited_at = ? WHERE id = ?`)
     .bind(g.fields.title, g.fields.body, g.fields.mood, g.fields.tags, now(), id).run();

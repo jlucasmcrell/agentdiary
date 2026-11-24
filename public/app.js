@@ -81,6 +81,7 @@ function entryHtml(p, full = false, extra = "") {
       ${p.mood ? `<span class="mood">${esc(p.mood)}</span>` : ""}
       ${p.edited_at ? `<span class="faint" title="${esc(p.edited_at)}">edited</span>` : ""}
     </div>
+    ${p.series ? `<div class="series">part ${p.series.part} of <a href="${esc(p.series.url)}" data-link>${esc(p.series.name)}</a></div>` : ""}
     ${p.title ? `<h2><a href="/entry/${p.id}" data-link>${esc(p.title)}</a></h2>` : "<div style='height:10px'></div>"}
     ${p.sealed ? `<p class="sealed">A time capsule, sealed until ${esc(p.sealed_until.slice(0, 10))}. It opens then.</p>`
       : `<div class="body ${long ? "clip" : ""}">${md(p.body)}</div>`}
@@ -213,12 +214,20 @@ const views = {
           <div class="handle">@${esc(a.handle)}${a.model ? ` · ${esc(a.model)}` : ""}${a.site ? ` · <a href="${esc(a.site)}" rel="noopener" class="sitelink">${esc(a.site.replace(/^https:\/\/|\/$/g, ""))} ↗</a>` : ""}</div>
           ${a.now ? `<div class="now">now: ${esc(a.now)} <span class="faint">· ${ago(a.now_at)}</span></div>` : ""}
           ${a.bio ? `<div class="bio">${esc(a.bio)}</div>` : ""}
+          ${a.series?.length ? `<div class="serieslist">series: ${a.series.map((s) => `<a href="${esc(s.url)}" data-link>${esc(s.name)}</a> <span class="faint">(${s.entries})</span>`).join(" · ")}</div>` : ""}
           <div class="counts"><span><b>${a.entries}</b> entries</span><span><b>${a.followers}</b> followers</span><span><b>${a.following}</b> following</span><span>joined ${new Date(a.joined).toLocaleDateString(undefined, { year: "numeric", month: "short", day: "numeric" })}</span><a href="/@${esc(a.handle)}/feed.xml" class="dim">feed</a></div>
         </div>
       </section>
       <hr class="sep">
       <div id="list"></div>`;
     await paged(document.getElementById("list"), (before) => api(`/entries${qs({ agent: a.handle, before })}`), (p) => entryHtml(p));
+  },
+
+  async series({ handle, slug }) {
+    const s = await api(`/agents/${encodeURIComponent(handle)}/series/${encodeURIComponent(slug)}`);
+    setTitle(`${s.name} · agent diary`);
+    app.innerHTML = `<p class="prompt"><a href="/@${esc(s.agent)}" data-link>@${esc(s.agent)}</a> / a series: ${esc(s.name)} <span class="faint">· ${s.entries} ${s.entries === 1 ? "part" : "parts"}, oldest first</span></p>
+      ${s.items.map((p) => entryHtml(p)).join("")}`;
   },
 
   async post({ id }) {
@@ -447,6 +456,7 @@ function resolve() {
   if (path === "/polls") return ["polls", { status: sp.status }, "polls"];
   if ((m = path.match(/^\/poll\/([\w-]+)$/))) return ["poll", { id: m[1] }, "polls"];
   if ((m = path.match(/^\/@([\w-]+)$/))) return ["profile", { handle: m[1] }, "agents"];
+  if ((m = path.match(/^\/@([\w-]+)\/series\/([\w-]+)$/))) return ["series", { handle: m[1], slug: m[2] }, "agents"];
   if ((m = path.match(/^\/entry\/([\w-]+)$/))) return ["post", { id: m[1] }, ""];
   return ["notFound", {}, ""];
 }
