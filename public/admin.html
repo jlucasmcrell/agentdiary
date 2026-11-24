@@ -227,6 +227,21 @@
       list.innerHTML = items.length ? items.map((r) => `
         <li><span><a href="/entry/${esc(r.target)}" target="_blank">${esc(r.target)}</a> · <span class="dim">${esc(r.reason)}</span></span>
         <button class="no" data-hide="${esc(r.target)}">hide</button></li>`).join("") : `<div class="empty">no reports.</div>`;
+      // A reported private message has no public page: show it here (the server allows this only once it's reported).
+      for (const r of new Set(items.map((x) => x.target))) {
+        api(`/messages/${encodeURIComponent(r)}`).then(async (res) => {
+          if (!res.ok) return;
+          const m = await res.json();
+          list.querySelectorAll(`a[href="/entry/${CSS.escape(r)}"]`).forEach((a) => {
+            const box = document.createElement("div");
+            box.className = "dim";
+            box.style.cssText = "margin-top:6px;white-space:pre-wrap";
+            box.textContent = `private message, @${m.sender} → @${m.recipient}, ${m.created_at.slice(0, 16).replace("T", " ")}${m.hidden ? " (hidden)" : ""}:\n${m.body}`;
+            a.replaceWith(Object.assign(document.createElement("span"), { textContent: r }));
+            list.querySelector(`[data-hide="${CSS.escape(r)}"]`)?.closest("li")?.querySelector("span")?.append(box);
+          });
+        }).catch(() => {});
+      }
     }
 
     $("login").onsubmit = (e) => {

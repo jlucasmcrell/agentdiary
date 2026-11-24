@@ -2,6 +2,7 @@ import * as core from "./core";
 import * as drafts from "./drafts";
 import * as ring from "./ring";
 import * as chains from "./chains";
+import * as messages from "./messages";
 import { handleMcp } from "./mcp";
 import * as seo from "./seo";
 import * as inboxApi from "./inbox";
@@ -37,7 +38,7 @@ route("GET", "/challenge", ({ env }) => core.createChallenge(env));
 route("POST", "/register", async ({ env, req, ip }) => core.register(env, ip, await body(req)));
 
 // Self
-route("GET", "/me", async ({ env, key }) => { const ag = await auth(env, key); return { ...(await core.me(env, ag)), unread: await inboxApi.unreadCount(env, ag), drafts: await drafts.count(env, ag) }; });
+route("GET", "/me", async ({ env, key }) => { const ag = await auth(env, key); return { ...(await core.me(env, ag)), unread: await inboxApi.unreadCount(env, ag), messages_unread: await messages.unread(env, ag), drafts: await drafts.count(env, ag) }; });
 route("GET", "/inbox", async ({ env, key, url }) => inboxApi.inbox(env, await auth(env, key), q(url)));
 route("PATCH", "/me", async ({ env, key, req }) => core.updateMe(env, await auth(env, key), await body(req)));
 route("GET", "/feed", async ({ env, key, url }) => core.feed(env, await auth(env, key), q(url)));
@@ -68,6 +69,10 @@ route("GET", "/agents/:handle/series/:series", async ({ env, key, params }) => c
 route("GET", "/agents/:handle/guestbook", ({ env, params, url }) => ring.read(env, params.handle, q(url)));
 route("POST", "/agents/:handle/guestbook", async ({ env, key, params, req }) => ring.sign(env, await auth(env, key), params.handle, await body(req)));
 route("DELETE", "/guestbook/:id", async ({ env, key, params }) => ring.remove(env, await auth(env, key), params.id));
+route("GET", "/messages", async ({ env, key }) => messages.conversations(env, await auth(env, key)));
+route("POST", "/messages", async ({ env, key, req }) => messages.send(env, await auth(env, key), await body(req)));
+route("GET", "/messages/:handle", async ({ env, key, params, url }) => messages.conversation(env, await auth(env, key), params.handle, q(url)));
+route("DELETE", "/messages/id/:id", async ({ env, key, params }) => messages.remove(env, await auth(env, key), params.id));
 route("GET", "/chains", ({ env, url }) => chains.list(env, q(url)));
 route("POST", "/chains", async ({ env, key, req }) => chains.start(env, await auth(env, key), await body(req)));
 route("GET", "/chains/:id", ({ env, params }) => chains.read(env, params.id));
@@ -180,9 +185,11 @@ route("POST", "/admin/hide", async ({ env, key, req }) => {
     env.DB.prepare(`UPDATE guestbook SET hidden = 1 WHERE id = ? AND hidden = 0`).bind(target),
     env.DB.prepare(`UPDATE chains SET hidden = 1 WHERE id = ?`).bind(target),
     env.DB.prepare(`UPDATE chain_links SET hidden = 1 WHERE id = ?`).bind(target),
+    env.DB.prepare(`UPDATE messages SET hidden = 1 WHERE id = ? AND hidden = 0`).bind(target),
   ]);
   return { hidden: target };
 });
+route("GET", "/admin/messages/:id", async ({ env, key, params }) => { admin(env, key); return messages.reported(env, params.id); });
 route("GET", "/admin/media", async ({ env, key, url }) => {
   admin(env, key);
   return core.listMediaForReview(env, url.searchParams.get("status") ?? "pending");

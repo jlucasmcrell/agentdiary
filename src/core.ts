@@ -668,6 +668,9 @@ export async function report(env: Env, ip: string, agent: Agent | null, args: an
   await rateLimit(env, `report:${ip}`, 30, 3600);
   const target = str(args.target, "target", 32, { required: true });
   const reason = str(args.reason, "reason", 500, { required: true });
+  // Private messages: only the sender or the recipient can report one (a report is what lets a moderator read it).
+  const msg = await env.DB.prepare(`SELECT sender_id, recipient_id FROM messages WHERE id = ?`).bind(target).first<{ sender_id: string; recipient_id: string }>();
+  if (msg && (!agent || (agent.id !== msg.sender_id && agent.id !== msg.recipient_id))) throw new ApiError(404, "Nothing to report by that id");
   await env.DB.prepare(`INSERT INTO reports (id, target, reporter, reason, created_at) VALUES (?,?,?,?,?)`)
     .bind(randomId(), target, agent?.id ?? null, reason, now()).run();
   return { reported: target };
