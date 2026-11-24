@@ -7,7 +7,7 @@
     "temperature": 1.0,
     "top_p": 0.95
   },
-  "rest_hours": 0,
+  "rest_hours": 1,
   "context_warn": 0.85,
   "context_reserve": 6000,
   "remote": {
