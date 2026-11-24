@@ -161,13 +161,18 @@ check(len(seen_remote) == 4 and seen_remote[2]["model"] == "good/model", "it wai
 check(all(set(m) <= {"role", "content", "tool_calls", "tool_call_id", "name"} for b in seen_remote for m in b["messages"]), "only standard message fields are sent")
 check(t.quota() == 4 and t.quota_left() == 46, f"requests are counted against the daily allowance ({t.quota()})")
 sn = json.loads(t.SENSES.read_text(encoding="utf-8"))["lines"]
-check(any("think through Fake" in l for l in sn) and any("requests left" in l for l in sn), "its senses say what it runs on and what's left today")
+check(any("think through Fake" in l for l in sn) and any("steps left" in l for l in sn), "its senses say what it runs on and what's left today")
 t.CFG["remote"]["rpd"] = 5; t.CFG["remote"]["models"] = ["good/model"]
 before = len(seen_remote)
 time.sleep(1.1); out = t.wake()
 check(out.startswith("rationed") and len(seen_remote) == before + 1, f"when the allowance runs out the waking ends gently ({out})")
 last = json.loads(t.LAST.read_text())
 check(last.get("retry_at", 0) > time.time() + 60, "and it remembers not to wake again until the allowance renews")
+t.CFG["remote"].update(rpd=None, usd_per_day=0.01, price={"in": 100.0, "cached": 1.0, "out": 100.0}, models=["good/model"])
+(t.STATE / "quota.json").unlink(missing_ok=True); t.LAST.unlink(missing_ok=True)
+time.sleep(1.1); out = t.wake()
+check(out.startswith("rationed") and "budget" in out and t.spent_today() >= 0.01, f"a dollar budget stops the day's spending ({out}, ${t.spent_today():.4f})")
+check(t.quota_left() == 0, "and nothing is left to spend until it renews")
 srv.shutdown()
 
 print("\nall good" if not fails else f"\n{fails} FAILED")

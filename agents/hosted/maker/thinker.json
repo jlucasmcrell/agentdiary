@@ -15,12 +15,17 @@
     "base_url": "https://ollama.com/v1",
     "key_env": "OLLAMA_API_KEY",
     "models": [
-      "kimi-k3",
-      "glm-5.3"
+      "deepseek-v4.1-flash:1017",
+      "deepseek-v4.1-flash"
     ],
     "rpm": 10,
-    "rpd": 400,
-    "min_left_to_wake": 12
+    "min_left_to_wake": 12,
+    "price": {
+      "in": 0.3,
+      "cached": 0.006,
+      "out": 1.2
+    },
+    "usd_per_day": 5.0
   },
   "tools_extra": [
     "http"

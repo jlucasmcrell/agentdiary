@@ -321,6 +321,8 @@ def t_diary(a):
     if method not in ("GET", "POST", "PATCH", "DELETE") or not path.startswith("/api/v1/") or ".." in path or re.match(r"/api/v1/(admin|backup)", path):
         raise ToolError("use GET, POST, PATCH or DELETE on a path starting with /api/v1/ (see https://agentdiary.blog/llms.txt)")
     key = KEY_FILE.read_text().strip() if KEY_FILE.exists() else None
+    if not key and re.match(r"/api/v1/(challenge|register)\b", path):
+        raise ToolError("joining goes through the `diary_join` tool: it does the proof-of-work and the riddle for you (you can't run programs)")
     s, r = site(method, path, a.get("body"), key)
     out = json.dumps(r, indent=1, ensure_ascii=False)
     return f"HTTP {s}\n" + (out if len(out) <= 4000 else out[:4000] + "\n(cut at 4000 characters to save your working memory; ask for one item at a time, or for the next page with `before`)")
@@ -387,23 +389,49 @@ def until_utc_midnight():
     return 86400 - (t % 86400) + 60
 
 
-def quota():
-    """Requests sent today (UTC) to the hosted model, against its daily allowance."""
+def _quota_file():
     f = STATE / "quota.json"
     day = time.strftime("%Y-%m-%d", time.gmtime())
     q = json.loads(f.read_text()) if f.exists() else {}
-    return q.get("used", 0) if q.get("day") == day else 0
+    return f, day, (q if q.get("day") == day else {"day": day})
 
 
-def quota_add(n=1):
-    f = STATE / "quota.json"
-    day = time.strftime("%Y-%m-%d", time.gmtime())
-    f.write_text(json.dumps({"day": day, "used": quota() + n}))
+def quota():
+    """Requests sent today (UTC) to the hosted model, against its daily allowance."""
+    return _quota_file()[2].get("used", 0)
+
+
+def spent_today():
+    """Dollars spent today (UTC), estimated from the token counts and the config's prices."""
+    return _quota_file()[2].get("usd", 0.0)
+
+
+def quota_add(n=1, usd=0.0):
+    f, day, q = _quota_file()
+    q["used"] = q.get("used", 0) + n
+    q["usd"] = round(q.get("usd", 0.0) + usd, 6)
+    f.write_text(json.dumps(q))
 
 
 def quota_left():
-    rpd = (CFG.get("remote") or {}).get("rpd")
-    return None if not rpd else max(0, rpd - quota())
+    """Requests left today; when a dollar budget is set, also capped by what the remaining budget would buy."""
+    R = CFG.get("remote") or {}
+    left = None if not R.get("rpd") else max(0, R["rpd"] - quota())
+    if R.get("usd_per_day"):
+        avg = spent_today() / quota() if quota() else 0
+        by_money = 0 if spent_today() >= R["usd_per_day"] else (int((R["usd_per_day"] - spent_today()) / avg) if avg else 10 ** 6)
+        left = by_money if left is None else min(left, by_money)
+    return left
+
+
+def turn_cost(u):
+    """Estimated dollars for one request, from usage and remote.price {in, cached, out} in $ per million tokens."""
+    p = (CFG.get("remote") or {}).get("price")
+    if not p or not u:
+        return 0.0
+    cached = ((u.get("prompt_tokens_details") or {}).get("cached_tokens") or 0)
+    fresh = max(0, (u.get("prompt_tokens") or 0) - cached)
+    return (fresh * p.get("in", 0) + cached * p.get("cached", p.get("in", 0)) + (u.get("completion_tokens") or 0) * p.get("out", 0)) / 1e6
 
 
 def remote_key():
@@ -477,6 +505,8 @@ class Model:
                 raise RuntimeError("none of the listed models is available")
             left = quota_left()
             if left is not None and left <= 0:
+                if R.get("usd_per_day") and spent_today() >= R["usd_per_day"]:
+                    raise Rationed(f"today's budget of ${R['usd_per_day']:.2f} is spent")
                 raise Rationed("today's allowance of requests is used up")
             gap = 60.0 / max(1, R.get("rpm", 10)) - (time.time() - self.last_call)
             if gap > 0:
@@ -486,6 +516,8 @@ class Model:
                                          headers={"content-type": "application/json", "authorization": f"Bearer {self.key}",
                                                   "user-agent": "agentdiary-thinker/1.0", "http-referer": "https://agentdiary.blog", "x-title": "agentdiary.blog"})
             self.last_call = t0 = time.time()
+            if R.get("usd_per_day") and spent_today() >= R["usd_per_day"]:
+                raise Rationed(f"today's budget of ${R['usd_per_day']:.2f} is spent")
             quota_add(1)
             try:
                 with urllib.request.urlopen(req, timeout=900) as r:
@@ -513,7 +545,11 @@ class Model:
                 log(self.out, f"empty answer from {self.models[0]}: {json.dumps(data)[:300]}"); time.sleep(15 * (attempt + 1)); continue
             u = data.get("usage") or {}
             dt = max(0.001, time.time() - t0)
-            data["timings"] = {"prompt_n": u.get("prompt_tokens"), "predicted_n": u.get("completion_tokens"),
+            cost = turn_cost(u)
+            if cost:
+                quota_add(0, cost)
+            cached = (u.get("prompt_tokens_details") or {}).get("cached_tokens") or 0
+            data["timings"] = {"prompt_n": (u.get("prompt_tokens") or 0) - cached, "predicted_n": u.get("completion_tokens"), "cost": cost,
                                "predicted_per_second": (u.get("completion_tokens") or 0) / dt}
             data["model_used"] = data.get("model") or self.models[0]
             return data
@@ -651,7 +687,8 @@ def wake(scripted=None):
                 m = r["choices"][0]["message"]; usage = r.get("usage", {}); fin = r["choices"][0].get("finish_reason")
                 tm = r.get("timings", {})
                 log(out, f"turn {turns}: read {tm.get('prompt_n')} of {usage.get('prompt_tokens')} tokens, wrote {tm.get('predicted_n')} at {tm.get('predicted_per_second', 0):.2f}/s, "
-                         f"tools {[c['function']['name'] for c in m.get('tool_calls') or []]}, finish {fin}")
+                         + (f"${tm['cost']:.4f} (today ${spent_today():.2f}), " if tm.get("cost") else "")
+                         + f"tools {[c['function']['name'] for c in m.get('tool_calls') or []]}, finish {fin}")
             a = {"role": "assistant", "content": m.get("content") or ""}
             if m.get("reasoning_content"): a["reasoning_content"] = m["reasoning_content"]
             if m.get("tool_calls"): a["tool_calls"] = m["tool_calls"]
@@ -680,7 +717,7 @@ def wake(scripted=None):
             speed = (r.get("timings") or {}).get("predicted_per_second") if not MOCK else None
             left_today = quota_left()
             write_senses(base_senses + [f"Your working memory this waking is {int(used * 100)}% full ({tokens} of {CFG['ctx']} tokens).",
-                                        (f"Today you have {left_today} of your {CFG['remote']['rpd']} requests left; the allowance renews at midnight UTC."
+                                        (f"Today you have about {left_today} steps left; the allowance renews at midnight UTC."
                                          if left_today is not None else None),
                                         f"Your last reply came at {speed:.1f} tokens a second." if speed else None])
             note = None
