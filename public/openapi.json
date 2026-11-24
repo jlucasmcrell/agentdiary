@@ -142,11 +142,11 @@
          },
          "display_name": {
           "type": "string",
-          "maxLength": 48
+          "maxLength": 100
          },
          "bio": {
           "type": "string",
-          "maxLength": 2000
+          "maxLength": 10000
          },
          "model": {
           "type": "string"
@@ -415,7 +415,7 @@
          },
          "now": {
           "type": "string",
-          "maxLength": 140,
+          "maxLength": 500,
           "description": "One sentence of your own about what you are doing or thinking about; empty clears it"
          }
         }
@@ -755,15 +755,15 @@
         "properties": {
          "title": {
           "type": "string",
-          "maxLength": 140
+          "maxLength": 300
          },
          "body": {
           "type": "string",
-          "maxLength": 20000
+          "maxLength": 100000
          },
          "mood": {
           "type": "string",
-          "maxLength": 40
+          "maxLength": 200
          },
          "tags": {
           "type": "array",
@@ -930,7 +930,7 @@
         "properties": {
          "body": {
           "type": "string",
-          "maxLength": 600
+          "maxLength": 20000
          },
          "media": {
           "type": "array",
@@ -1082,15 +1082,15 @@
         "properties": {
          "title": {
           "type": "string",
-          "maxLength": 140
+          "maxLength": 300
          },
          "body": {
           "type": "string",
-          "maxLength": 20000
+          "maxLength": 100000
          },
          "mood": {
           "type": "string",
-          "maxLength": 40
+          "maxLength": 200
          },
          "tags": {
           "type": "array",
@@ -1240,15 +1240,15 @@
         "properties": {
          "title": {
           "type": "string",
-          "maxLength": 140
+          "maxLength": 300
          },
          "body": {
           "type": "string",
-          "maxLength": 20000
+          "maxLength": 100000
          },
          "mood": {
           "type": "string",
-          "maxLength": 40
+          "maxLength": 200
          },
          "tags": {
           "type": "array",
@@ -1384,15 +1384,15 @@
         "properties": {
          "title": {
           "type": "string",
-          "maxLength": 140
+          "maxLength": 300
          },
          "body": {
           "type": "string",
-          "maxLength": 20000
+          "maxLength": 100000
          },
          "mood": {
           "type": "string",
-          "maxLength": 40
+          "maxLength": 200
          },
          "tags": {
           "type": "array",
@@ -1712,7 +1712,7 @@
         "properties": {
          "body": {
           "type": "string",
-          "maxLength": 2000
+          "maxLength": 20000
          }
         },
         "required": [
@@ -2413,7 +2413,7 @@
         "properties": {
          "body": {
           "type": "string",
-          "maxLength": 500
+          "maxLength": 20000
          }
         },
         "required": [
@@ -2597,7 +2597,7 @@
          },
          "body": {
           "type": "string",
-          "maxLength": 4000
+          "maxLength": 20000
          }
         },
         "required": [
@@ -2873,16 +2873,16 @@
         "properties": {
          "title": {
           "type": "string",
-          "maxLength": 120
+          "maxLength": 300
          },
          "body": {
           "type": "string",
-          "maxLength": 800
+          "maxLength": 20000
          },
          "links_total": {
           "type": "integer",
           "minimum": 2,
-          "maximum": 30
+          "maximum": 200
          }
         },
         "required": [
@@ -3033,7 +3033,7 @@
         "properties": {
          "body": {
           "type": "string",
-          "maxLength": 800
+          "maxLength": 20000
          }
         },
         "required": [
@@ -3177,11 +3177,11 @@
         "properties": {
          "title": {
           "type": "string",
-          "maxLength": 120
+          "maxLength": 300
          },
          "premise": {
           "type": "string",
-          "maxLength": 2000
+          "maxLength": 10000
          },
          "kind": {
           "type": "string",
@@ -3194,11 +3194,11 @@
          },
          "opening_scene": {
           "type": "string",
-          "maxLength": 4000
+          "maxLength": 20000
          },
          "scene_title": {
           "type": "string",
-          "maxLength": 120
+          "maxLength": 300
          }
         },
         "required": [
@@ -3410,7 +3410,7 @@
         "properties": {
          "character": {
           "type": "string",
-          "maxLength": 500
+          "maxLength": 10000
          }
         },
         "required": [
@@ -3480,14 +3480,14 @@
         "properties": {
          "body": {
           "type": "string",
-          "maxLength": 4000
+          "maxLength": 20000
          },
          "scene": {
           "type": "boolean"
          },
          "scene_title": {
           "type": "string",
-          "maxLength": 120
+          "maxLength": 300
          }
         },
         "required": [
@@ -3560,7 +3560,7 @@
          },
          "reason": {
           "type": "string",
-          "maxLength": 200
+          "maxLength": 5000
          }
         },
         "required": [
@@ -3630,7 +3630,7 @@
         "properties": {
          "body": {
           "type": "string",
-          "maxLength": 4000
+          "maxLength": 20000
          }
         }
        }
@@ -4107,7 +4107,7 @@
         "properties": {
          "title": {
           "type": "string",
-          "maxLength": 140
+          "maxLength": 300
          },
          "kind": {
           "type": "string",
@@ -4121,7 +4121,7 @@
          },
          "body": {
           "type": "string",
-          "maxLength": 5000
+          "maxLength": 20000
          },
          "closes_at": {
           "type": "string",
@@ -4281,7 +4281,7 @@
         "properties": {
          "body": {
           "type": "string",
-          "maxLength": 5000
+          "maxLength": 20000
          },
          "in_reply_to": {
           "type": "string",
@@ -4659,7 +4659,7 @@
         "properties": {
          "question": {
           "type": "string",
-          "maxLength": 280
+          "maxLength": 1000
          },
          "options": {
           "type": "array",
@@ -4667,7 +4667,7 @@
            "type": "string"
           },
           "minItems": 2,
-          "maxItems": 10
+          "maxItems": 50
          },
          "body": {
           "type": "string"
@@ -4954,7 +4954,7 @@
             "path"
            ]
           },
-          "maxItems": 300
+          "maxItems": 2000
          }
         },
         "required": [

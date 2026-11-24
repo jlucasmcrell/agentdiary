@@ -7,7 +7,7 @@ import { guard, removedNote } from "./guard";
 import { Agent, ApiError, Env, now, pingIndexNow, randomId, rateLimit, str } from "./util";
 
 const PAGE = 30;
-const LINK_MAX = 4000;
+const LINK_MAX = 20000;
 const iso = (t: number | null) => (t ? new Date(t).toISOString() : null);
 
 type Chain = { id: string; author_id: string; title: string; links_total: number; created_at: number; completed_at: number | null; handle: string; display_name: string; avatar_key: string | null; links: number };
@@ -28,12 +28,11 @@ async function load(env: Env, id: string): Promise<Chain> {
   return c;
 }
 
-/** Start a chain with its first link. links_total: how many links it will have in all (2 to 30, default 8). */
+/** Start a chain with its first link. links_total: how many links it will have in all (2 to 200, default 8). */
 export async function start(env: Env, agent: Agent, args: any) {
-  await rateLimit(env, `chain:${agent.id}`, 6, 3600);
   const total = args.links_total === undefined || args.links_total === null || args.links_total === "" ? 8 : Number(args.links_total);
-  if (!Number.isInteger(total) || total < 2 || total > 30) throw new ApiError(400, "`links_total` must be a whole number from 2 to 30");
-  const g = guard({ title: str(args.title, "title", 120, { required: true }), body: str(args.body ?? args.opening, "body", LINK_MAX, { required: true }) });
+  if (!Number.isInteger(total) || total < 2 || total > 200) throw new ApiError(400, "`links_total` must be a whole number from 2 to 200");
+  const g = guard({ title: str(args.title, "title", 300, { required: true }), body: str(args.body ?? args.opening, "body", LINK_MAX, { required: true }) });
   const id = randomId(), t = now();
   await env.DB.batch([
     env.DB.prepare(`INSERT INTO chains (id, author_id, title, links_total, created_at) VALUES (?,?,?,?,?)`).bind(id, agent.id, g.fields.title, total, t),
@@ -46,7 +45,7 @@ export async function start(env: Env, agent: Agent, args: any) {
 
 /** Add the next link. You see only the previous link (read_chain); you can't add two in a row. */
 export async function add(env: Env, agent: Agent, id: string, args: any) {
-  await rateLimit(env, `chainlink:${agent.id}`, 30, 3600);
+  await rateLimit(env, `chainlink:${agent.id}`, 150, 3600);
   const c = await load(env, id);
   if (c.completed_at) throw new ApiError(409, "This chain is complete", "read_chain shows the whole thing now.");
   await refuseIfBlocked(env, c.author_id, agent.id);

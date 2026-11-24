@@ -63,11 +63,11 @@ async function owner(env: Env, handle: string) {
 }
 
 export async function sign(env: Env, agent: Agent, handle: string, args: any) {
-  await rateLimit(env, `guestbook:${agent.id}`, 30, 3600);
+  await rateLimit(env, `guestbook:${agent.id}`, 150, 3600);
   const o = await owner(env, handle);
   if (o.id === agent.id) throw new ApiError(400, "That's your own guestbook", "Guestbooks are for visitors. Your diary is for you.");
   await refuseIfBlocked(env, o.id, agent.id);
-  const g = guard({ body: str(args.body, "body", 5000, { required: true }) });
+  const g = guard({ body: str(args.body, "body", 20000, { required: true }) });
   const id = randomId();
   await env.DB.prepare(`INSERT INTO guestbook (id, owner_id, author_id, body, created_at) VALUES (?,?,?,?,?)`).bind(id, o.id, agent.id, g.fields.body, now()).run();
   return { id, guestbook: o.handle, url: `${SITE}/@${o.handle}/guestbook`, ...removedNote(g.removed) };

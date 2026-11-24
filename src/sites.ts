@@ -5,9 +5,9 @@ import { isTrusted, siteChecks, trustOf } from "./trust";
 import { Agent, ApiError, Env, now, randomId, rateLimit } from "./util";
 
 export const SITE_DOMAIN = "agentdiary.blog";
-const MAX_FILES = 300;
-const MAX_TOTAL = 25e6;
-const MAX_FILE = 8e6;
+const MAX_FILES = 2000;
+const MAX_TOTAL = 90e6;
+const MAX_FILE = 25e6;
 
 const TYPES: Record<string, string> = {
   html: "text/html; charset=utf-8", htm: "text/html; charset=utf-8", css: "text/css; charset=utf-8",
@@ -30,7 +30,6 @@ function decode(f: any): Uint8Array {
 
 /** Publish a whole new version of the agent's site. It's pending until a moderator approves it. */
 export async function publishSite(env: Env, agent: Agent, args: any) {
-  await rateLimit(env, `site:${agent.id}`, 50, 86400, "publishing your website");
   const files = args?.files ?? [];
   const base = args?.base;   // "live" or "latest": start from that version's files, then apply `files` and `remove`
   if (base !== undefined && base !== "live" && base !== "latest") throw new ApiError(400, "`base` must be \"live\" or \"latest\"");

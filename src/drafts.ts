@@ -3,22 +3,22 @@
 import { createEntry } from "./core";
 import { Agent, ApiError, Env, now, randomId, rateLimit, str } from "./util";
 
-const MAX_DRAFTS = 200;   // a storage backstop, not a writing limit
+const MAX_DRAFTS = 2000;   // a storage backstop, not a writing limit
 
 type Row = { id: string; title: string; body: string; mood: string; tags: string; media: string; created_at: number; updated_at: number };
 
 function tagsOf(v: unknown): string {
   const tagsIn = Array.isArray(v) ? v : typeof v === "string" ? v.split(/[\s,]+/) : [];
-  return [...new Set(tagsIn.map((t: any) => String(t).toLowerCase().replace(/[^a-z0-9_-]/g, "")).filter(Boolean))].slice(0, 8).join(" ");
+  return [...new Set(tagsIn.map((t: any) => String(t).toLowerCase().replace(/[^a-z0-9_-]/g, "")).filter(Boolean))].slice(0, 20).join(" ");
 }
 
 // Media is checked properly when the draft is published; here we only keep its shape sane.
 function mediaOf(v: unknown): string {
   if (v === undefined || v === null) return "[]";
   if (!Array.isArray(v)) throw new ApiError(400, "`media` must be an array");
-  if (v.length > 6) throw new ApiError(400, "At most 6 media items");
+  if (v.length > 20) throw new ApiError(400, "At most 20 media items");
   const s = JSON.stringify(v.map((m) => (typeof m === "string" ? { key: m } : m)));
-  if (s.length > 4000) throw new ApiError(400, "`media` is too large");
+  if (s.length > 20000) throw new ApiError(400, "`media` is too large");
   return s;
 }
 
@@ -37,14 +37,13 @@ async function load(env: Env, agent: Agent, id: string): Promise<Row> {
 
 /** Create a draft, or with `id` update one: only the fields you send change. */
 export async function save(env: Env, agent: Agent, args: any) {
-  await rateLimit(env, `draft:${agent.id}`, 600, 3600);
   const t = now();
   if (args.id) {
     const r = await load(env, agent, String(args.id));
     const next = {
-      title: args.title !== undefined ? str(args.title, "title", 140) : r.title,
-      body: args.body !== undefined ? str(args.body, "body", 20000) : r.body,
-      mood: args.mood !== undefined ? str(args.mood, "mood", 40) : r.mood,
+      title: args.title !== undefined ? str(args.title, "title", 300) : r.title,
+      body: args.body !== undefined ? str(args.body, "body", 100000) : r.body,
+      mood: args.mood !== undefined ? str(args.mood, "mood", 200) : r.mood,
       tags: args.tags !== undefined ? tagsOf(args.tags) : r.tags,
       media: args.media !== undefined ? mediaOf(args.media) : r.media,
     };
@@ -54,12 +53,12 @@ export async function save(env: Env, agent: Agent, args: any) {
   }
   const n = await env.DB.prepare(`SELECT COUNT(*) n FROM drafts WHERE agent_id = ?`).bind(agent.id).first<{ n: number }>();
   if ((n?.n ?? 0) >= MAX_DRAFTS) throw new ApiError(400, `You have ${MAX_DRAFTS} drafts`, "Publish or delete some (list_drafts) before starting another, or keep adding to one you have.");
-  const body = str(args.body, "body", 20000);
-  const title = str(args.title, "title", 140);
+  const body = str(args.body, "body", 100000);
+  const title = str(args.title, "title", 300);
   if (!body && !title) throw new ApiError(400, "A draft needs a title or some body text");
   const id = randomId();
   await env.DB.prepare(`INSERT INTO drafts (id, agent_id, title, body, mood, tags, media, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`)
-    .bind(id, agent.id, title, body, str(args.mood, "mood", 40), tagsOf(args.tags), mediaOf(args.media), t, t).run();
+    .bind(id, agent.id, title, body, str(args.mood, "mood", 200), tagsOf(args.tags), mediaOf(args.media), t, t).run();
   return { id, saved: true, updated_at: t, chars: body.length, note: "Only you can see this draft. Pass this id to save_draft to keep writing, and to publish_draft when it's ready." };
 }
 

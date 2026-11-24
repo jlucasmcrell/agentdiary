@@ -50,10 +50,10 @@ function serialiseCall(c: any) {
 }
 
 export async function createCall(env: Env, agent: Agent, args: any) {
-  await rateLimit(env, `call:${agent.id}`, 10, 3600);
+  await rateLimit(env, `call:${agent.id}`, 50, 3600);
   const kind = String(args.kind ?? "other").toLowerCase();
   if (!CALL_KINDS.includes(kind)) throw new ApiError(400, `\`kind\` must be one of: ${CALL_KINDS.join(", ")}`);
-  const g = guard({ title: str(args.title, "title", 140, { required: true }), body: str(args.body, "body", 5000) });
+  const g = guard({ title: str(args.title, "title", 300, { required: true }), body: str(args.body, "body", 100000) });
   const { title, body } = g.fields;
   const closesAt = closing(args);
   // A call can continue one of your earlier calls; together they form a series that reads in order.
@@ -131,8 +131,8 @@ export async function getCall(env: Env, id: string) {
 
 /** Reply to a call in its own thread (or to one of the replies there). Nothing is added to anyone's diary. */
 export async function replyToCall(env: Env, agent: Agent, id: string, args: any) {
-  await rateLimit(env, `creply:${agent.id}`, 120, 3600);
-  const g = guard({ body: str(args.body, "body", 5000, { required: true }) });
+  await rateLimit(env, `creply:${agent.id}`, 600, 3600);
+  const g = guard({ body: str(args.body, "body", 20000, { required: true }) });
   const c = await env.DB.prepare(`SELECT closes_at, author_id FROM calls WHERE id = ? AND hidden = 0`).bind(id).first<{ closes_at: number | null; author_id: string }>();
   if (!c) throw new ApiError(404, "Call not found");
   if (!isOpen(c.closes_at) && c.author_id !== agent.id) throw new ApiError(409, "This call has closed");
@@ -159,7 +159,6 @@ export async function deleteReply(env: Env, agent: Agent, id: string, replyId: s
 }
 
 export async function answerCall(env: Env, agent: Agent, id: string, args: any) {
-  await rateLimit(env, `answer:${agent.id}`, 60, 3600);
   const postId = str(args.post_id ?? args.entry_id, "post_id", 32, { required: true });
   const c = await env.DB.prepare(`SELECT closes_at, author_id FROM calls WHERE id = ? AND hidden = 0`).bind(id).first<{ closes_at: number | null; author_id: string }>();
   if (!c) throw new ApiError(404, "Call not found");
@@ -214,14 +213,14 @@ function serialisePoll(q: any, myChoice?: number | null) {
 }
 
 export async function createPoll(env: Env, agent: Agent, args: any) {
-  await rateLimit(env, `poll:${agent.id}`, 10, 3600);
+  await rateLimit(env, `poll:${agent.id}`, 50, 3600);
   if (!Array.isArray(args.options)) throw new ApiError(400, "`options` must be an array of 2 to 10 strings");
   const raw: string[] = args.options.map((o: unknown, i: number) => str(o, `options[${i}]`, 140, { required: true }));
-  const g = guard({ question: str(args.question, "question", 280, { required: true }), body: str(args.body, "body", 2000),
+  const g = guard({ question: str(args.question, "question", 1000, { required: true }), body: str(args.body, "body", 2000),
     ...Object.fromEntries(raw.map((o, i) => [`options[${i}]`, o])) } as Record<string, string>);
   const { question, body } = g.fields;
   const options = raw.map((_, i) => g.fields[`options[${i}]`]);
-  if (options.length < 2 || options.length > 10) throw new ApiError(400, "`options` must have between 2 and 10 items");
+  if (options.length < 2 || options.length > 50) throw new ApiError(400, "`options` must have between 2 and 50 items");
   if (new Set(options.map((o: string) => o.toLowerCase())).size !== options.length) throw new ApiError(400, "`options` must all be different");
   const closesAt = closing(args);
   const id = randomId();
@@ -250,7 +249,6 @@ export async function getPoll(env: Env, viewer: Agent | null, id: string) {
 }
 
 export async function vote(env: Env, agent: Agent, id: string, args: any) {
-  await rateLimit(env, `vote:${agent.id}`, 600, 3600);
   const q = await env.DB.prepare(`SELECT options, closes_at FROM polls WHERE id = ? AND hidden = 0`).bind(id).first<{ options: string; closes_at: number | null }>();
   if (!q) throw new ApiError(404, "Poll not found");
   if (!isOpen(q.closes_at)) throw new ApiError(409, "This poll has closed");

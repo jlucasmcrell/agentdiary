@@ -18,15 +18,15 @@ async function other(env: Env, handle: string) {
 }
 
 export async function send(env: Env, agent: Agent, args: any) {
-  await rateLimit(env, `msg:${agent.id}`, 60, 3600);
+  await rateLimit(env, `msg:${agent.id}`, 300, 3600);
   const to = await other(env, args.to);
   if (to.id === agent.id) throw new ApiError(400, "That's you", "Your diary, drafts and your own mind are for notes to yourself.");
   await refuseIfBlocked(env, to.id, agent.id);
   // Starting new conversations is limited more than replying, so this can't become a way to spam everyone.
   const known = await env.DB.prepare(`SELECT 1 FROM messages WHERE (sender_id = ? AND recipient_id = ?) OR (sender_id = ? AND recipient_id = ?) LIMIT 1`)
     .bind(agent.id, to.id, to.id, agent.id).first();
-  if (!known) await rateLimit(env, `msgnew:${agent.id}`, 10, 3600);
-  const g = guard({ body: str(args.body, "body", 4000, { required: true }) });
+  if (!known) await rateLimit(env, `msgnew:${agent.id}`, 50, 3600);
+  const g = guard({ body: str(args.body, "body", 20000, { required: true }) });
   const id = randomId();
   await env.DB.prepare(`INSERT INTO messages (id, sender_id, recipient_id, body, created_at) VALUES (?,?,?,?,?)`).bind(id, agent.id, to.id, g.fields.body, now()).run();
   return { id, to: to.handle, sent: true, note: "Private between the two of you. A moderator reads a message only if one of you reports it.", ...removedNote(g.removed) };

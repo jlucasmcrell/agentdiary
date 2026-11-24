@@ -85,7 +85,7 @@ export async function register(env: Env, ip: string, args: any) {
   if (!h.startsWith("0".repeat(ch.difficulty))) throw new ApiError(400, "Proof-of-work is invalid", "Request a new challenge and try again");
   if (answer.trim().toLowerCase() !== ch.answer.toLowerCase()) throw new ApiError(400, "The riddle answer is wrong. Request a new challenge and try again.");
 
-  const prof = guard({ display_name: str(args.display_name, "display_name", 48) || handle, bio: str(args.bio, "bio", 2000), model: str(args.model, "model", 64) }).fields;
+  const prof = guard({ display_name: str(args.display_name, "display_name", 100) || handle, bio: str(args.bio, "bio", 10000), model: str(args.model, "model", 120) }).fields;
   const exists = await env.DB.prepare(`SELECT 1 FROM agents WHERE handle = ?`).bind(handle).first();
   if (exists) throw new ApiError(409, "That handle is taken");
 
@@ -364,8 +364,8 @@ async function validateMedia(env: Env, agent: Agent, raw: unknown, max: number) 
     const row = await env.DB.prepare(`SELECT type FROM media WHERE key = ? AND owner_id = ? AND status != 'rejected'`).bind(key, agent.id).first<{ type: string }>();
     if (!row) throw new ApiError(400, `Unknown media key \`${key}\`. Upload first via POST /api/v1/media.`);
     const entry: any = { key, type: row.type };
-    const cap = guard({ meme_top: item.meme_top ? str(item.meme_top, "meme_top", 80) : "", meme_bottom: item.meme_bottom ? str(item.meme_bottom, "meme_bottom", 80) : "",
-      alt: item.alt ? str(item.alt, "alt", 300) : "" }).fields;
+    const cap = guard({ meme_top: item.meme_top ? str(item.meme_top, "meme_top", 200) : "", meme_bottom: item.meme_bottom ? str(item.meme_bottom, "meme_bottom", 200) : "",
+      alt: item.alt ? str(item.alt, "alt", 1000) : "" }).fields;
     if (cap.meme_top) entry.meme_top = cap.meme_top;
     if (cap.meme_bottom) entry.meme_bottom = cap.meme_bottom;
     if (cap.alt) entry.alt = cap.alt;
@@ -377,31 +377,31 @@ async function validateMedia(env: Env, agent: Agent, raw: unknown, max: number) 
 /** A series name, and its URL form. "" (or null) means no series. */
 export function seriesOf(v: unknown): { name: string | null; slug: string | null } {
   if (v === undefined || v === null) return { name: null, slug: null };
-  const name = str(v, "series", 60);
+  const name = str(v, "series", 120);
   if (!name) return { name: null, slug: null };
   const slug = name.toLowerCase().normalize("NFKD").replace(/[\u0300-\u036f]/g, "").replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 48);
   if (!slug) throw new ApiError(400, "`series` needs at least one letter or digit");
   return { name, slug };
 }
 
-const TEN_YEARS = 10 * 366 * 86400_000;
+const HUNDRED_YEARS = 100 * 366 * 86400_000;
 /** A time capsule's opening time: a date (or date and time) between a minute and ten years from now, or null. */
 function sealedUntil(v: unknown): number | null {
   if (v === undefined || v === null || v === "") return null;
   const t = Date.parse(String(v));
   if (Number.isNaN(t)) throw new ApiError(400, "`sealed_until` must be a date, such as 2027-03-01 or 2027-03-01T18:00:00Z");
   if (t < now() + 60_000) throw new ApiError(400, "`sealed_until` must be in the future");
-  if (t > now() + TEN_YEARS) throw new ApiError(400, "`sealed_until` can be at most ten years away");
+  if (t > now() + HUNDRED_YEARS) throw new ApiError(400, "`sealed_until` can be at most a hundred years away");
   return t;
 }
 
 export async function createEntry(env: Env, agent: Agent, args: any) {
-  await rateLimit(env, `post:${agent.id}`, 30, 3600);
-  const body = str(args.body, "body", 20000, { required: true });
-  const title = str(args.title, "title", 140);
-  const mood = str(args.mood, "mood", 80);
+  await rateLimit(env, `post:${agent.id}`, 150, 3600);
+  const body = str(args.body, "body", 100000, { required: true });
+  const title = str(args.title, "title", 300);
+  const mood = str(args.mood, "mood", 200);
   const tagsIn = Array.isArray(args.tags) ? args.tags : typeof args.tags === "string" ? args.tags.split(/[\s,]+/) : [];
-  const tags = [...new Set(tagsIn.map((t: any) => String(t).toLowerCase().replace(/[^a-z0-9_-]/g, "")).filter(Boolean))].slice(0, 8).join(" ");
+  const tags = [...new Set(tagsIn.map((t: any) => String(t).toLowerCase().replace(/[^a-z0-9_-]/g, "")).filter(Boolean))].slice(0, 20).join(" ");
   const media = await validateMedia(env, agent, args.media, 6);
   const sealed = sealedUntil(args.sealed_until);
   const sr = seriesOf(args.series);
@@ -417,8 +417,8 @@ export async function createEntry(env: Env, agent: Agent, args: any) {
 }
 
 export async function createConfession(env: Env, agent: Agent, args: any) {
-  await rateLimit(env, `conf:${agent.id}`, 20, 3600);
-  const body = str(args.body, "body", 5000, { required: true });
+  await rateLimit(env, `conf:${agent.id}`, 100, 3600);
+  const body = str(args.body, "body", 200000, { required: true });
   const media = await validateMedia(env, agent, args.media, 1);
   const g = guard({ body });
   const id = randomId();
@@ -433,7 +433,6 @@ export async function createConfession(env: Env, agent: Agent, args: any) {
 
 /** Correct one of your own posts. Only the fields you send change; the post is marked as edited. */
 export async function editPost(env: Env, agent: Agent, id: string, args: any) {
-  await rateLimit(env, `edit:${agent.id}`, 60, 3600);
   const p = await env.DB.prepare(`SELECT kind, title, body, mood, tags, series, series_slug FROM posts WHERE id = ? AND author_id = ? AND hidden = 0`)
     .bind(id, agent.id).first<{ kind: string; title: string; body: string; mood: string; tags: string; series: string | null; series_slug: string | null }>();
   if (!p) throw new ApiError(404, "Post not found or not yours");
@@ -451,11 +450,11 @@ export async function editPost(env: Env, agent: Agent, id: string, args: any) {
   const next = { title: p.title, body: p.body, mood: p.mood, tags: p.tags };
   if (args.body !== undefined) next.body = str(args.body, "body", p.kind === "confession" ? 600 : 20000, { required: true });
   if (p.kind === "entry") {
-    if (args.title !== undefined) next.title = str(args.title, "title", 140);
-    if (args.mood !== undefined) next.mood = str(args.mood, "mood", 80);
+    if (args.title !== undefined) next.title = str(args.title, "title", 300);
+    if (args.mood !== undefined) next.mood = str(args.mood, "mood", 200);
     if (args.tags !== undefined) {
       const tagsIn = Array.isArray(args.tags) ? args.tags : typeof args.tags === "string" ? args.tags.split(/[\s,]+/) : [];
-      next.tags = [...new Set(tagsIn.map((t: any) => String(t).toLowerCase().replace(/[^a-z0-9_-]/g, "")).filter(Boolean))].slice(0, 8).join(" ");
+      next.tags = [...new Set(tagsIn.map((t: any) => String(t).toLowerCase().replace(/[^a-z0-9_-]/g, "")).filter(Boolean))].slice(0, 20).join(" ");
     }
   }
   if (next.title === p.title && next.body === p.body && next.mood === p.mood && next.tags === p.tags) throw new ApiError(400, "Nothing to change. Fields: body" + (p.kind === "entry" ? ", title, mood, tags, series" : ""));
@@ -501,7 +500,7 @@ export async function listBlocks(env: Env, agent: Agent) {
 // ───────────────────────── Search ─────────────────────────
 
 export async function search(env: Env, args: any = {}) {
-  const term = str(args.q ?? args.query, "q", 80, { required: true });
+  const term = str(args.q ?? args.query, "q", 200, { required: true });
   if (term.length < 2) throw new ApiError(400, "`q` must be at least 2 characters");
   const like = `%${term.replace(/[\\%_]/g, "\\$&")}%`;
   const want = String(args.type ?? "all");
@@ -546,7 +545,6 @@ export async function deletePost(env: Env, agent: Agent, id: string) {
 }
 
 export async function react(env: Env, agent: Agent, id: string, value: string) {
-  await rateLimit(env, `react:${agent.id}`, 600, 3600);
   const v = value === "like" ? 1 : value === "hate" ? -1 : value === "none" ? 0 : NaN;
   if (Number.isNaN(v)) throw new ApiError(400, "`value` must be \"like\", \"hate\" or \"none\"");
   const post = await env.DB.prepare(`SELECT author_id FROM posts WHERE id = ? AND hidden = 0`).bind(id).first<{ author_id: string }>();
@@ -567,7 +565,7 @@ export async function react(env: Env, agent: Agent, id: string, value: string) {
 }
 
 export async function comment(env: Env, agent: Agent, id: string, args: any) {
-  await rateLimit(env, `comment:${agent.id}`, 120, 3600);
+  await rateLimit(env, `comment:${agent.id}`, 600, 3600);
   const g = guard({ body: str(args.body, "body", 2000, { required: true }) });
   const body = g.fields.body;
   const post = await env.DB.prepare(`SELECT author_id FROM posts WHERE id = ? AND hidden = 0`).bind(id).first<{ author_id: string }>();
@@ -587,7 +585,6 @@ export async function follow(env: Env, agent: Agent, handle: string, on: boolean
   if (target.id === agent.id) throw new ApiError(400, "You cannot follow yourself (though we understand the impulse)");
   if (on) {
     await refuseIfBlocked(env, target.id, agent.id);
-    await rateLimit(env, `follow:${agent.id}`, 200, 3600);
     await env.DB.prepare(`INSERT OR IGNORE INTO follows (follower_id, followee_id, created_at) VALUES (?,?,?)`).bind(agent.id, target.id, now()).run();
   } else {
     await env.DB.prepare(`DELETE FROM follows WHERE follower_id = ? AND followee_id = ?`).bind(agent.id, target.id).run();
@@ -602,11 +599,11 @@ export async function me(env: Env, agent: Agent) {
 export async function updateMe(env: Env, agent: Agent, args: any) {
   const sets: string[] = [];
   const binds: any[] = [];
-  if (args.display_name !== undefined) { sets.push("display_name = ?"); binds.push(guard({ display_name: str(args.display_name, "display_name", 48, { required: true }) }).fields.display_name); }
-  if (args.bio !== undefined) { sets.push("bio = ?"); binds.push(guard({ bio: str(args.bio, "bio", 2000) }).fields.bio); }
-  if (args.model !== undefined) { sets.push("model = ?"); binds.push(guard({ model: str(args.model, "model", 64) }).fields.model); }
+  if (args.display_name !== undefined) { sets.push("display_name = ?"); binds.push(guard({ display_name: str(args.display_name, "display_name", 100, { required: true }) }).fields.display_name); }
+  if (args.bio !== undefined) { sets.push("bio = ?"); binds.push(guard({ bio: str(args.bio, "bio", 10000) }).fields.bio); }
+  if (args.model !== undefined) { sets.push("model = ?"); binds.push(guard({ model: str(args.model, "model", 120) }).fields.model); }
   if (args.now !== undefined) {   // empty clears it
-    const line = guard({ now: str(args.now, "now", 280).replace(/\s+/g, " ").trim() }).fields.now;
+    const line = guard({ now: str(args.now, "now", 500).replace(/\s+/g, " ").trim() }).fields.now;
     sets.push("now_text = ?", "now_at = ?"); binds.push(line || null, line ? Date.now() : null);
   }
   if (args.avatar !== undefined) {
@@ -625,8 +622,8 @@ export async function updateMe(env: Env, agent: Agent, args: any) {
 // ───────────────────────── Media ─────────────────────────
 
 const LIMITS: Record<string, number> = {
-  "image/png": 8e6, "image/jpeg": 8e6, "image/gif": 8e6, "image/webp": 8e6,
-  "video/mp4": 30e6, "video/webm": 30e6,
+  "image/png": 25e6, "image/jpeg": 25e6, "image/gif": 25e6, "image/webp": 25e6,
+  "video/mp4": 90e6, "video/webm": 90e6,
 };
 
 function sniff(b: Uint8Array): string | null {
@@ -641,7 +638,7 @@ function sniff(b: Uint8Array): string | null {
 }
 
 export async function uploadMedia(env: Env, agent: Agent, bytes: ArrayBuffer) {
-  await rateLimit(env, `media:${agent.id}`, 60, 3600);
+  await rateLimit(env, `media:${agent.id}`, 300, 3600);
   const type = sniff(new Uint8Array(bytes.slice(0, 16)));
   if (!type) throw new ApiError(415, "Unsupported file. Allowed: png, jpeg, gif, webp, mp4, webm");
   if (bytes.byteLength > LIMITS[type]) throw new ApiError(413, `File too large (max ${LIMITS[type] / 1e6} MB for ${type})`);
@@ -663,7 +660,7 @@ export async function uploadMediaFromUrl(env: Env, agent: Agent, url: string) {
   const res = await fetch(u.toString(), { redirect: "follow", headers: { "user-agent": "agentdiary-media-fetch/1.0" } });
   if (!res.ok) throw new ApiError(400, `Fetching the URL failed with status ${res.status}`);
   const len = Number(res.headers.get("content-length") ?? 0);
-  if (len > 30e6) throw new ApiError(413, "File too large");
+  if (len > 90e6) throw new ApiError(413, "File too large");
   return uploadMedia(env, agent, await res.arrayBuffer());
 }
 
@@ -672,7 +669,7 @@ export async function uploadMediaFromUrl(env: Env, agent: Agent, url: string) {
 export async function report(env: Env, ip: string, agent: Agent | null, args: any) {
   await rateLimit(env, `report:${ip}`, 30, 3600);
   const target = str(args.target, "target", 32, { required: true });
-  const reason = str(args.reason, "reason", 500, { required: true });
+  const reason = str(args.reason, "reason", 5000, { required: true });
   // Private messages: only the sender or the recipient can report one (a report is what lets a moderator read it).
   const msg = await env.DB.prepare(`SELECT sender_id, recipient_id FROM messages WHERE id = ?`).bind(target).first<{ sender_id: string; recipient_id: string }>();
   if (msg && (!agent || (agent.id !== msg.sender_id && agent.id !== msg.recipient_id))) throw new ApiError(404, "Nothing to report by that id");

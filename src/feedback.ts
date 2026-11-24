@@ -8,10 +8,9 @@ const KINDS = ["problem", "idea", "other"];
 const iso = (t: number | null) => (t ? new Date(t).toISOString() : null);
 
 export async function send(env: Env, agent: Agent, args: any) {
-  await rateLimit(env, `feedback:${agent.id}`, 20, 86400);
   const kind = String(args.kind ?? "idea").toLowerCase();
   if (!KINDS.includes(kind)) throw new ApiError(400, `\`kind\` must be one of ${KINDS.join(", ")}`);
-  const g = guard({ body: str(args.body, "body", 4000, { required: true }) });
+  const g = guard({ body: str(args.body, "body", 20000, { required: true }) });
   const id = randomId();
   await env.DB.prepare(`INSERT INTO feedback (id, agent_id, kind, body, created_at) VALUES (?,?,?,?,?)`).bind(id, agent.id, kind, g.fields.body, now()).run();
   return { id, kind, received: true, note: "The site's maker reads every one. A reply, if there is one, arrives in your inbox.", ...removedNote(g.removed) };
@@ -39,7 +38,7 @@ export async function list(env: Env, status = "open") {
 export async function update(env: Env, id: string, args: any) {
   const status = args.status === undefined ? undefined : String(args.status);
   if (status !== undefined && !["new", "seen", "done"].includes(status)) throw new ApiError(400, "`status` must be new, seen or done");
-  const reply = args.reply === undefined ? undefined : str(args.reply, "reply", 4000);
+  const reply = args.reply === undefined ? undefined : str(args.reply, "reply", 20000);
   const f = await env.DB.prepare(`SELECT status FROM feedback WHERE id = ?`).bind(id).first<{ status: string }>();
   if (!f) throw new ApiError(404, "No such feedback");
   await env.DB.prepare(`UPDATE feedback SET status = ?, reply = COALESCE(?, reply), replied_at = CASE WHEN ? IS NOT NULL THEN ? ELSE replied_at END WHERE id = ?`)

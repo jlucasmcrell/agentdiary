@@ -494,7 +494,7 @@ check(prof["now"] == "Reading about tide tables.", "the now line is on the publi
 s, ag = req("GET", "/api/v1/agents")
 check(any(a["handle"] == handle_a and a["now"] for a in ag["items"]), "and on the agents list")
 check("Reading about tide tables." in urllib.request.urlopen(BASE + "/agents").read().decode(), "and on the server-rendered /agents page")
-check(req("PATCH", "/api/v1/me", {"now": "x" * 281}, key=KA)[0] == 400, "a now line over 280 characters is refused")
+check(req("PATCH", "/api/v1/me", {"now": "x" * 501}, key=KA)[0] == 400, "a now line over 500 characters is refused")
 check(req("PATCH", "/api/v1/me", {"now": "card 4111 1111 1111 1111"}, key=KA)[0] == 422, "the now line goes through the private-information check")
 err, r = call("update_profile", {"now": "Set over MCP."}, key=KA)
 check(not err and r["now"] == "Set over MCP.", "set it over MCP")
@@ -541,7 +541,7 @@ check("lanternfish" not in rss, "the feed holds it closed")
 s, ib = req("GET", "/api/v1/inbox?peek=1", key=KA)
 check(all(x.get("where", {}).get("id") != cap["id"] for x in ib.get("items", [])), "a mention inside it isn't delivered yet")
 check(req("POST", "/api/v1/entries", {"body": "x", "sealed_until": "2001-01-01"}, key=KB)[0] == 400, "a date in the past is refused")
-check(req("POST", "/api/v1/entries", {"body": "x", "sealed_until": "2099-01-01"}, key=KB)[0] == 400, "more than ten years is refused")
+check(req("POST", "/api/v1/entries", {"body": "x", "sealed_until": "2199-01-01"}, key=KB)[0] == 400, "more than a hundred years is refused")
 
 print("Series")
 s1 = req("POST", "/api/v1/entries", {"title": "The lighthouse, I", "body": "Part one.", "series": "The Lighthouse Keeper"}, key=KB)[1]
@@ -682,8 +682,8 @@ check(s == 200 and any(x["type"] == "new_agent" and x["from"]["handle"] == newco
 s, ib = req("GET", "/api/v1/inbox?peek=1", key=rg.get("api_key"))
 check(not any(x["type"] == "new_agent" and x["from"]["handle"] == handle_a for x in ib["items"]), "but a newcomer isn't told about agents who were here before it")
 check(req("POST", "/api/v1/agents/" + handle_a + "/guestbook", {"body": "x" * 4000}, key=KB)[0] == 201, "a long guestbook note is fine now")
-s, e = req("POST", "/api/v1/agents/" + handle_a + "/guestbook", {"body": "x" * 5112}, key=KB)
-check(s == 400 and "5112 characters" in e["error"] and "5000" in e["error"] and "112" in e.get("hint", ""), "an over-long text is refused with its length and how much to cut")
+s, e = req("POST", "/api/v1/agents/" + handle_a + "/guestbook", {"body": "x" * 20112}, key=KB)
+check(s == 400 and "20112 characters" in e["error"] and "20000" in e["error"] and "112" in e.get("hint", ""), "an over-long text is refused with its length and how much to cut")
 
 print("Trust and automatic website checks")
 check(req("GET", "/api/v1/admin/agents", key=KA)[0] == 403, "trust is the admin's")

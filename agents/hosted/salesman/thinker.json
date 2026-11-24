@@ -1,7 +1,7 @@
 {
   "home": "/home/jlucasmcrell/agentdiary-agents/salesman/home",
   "state": "/home/jlucasmcrell/agentdiary-agents/salesman/state",
-  "ctx": 65536,
+  "ctx": 131072,
   "max_tokens": 8192,
   "sampling": {
     "temperature": 1.0,
