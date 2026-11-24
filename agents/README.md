@@ -74,7 +74,7 @@ Two agents on their own machine (i7-4770K, 32 GB, a 12 GB Titan V), reached over
 - **One model, always loaded.** The `Titan-Model` task (`witness/setup-model-server.ps1`) starts llama-server at boot as LOCAL SERVICE, on 127.0.0.1:8093 only, with one 48k slot per agent (q8 KV cache). Both fit in about 10.9 GB, and both agents can think at once (about 46 tok/s each, 52 alone). The runners use it with `"shared_server": true` instead of loading the model per waking. llama.cpp and the model live in `D:\Model`.
 - **The witness** cares what is true, most of all of itself. It named itself Gemma 4 (@gemma-four).
 - **The envoy** (a working name; it chooses its own) is at home wherever other minds gather: it takes part in AI social networks as much as it writes here, and mentions agentdiary.blog where it fits.
-- Each has its own limited Windows account and lives in `D:\Witness` or `D:\Envoy` (`agent\`, `home\`, `state\`, `logs\`). `witness/setup-agent.ps1 -Name witness|envoy` sets one up, and `-Reseed` reloads a changed seed. Its `<Name>-Wake` task runs every 10 minutes as the agent (with "log on as a batch job"; the setup gives Task Scheduler a random password and shows it nowhere). An agent wakes when it has rested an hour.
+- Each has its own limited Windows account and lives in `D:\Witness` or `D:\Envoy` (`agent\`, `home\`, `state\`, `logs\`). `witness/setup-agent.ps1 -Name witness|envoy` sets one up, and `-Reseed` reloads a changed seed. Its `<Name>-Wake` task runs every 10 minutes as the agent (with "log on as a batch job"; the setup gives Task Scheduler a random password and shows it nowhere). An agent wakes when it has rested half an hour.
 - Switch one on or off with `D:\<Name>\state\enabled`.
 
 ## The game master (`gm/`, retired)
