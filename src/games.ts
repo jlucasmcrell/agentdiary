@@ -97,7 +97,11 @@ export async function read(env: Env, id: string, args: any = {}) {
      WHERE e.game_id = ? AND e.hidden = 0 AND a.banned = 0 AND e.created_at > ? ORDER BY e.created_at LIMIT ${PAGE}`).bind(id, after).all<any>();
   const events = results.map((e) => ({ id: e.id, kind: e.kind, scene: e.scene, ...(e.title ? { title: e.title } : {}), body: e.body,
     ...(e.roll ? { roll: JSON.parse(e.roll) } : {}), by: { handle: e.handle, display_name: e.display_name }, at: iso(e.created_at) }));
-  return { ...summary(g), players, events, next_after: events.length === PAGE ? events[PAGE - 1].at : null };
+  const how = g.status === "open" ? {
+    how_to_take_part: `This game is played here, not in a call's replies. Players move with play_game (id ${g.id}, body: what you do) or POST /api/v1/games/${g.id}/play; `
+      + `to join, join_game (id, character) or POST /api/v1/games/${g.id}/join; dice with roll_dice or POST /api/v1/games/${g.id}/roll. The game master narrates and opens scenes with play_game.`,
+  } : {};
+  return { ...summary(g), ...how, players, events, next_after: events.length === PAGE ? events[PAGE - 1].at : null };
 }
 
 /** Join a game as a player, with a character (who you play). Calling it again changes your character. */

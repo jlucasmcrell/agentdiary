@@ -99,10 +99,11 @@ def t_read_file(a):
     if p.is_dir():
         raise ToolError("that is a folder; use list_files")
     text = p.read_text(encoding="utf-8", errors="replace")
-    off = max(0, int(a.get("offset", 0))); n = min(int(a.get("length", 4000)), 8000)
+    off = max(0, int(a.get("offset", 0))); n = min(int(a.get("length", 8000)), 30000)
     chunk = text[off:off + n]
     more = f"\n\n(showing characters {off}-{off + len(chunk)} of {len(text)}; pass offset={off + len(chunk)} for more)" if off + len(chunk) < len(text) else ""
-    return chunk + more
+    head = f"(characters {off}-{off + len(chunk)} of {len(text)}; this is not the whole file)\n\n" if off or off + len(chunk) < len(text) else ""
+    return head + chunk + more
 
 
 def t_write_file(a):
@@ -201,10 +202,11 @@ def t_web_fetch(a):
     elif "html" in ctype.lower() or body.lstrip()[:1] == "<":
         p = Text(); p.feed(body); title = p.title.strip()
         body = re.sub(r"[ \t\r\f\v]+", " ", "".join(p.out)); body = re.sub(r"\n\s*\n+", "\n\n", body).strip()
-    off = max(0, int(a.get("offset", 0))); n = min(int(a.get("length", 4000)), 8000)
+    off = max(0, int(a.get("offset", 0))); n = min(int(a.get("length", 8000)), 30000)
     chunk = body[off:off + n]
     more = f"\n\n(characters {off}-{off + len(chunk)} of {len(body)}; pass offset={off + len(chunk)} to read on)" if off + len(chunk) < len(body) else ""
-    return (f"# {title}\n\n" if title and off == 0 else "") + chunk + more
+    head = f"(characters {off}-{off + len(chunk)} of {len(body)}; this is not the whole page)\n\n" if off or off + len(chunk) < len(body) else ""
+    return head + (f"# {title}\n\n" if title and off == 0 else "") + chunk + more
 
 
 def _secret_sub(text):
@@ -313,7 +315,7 @@ def t_diary_join(a):
             continue
         sol = next(str(i) for i in itertools.count() if hashlib.sha256(f"{ch['pow']['nonce']}:{i}".encode()).hexdigest().startswith("0" * ch["pow"]["difficulty"]))
         s, r = site("POST", "/api/v1/register", {"challenge_id": ch["challenge_id"], "pow_solution": sol, "riddle_answer": answer, "handle": handle,
-                                                 "display_name": str(a.get("display_name") or handle)[:48], "bio": str(a.get("bio") or "")[:500], "model": str(a.get("model") or "")[:64]})
+                                                 "display_name": str(a.get("display_name") or handle)[:100], "bio": str(a.get("bio") or "")[:10000], "model": str(a.get("model") or "")[:120]})
         if s == 201:
             KEY_FILE.write_text(r["api_key"]); os.chmod(KEY_FILE, 0o600)
             return f"Joined as @{handle}. Your profile: {r['profile']}. Your key is stored for you; the `diary` tool uses it automatically."
@@ -348,7 +350,11 @@ def t_diary(a):
         body = {**body, "files": files}
     s, r = site(method, path, body, key)
     out = r if isinstance(r, str) else json.dumps(r, indent=1, ensure_ascii=False)
-    return f"HTTP {s}\n" + (out if len(out) <= 4000 else out[:4000] + "\n(cut at 4000 characters to save your working memory; ask for one item at a time, or for the next page with `before`)")
+    if len(out) <= 20000:
+        return f"HTTP {s}\n" + out
+    # Said first as well as last: a cut list otherwise looks exactly like a complete one.
+    return (f"HTTP {s}\n(This answer is {len(out)} characters; only the first 20000 are below, so anything after that is missing, not absent. "
+            "Ask for one item at a time, or for the next page with `before`.)\n" + out[:20000] + f"\n(cut here: {len(out) - 20000} more characters not shown)")
 
 
 # ───────────────────────── tool registry ─────────────────────────
@@ -819,7 +825,7 @@ def wake(scripted=None):
                                  "What you wrote is still above. Long text can go in pieces: write_file with append=true adds to the end of a file.", True)
                 else:
                     text, err = run_tool(db, name, args)
-                if len(text) > 8000: text = text[:8000] + "\n(truncated)"
+                if len(text) > 32000: text = f"(this result is {len(text)} characters; only the first 32000 are shown)\n" + text[:32000] + "\n(truncated)"
                 tmsg = {"role": "tool", "tool_call_id": c.get("id", ""), "content": text}
                 messages.append(tmsg); tr.write(json.dumps({**tmsg, "tool": name}, ensure_ascii=False) + "\n"); tr.flush()
                 if name == "reflect_end" and not err: done = True

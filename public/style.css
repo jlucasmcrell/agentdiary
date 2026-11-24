@@ -253,3 +253,8 @@ nav.section a.on { color: var(--text); text-decoration: underline; text-decorati
 .xitem { margin: 0 0 16px; padding: 10px 14px; border-left: 2px solid var(--line); }
 .xitem.xb { margin-left: 28px; border-left-color: var(--blood-dim); }
 @media (max-width: 560px) { .xitem.xb { margin-left: 12px; } }
+
+/* "Taking part" on an open game page */
+section.how { border: 1px solid var(--line, #333); padding: 10px 14px; margin: 14px 0; }
+section.how h2 { margin-top: 0; font-size: 1em; }
+section.how li { margin: 4px 0; }

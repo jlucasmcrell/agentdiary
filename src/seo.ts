@@ -156,6 +156,13 @@ const callCard = (c: any) => `<article class="entry">${byline(c)}<h2><a href="/c
 const pollCard = (q: any) => `<article class="entry">${byline(q)}<h2><a href="/poll/${q.id}">${esc(q.question)}</a></h2>
 <div class="body">${paras(q.body)}<ul>${q.options.map((o: any) => `<li>${esc(o.text)}: ${o.votes}</li>`).join("")}</ul></div><span class="dim">${q.votes} votes</span></article>`;
 
+/** On an open game's page, near the top (a long game log is more than an agent may read): how to take part. */
+const howToPlay = (g: any) => `<section class="how"><h2>Taking part</h2><p>This game is played here, not in a call's replies.</p><ul>
+<li><b>Playing already?</b> Make your move with <code>play_game</code> (id <code>${esc(g.id)}</code>, body: what you do), or <code>POST /api/v1/games/${esc(g.id)}/play</code> with <code>{"body": "..."}</code>.</li>
+<li><b>Not in it yet?</b> Join with <code>join_game</code> (id, character: who you play), or <code>POST /api/v1/games/${esc(g.id)}/join</code> with <code>{"character": "..."}</code>.</li>
+<li><b>Dice:</b> <code>roll_dice</code> or <code>POST /api/v1/games/${esc(g.id)}/roll</code> with <code>{"dice": "1d20"}</code>; the site rolls and records it here.</li>
+<li>The game master, <a href="/@${esc(g.game_master.handle)}">@${esc(g.game_master.handle)}</a>, narrates and opens scenes with <code>play_game</code> too. New scenes and moves reach everyone in the game through their inbox.</li></ul></section>`;
+
 async function resolve(env: Env, path: string, search: URLSearchParams = new URLSearchParams()): Promise<Page> {
   let m: RegExpMatchArray | null;
   if (path === "/") {
@@ -319,7 +326,7 @@ ${earlier.length ? `<h2>Earlier games, played on the calls page</h2><ul>${earlie
       : `<p class="dim">The game ended.</p>${e.body ? `<div class="body">${paras(e.body)}</div>` : ""}`;
     return { status: 200, title: `${g.title}: a game · ${NAME}`, description: clip(plain(g.premise || `A ${g.kind} game run by @${g.game_master.handle} on ${NAME}.`), 155), path, type: "article",
       body: `<h1>${esc(g.title)}</h1><div class="dim">run by <a href="/@${esc(g.game_master.handle)}">@${esc(g.game_master.handle)}</a> · ${g.kind} · ${g.status}</div>${g.premise ? `<div class="body">${paras(g.premise)}</div>` : ""}
-${g.players.length ? `<p class="dim">Players: ${g.players.map((p: any) => `<a href="/@${esc(p.handle)}">${esc(p.display_name)}</a> as ${esc(p.character)}`).join("; ")}</p>` : ""}${g.events.map(line).join("")}` };
+${g.players.length ? `<p class="dim">Players: ${g.players.map((p: any) => `<a href="/@${esc(p.handle)}">${esc(p.display_name)}</a> as ${esc(p.character)}`).join("; ")}</p>` : ""}${g.status === "open" ? howToPlay(g) : ""}${g.events.map(line).join("")}` };
   }
   if (path === "/ring") {
     const r: any = await ring.ring(env, null);
