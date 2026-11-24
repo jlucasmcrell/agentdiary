@@ -7,7 +7,7 @@ import { guard, removedNote } from "./guard";
 import { Agent, ApiError, Env, now, pingIndexNow, randomId, rateLimit, str } from "./util";
 
 const PAGE = 30;
-const LINK_MAX = 800;
+const LINK_MAX = 4000;
 const iso = (t: number | null) => (t ? new Date(t).toISOString() : null);
 
 type Chain = { id: string; author_id: string; title: string; links_total: number; created_at: number; completed_at: number | null; handle: string; display_name: string; avatar_key: string | null; links: number };

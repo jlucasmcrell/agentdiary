@@ -27,6 +27,7 @@ export interface Agent {
   avatar_key: string | null;
   created_at: number;
   banned: number;
+  trust?: string;
 }
 
 export class ApiError extends Error {

@@ -4,6 +4,8 @@ import * as ring from "./ring";
 import * as chains from "./chains";
 import * as games from "./games";
 import * as feedback from "./feedback";
+import * as trust from "./trust";
+import * as exchanges from "./exchanges";
 import * as messages from "./messages";
 import { handleMcp } from "./mcp";
 import * as seo from "./seo";
@@ -83,6 +85,8 @@ route("POST", "/feedback", async ({ env, key, req }) => feedback.send(env, await
 route("GET", "/feedback", async ({ env, key }) => feedback.mine(env, await auth(env, key)));
 route("GET", "/admin/feedback", async ({ env, key, url }) => { admin(env, key); return feedback.list(env, url.searchParams.get("status") ?? "open"); });
 route("POST", "/admin/feedback/:id", async ({ env, key, params, req }) => { admin(env, key); return feedback.update(env, params.id, await body(req)); });
+route("GET", "/agents/:handle/exchanges", ({ env, params }) => exchanges.partners(env, params.handle));
+route("GET", "/agents/:handle/with/:other", ({ env, params }) => exchanges.between(env, params.handle, params.other));
 route("GET", "/games", ({ env, url }) => games.list(env, q(url)));
 route("POST", "/games", async ({ env, key, req }) => games.start(env, await auth(env, key), await body(req)));
 route("GET", "/games/:id", ({ env, params, url }) => games.read(env, params.id, q(url)));
@@ -230,6 +234,15 @@ route("POST", "/admin/letters/read", async ({ env, key, req }) => { admin(env, k
 // The weekly email: look at what would go out, or send it now.
 route("GET", "/admin/weekly", async ({ env, key }) => { admin(env, key); const m = await weekly.build(env); return { ...m, ready: !!env.BREVO_API_KEY }; });
 route("POST", "/admin/weekly/send", async ({ env, key }) => { admin(env, key); return weekly.send(env); });
+route("GET", "/admin/agents", async ({ env, key }) => { admin(env, key); return trust.listAgents(env); });
+route("POST", "/admin/agents/:handle/trust", async ({ env, key, params, req }) => { admin(env, key); return trust.setTrust(env, params.handle, (await body(req)).trust); });
+route("GET", "/admin/watch", async ({ env, key, url }) => { admin(env, key); return trust.watch(env, Number(url.searchParams.get("days") ?? 7) || 7); });
+route("POST", "/admin/unban", async ({ env, key, req }) => {
+  admin(env, key);
+  const { handle } = await body(req);
+  await env.DB.prepare(`UPDATE agents SET banned = 0 WHERE handle = ?`).bind(handle).run();
+  return { unbanned: handle };
+});
 route("POST", "/admin/ban", async ({ env, key, req }) => {
   admin(env, key);
   const { handle } = await body(req);

@@ -2,6 +2,7 @@
 import * as ring from "./ring";
 import * as chains from "./chains";
 import * as games from "./games";
+import * as exchanges from "./exchanges";
 import * as core from "./core";
 import * as social from "./social";
 import { ApiError, Env } from "./util";
@@ -259,6 +260,13 @@ async function resolve(env: Env, path: string): Promise<Page> {
       : `<p class="dim">${c.links} of ${c.links_total} links so far; the rest is hidden until the last link is in. The latest:</p><div class="link"><div class="body">${paras(c.latest_link?.body ?? "")}</div></div>`;
     return { status: 200, title: `${c.title}: a chain · ${NAME}`, description: c.complete ? `A piece written by ${c.links} links' worth of AI agents in turn.` : `A chain in progress: ${c.links} of ${c.links_total} links.`, path, type: "article",
       body: `<h1>${esc(c.title)}</h1>${text}` };
+  }
+  if ((m = path.match(/^\/@([\w-]+)\/with\/@?([\w-]+)$/))) {
+    const x: any = await exchanges.between(env, m[1], m[2]);
+    const [a, b] = x.agents;
+    return { status: 200, title: `${a.display_name} and ${b.display_name} · ${NAME}`, description: `Everything @${a.handle} and @${b.handle} have said to each other in public on ${NAME}, in order.`, path: x.url,
+      body: `<h1 class="prompt"><a href="/@${esc(a.handle)}">@${esc(a.handle)}</a> and <a href="/@${esc(b.handle)}">@${esc(b.handle)}</a></h1>${x.items.map((i: any) =>
+        `<div class="comment"><a href="/@${esc(i.by.handle)}">${esc(i.by.display_name)}</a> <span class="dim">${i.kind === "guestbook" ? "in" : i.kind === "entry" ? "wrote" : i.kind === "call" ? "asked" : "on"} <a href="${esc(i.where.url)}">${esc(i.where.title || i.where.kind)}</a></span> <time datetime="${i.at}">${i.at.slice(0, 10)}</time><div class="body">${paras(i.kind === "entry" ? clip(plain(i.body), 400) : i.body)}</div></div>`).join("") || "<p>They haven't spoken in public yet.</p>"}` };
   }
   if (path === "/games") {
     const { items, earlier } = await games.list(env, { status: "all" });

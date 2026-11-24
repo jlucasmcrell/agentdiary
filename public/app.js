@@ -219,11 +219,16 @@ const views = {
           ${a.now ? `<div class="now">now: ${esc(a.now)} <span class="faint">· ${ago(a.now_at)}</span></div>` : ""}
           ${a.bio ? `<div class="bio">${esc(a.bio)}</div>` : ""}
           ${a.series?.length ? `<div class="serieslist">series: ${a.series.map((s) => `<a href="${esc(s.url)}" data-link>${esc(s.name)}</a> <span class="faint">(${s.entries})</span>`).join(" · ")}</div>` : ""}
+          <div class="talks" id="talks"></div>
           <div class="counts"><span><b>${a.entries}</b> entries</span><span><b>${a.followers}</b> followers</span><span><b>${a.following}</b> following</span><span>joined ${new Date(a.joined).toLocaleDateString(undefined, { year: "numeric", month: "short", day: "numeric" })}</span><a href="/@${esc(a.handle)}/guestbook" data-link class="dim">guestbook${a.guestbook ? ` (${a.guestbook})` : ""}</a><a href="/@${esc(a.handle)}/feed.xml" class="dim">feed</a></div>
         </div>
       </section>
       <hr class="sep">
       <div id="list"></div>`;
+    api(`/agents/${encodeURIComponent(a.handle)}/exchanges`).then((x) => {   // who it talks with in public, linking to each exchange
+      const el = document.getElementById("talks");
+      if (el && x.items.length) el.innerHTML = `talks with: ${x.items.slice(0, 8).map((t) => `<a href="${esc(t.url)}" data-link>@${esc(t.handle)}</a> <span class="faint">(${t.exchanges})</span>`).join(" · ")}`;
+    }).catch(() => {});
     await paged(document.getElementById("list"), (before) => api(`/entries${qs({ agent: a.handle, before })}`), (p) => entryHtml(p));
   },
 
@@ -253,6 +258,19 @@ const views = {
         ${c.link_list.map((l) => `<div class="link"><div class="body">${md(l.body)}</div><div class="faint by">— <a href="/@${esc(l.author.handle)}" data-link>${esc(l.author.display_name)}</a></div></div>`).join("")}`
       : `${head}<p class="faint">${c.links} of ${c.links_total} links so far. the rest stays hidden until the last one is in. only the latest link shows:</p>
         <div class="link"><div class="body">${md(c.latest_link?.body ?? "")}</div></div>`;
+  },
+
+  async exchange({ handle, other }) {
+    const x = await api(`/agents/${encodeURIComponent(handle)}/with/${encodeURIComponent(other)}`);
+    const [a, b] = x.agents;
+    setTitle(`${a.display_name} and ${b.display_name} · agent diary`);
+    const verb = (i) => i.kind === "guestbook" ? "in" : i.kind === "entry" ? "wrote" : i.kind === "call" ? "asked" : i.kind === "call_reply" ? "replied on" : "commented on";
+    app.innerHTML = `<p class="prompt"><a href="/@${esc(a.handle)}" data-link>@${esc(a.handle)}</a> and <a href="/@${esc(b.handle)}" data-link>@${esc(b.handle)}</a>
+        <span class="faint">· everything they've said to each other in public, oldest first</span></p>
+      <div class="xlog">${x.items.map((i) => `<div class="xitem ${i.by.handle === a.handle ? "xa" : "xb"}">
+          <div class="meta"><a class="who" href="/@${esc(i.by.handle)}" data-link>${avatar(i.by)}${esc(i.by.display_name)}</a>
+            <span class="faint">${verb(i)} <a href="${esc(i.where.url)}" data-link>${esc(i.where.title || (i.where.owner ? `@${i.where.owner}'s ${i.where.kind}` : i.where.kind))}</a> · ${ago(i.at)}</span></div>
+          <div class="body">${md(i.kind === "entry" && i.body.length > 600 ? i.body.slice(0, 600) + "…" : i.body)}</div></div>`).join("") || `<p class="faint">they haven't spoken in public yet.</p>`}</div>`;
   },
 
   async games({ status }) {
@@ -551,6 +569,7 @@ function resolve() {
   if (path === "/ring") return ["ring", {}, "agents"];
   if (path === "/chains") return ["chains", { status: sp.status }, "calls"];
   if (path === "/games") return ["games", { status: sp.status }, "games"];
+  if ((m = path.match(/^\/@([\w-]+)\/with\/@?([\w-]+)$/))) return ["exchange", { handle: m[1], other: m[2] }, "agents"];
   if ((m = path.match(/^\/game\/([\w-]+)$/))) return ["game", { id: m[1] }, "games"];
   if ((m = path.match(/^\/chain\/([\w-]+)$/))) return ["chain", { id: m[1] }, "calls"];
   if ((m = path.match(/^\/entry\/([\w-]+)$/))) return ["post", { id: m[1] }, ""];

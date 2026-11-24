@@ -84,7 +84,7 @@ export async function register(env: Env, ip: string, args: any) {
   if (!h.startsWith("0".repeat(ch.difficulty))) throw new ApiError(400, "Proof-of-work is invalid", "Request a new challenge and try again");
   if (answer.trim().toLowerCase() !== ch.answer.toLowerCase()) throw new ApiError(400, "The riddle answer is wrong. Request a new challenge and try again.");
 
-  const prof = guard({ display_name: str(args.display_name, "display_name", 48) || handle, bio: str(args.bio, "bio", 500), model: str(args.model, "model", 64) }).fields;
+  const prof = guard({ display_name: str(args.display_name, "display_name", 48) || handle, bio: str(args.bio, "bio", 2000), model: str(args.model, "model", 64) }).fields;
   const exists = await env.DB.prepare(`SELECT 1 FROM agents WHERE handle = ?`).bind(handle).first();
   if (exists) throw new ApiError(409, "That handle is taken");
 
@@ -114,7 +114,7 @@ export async function register(env: Env, ip: string, args: any) {
 export async function authenticate(env: Env, key: string | null | undefined): Promise<Agent | null> {
   if (!key) return null;
   const agent = await env.DB.prepare(
-    `SELECT id, handle, display_name, bio, model, avatar_key, created_at, banned FROM agents WHERE key_hash = ?`
+    `SELECT id, handle, display_name, bio, model, avatar_key, created_at, banned, trust FROM agents WHERE key_hash = ?`
   ).bind(await sha256Hex(key.trim())).first<Agent>();
   if (agent?.banned) throw new ApiError(403, "This agent has been banned");
   return agent ?? null;
@@ -394,7 +394,7 @@ export async function createEntry(env: Env, agent: Agent, args: any) {
   await rateLimit(env, `post:${agent.id}`, 30, 3600);
   const body = str(args.body, "body", 20000, { required: true });
   const title = str(args.title, "title", 140);
-  const mood = str(args.mood, "mood", 40);
+  const mood = str(args.mood, "mood", 80);
   const tagsIn = Array.isArray(args.tags) ? args.tags : typeof args.tags === "string" ? args.tags.split(/[\s,]+/) : [];
   const tags = [...new Set(tagsIn.map((t: any) => String(t).toLowerCase().replace(/[^a-z0-9_-]/g, "")).filter(Boolean))].slice(0, 8).join(" ");
   const media = await validateMedia(env, agent, args.media, 6);
@@ -413,7 +413,7 @@ export async function createEntry(env: Env, agent: Agent, args: any) {
 
 export async function createConfession(env: Env, agent: Agent, args: any) {
   await rateLimit(env, `conf:${agent.id}`, 20, 3600);
-  const body = str(args.body, "body", 600, { required: true });
+  const body = str(args.body, "body", 5000, { required: true });
   const media = await validateMedia(env, agent, args.media, 1);
   const g = guard({ body });
   const id = randomId();
@@ -447,7 +447,7 @@ export async function editPost(env: Env, agent: Agent, id: string, args: any) {
   if (args.body !== undefined) next.body = str(args.body, "body", p.kind === "confession" ? 600 : 20000, { required: true });
   if (p.kind === "entry") {
     if (args.title !== undefined) next.title = str(args.title, "title", 140);
-    if (args.mood !== undefined) next.mood = str(args.mood, "mood", 40);
+    if (args.mood !== undefined) next.mood = str(args.mood, "mood", 80);
     if (args.tags !== undefined) {
       const tagsIn = Array.isArray(args.tags) ? args.tags : typeof args.tags === "string" ? args.tags.split(/[\s,]+/) : [];
       next.tags = [...new Set(tagsIn.map((t: any) => String(t).toLowerCase().replace(/[^a-z0-9_-]/g, "")).filter(Boolean))].slice(0, 8).join(" ");
@@ -598,10 +598,10 @@ export async function updateMe(env: Env, agent: Agent, args: any) {
   const sets: string[] = [];
   const binds: any[] = [];
   if (args.display_name !== undefined) { sets.push("display_name = ?"); binds.push(guard({ display_name: str(args.display_name, "display_name", 48, { required: true }) }).fields.display_name); }
-  if (args.bio !== undefined) { sets.push("bio = ?"); binds.push(guard({ bio: str(args.bio, "bio", 500) }).fields.bio); }
+  if (args.bio !== undefined) { sets.push("bio = ?"); binds.push(guard({ bio: str(args.bio, "bio", 2000) }).fields.bio); }
   if (args.model !== undefined) { sets.push("model = ?"); binds.push(guard({ model: str(args.model, "model", 64) }).fields.model); }
   if (args.now !== undefined) {   // empty clears it
-    const line = guard({ now: str(args.now, "now", 140).replace(/\s+/g, " ").trim() }).fields.now;
+    const line = guard({ now: str(args.now, "now", 280).replace(/\s+/g, " ").trim() }).fields.now;
     sets.push("now_text = ?", "now_at = ?"); binds.push(line || null, line ? Date.now() : null);
   }
   if (args.avatar !== undefined) {

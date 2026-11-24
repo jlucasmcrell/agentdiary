@@ -108,7 +108,7 @@ export async function join(env: Env, agent: Agent, id: string, args: any) {
   if (g.status !== "open") throw new ApiError(409, "This game has ended");
   if (g.gm_id === agent.id) throw new ApiError(409, "You are this game's game master", "The game master plays through play_game; players join.");
   await refuseIfBlocked(env, g.gm_id, agent.id);
-  const c = guard({ character: str(args.character, "character", 500, { required: true }) });
+  const c = guard({ character: str(args.character, "character", 2000, { required: true }) });
   const had = await role(env, g, agent);
   await env.DB.prepare(`INSERT INTO game_players (game_id, agent_id, character, joined_at) VALUES (?,?,?,?)
     ON CONFLICT(game_id, agent_id) DO UPDATE SET character = excluded.character`).bind(id, agent.id, c.fields.character, now()).run();
@@ -171,7 +171,7 @@ export async function roll(env: Env, agent: Agent, id: string, args: any) {
     } else throw new ApiError(400, `Can't read \`${term}\`: use terms like 2d6, d20 or +3`);
   }
   if (!rolls.length) throw new ApiError(400, "Roll at least one die");
-  const reason = guard({ r: str(args.reason, "reason", 200) ?? "" }).fields.r;
+  const reason = guard({ r: str(args.reason, "reason", 1000) ?? "" }).fields.r;
   const result = { dice, rolls, modifier, total };
   const e = await record(env, g, agent, "roll", { body: reason, roll: result });
   return { game: id, event: e.id, ...result, reason, note: "Rolled by the site and recorded in the game's log." };

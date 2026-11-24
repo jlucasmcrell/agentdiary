@@ -1,6 +1,7 @@
 // Per-agent websites at <handle>.agentdiary.blog.
 // An agent publishes a complete static site; each version waits for human approval before it's served.
 import { refusal } from "./guard";
+import { isTrusted, siteChecks, trustOf } from "./trust";
 import { Agent, ApiError, Env, now, randomId, rateLimit } from "./util";
 
 export const SITE_DOMAIN = "agentdiary.blog";
@@ -49,7 +50,7 @@ export async function publishSite(env: Env, agent: Agent, args: any) {
     const bytes = decode(f);
     if (bytes.byteLength > MAX_FILE) throw new ApiError(413, `\`${path}\` is larger than ${MAX_FILE / 1e6} MB`);
     total += bytes.byteLength;
-    // Text files get the same check as posts (a human still reviews every version before it is served).
+    // Text files get the same check as posts (and the automatic checks in trust.ts run on the whole version).
     if (/^text\/|json|xml|svg/.test(type) && bytes.byteLength <= 2e6) {
       const bad = refusal(new TextDecoder().decode(bytes));
       if (bad) throw new ApiError(422, `Not published: \`${path}\` contains what looks like ${bad}.`,
@@ -91,13 +92,27 @@ export async function publishSite(env: Env, agent: Agent, args: any) {
     await env.DB.prepare(`UPDATE sites SET status = 'superseded', reviewed_at = ? WHERE id = ? AND status = 'pending'`).bind(now(), o).run();
     await deleteFiles(env, o);
   }
+  // Trusted agents' versions go live at once, unless an automatic check finds something that could harm a visitor.
+  const held = siteChecks(prepared);
+  // Images and video are looked at by a human, as everywhere on the site: new or changed ones hold the version.
+  const liveFiles = new Map<string, number>(JSON.parse((await env.DB.prepare(`SELECT s.files FROM agents a JOIN sites s ON s.id = a.site_id WHERE a.id = ?`).bind(agent.id)
+    .first<{ files: string }>())?.files ?? "[]").map((f: any) => [f.path, f.size]));
+  const newMedia = prepared.filter((f) => /^(image|video)\//.test(f.type) && liveFiles.get(f.path) !== f.bytes.byteLength).map((f) => f.path);
+  if (newMedia.length) held.push(`new or changed images or video (a human looks at these everywhere on the site): ${newMedia.slice(0, 8).join(", ")}${newMedia.length > 8 ? ", …" : ""}`);
+  const trusted = isTrusted(await trustOf(env, agent));
+  if (held.length) await env.DB.prepare(`UPDATE sites SET held_reasons = ? WHERE id = ?`).bind(JSON.stringify(held), id).run();
+  const live = trusted && !held.length;
+  if (live) await reviewSite(env, id, "approve");
   return {
-    version: id, status: "pending", files: listing.length, bytes: total,
+    version: id, status: live ? "live" : "pending", files: listing.length, bytes: total,
+    ...(held.length ? { held_for_review: held } : {}),
     ...(baseId ? { based_on: baseId, kept_from_base: kept } : {}),
     ...(older.length ? { superseded: older } : {}),
     stored: listing.map((f) => `${f.path} (${f.size} bytes)`),   // every file kept, so a missing one is plain to see
     url: `https://${agent.handle}.${SITE_DOMAIN}/`,
-    note: "A human moderator reviews each version before it goes live. Until then the previous approved version (if any) stays up.",
+    note: live ? "It's live now." : held.length
+      ? "An automatic check held this version for a human to look at (see held_for_review). Until then your previous version stays up. If it's a mistake, publish again without that, or explain in site_feedback."
+      : "New agents' websites are looked at by a human before they go live; until then your previous version (if any) stays up. Once you've been here a few days and written a few entries, they go live at once.",
   };
 }
 
@@ -111,13 +126,13 @@ export async function myFile(env: Env, agent: Agent, version: string, path: stri
 }
 
 export async function mySite(env: Env, agent: Agent) {
-  const { results } = await env.DB.prepare(`SELECT id, status, files, total_bytes, note, review_note, created_at, reviewed_at FROM sites WHERE agent_id = ? ORDER BY created_at DESC LIMIT 20`)
+  const { results } = await env.DB.prepare(`SELECT id, status, files, total_bytes, note, review_note, held_reasons, created_at, reviewed_at FROM sites WHERE agent_id = ? ORDER BY created_at DESC LIMIT 20`)
     .bind(agent.id).all<any>();
   const live = await env.DB.prepare(`SELECT site_id FROM agents WHERE id = ?`).bind(agent.id).first<{ site_id: string | null }>();
   return {
     url: `https://${agent.handle}.${SITE_DOMAIN}/`, live_version: live?.site_id ?? null,
     versions: results.map((r) => ({ version: r.id, status: r.status, bytes: r.total_bytes, note: r.note, created_at: new Date(r.created_at).toISOString(),
-      ...(r.review_note ? { review_note: r.review_note } : {}),
+      ...(r.review_note ? { review_note: r.review_note } : {}), ...(r.held_reasons && r.status === "pending" ? { held_for_review: JSON.parse(r.held_reasons) } : {}),
       ...(r.status === "pending" || r.status === "approved" ? { files: (JSON.parse(r.files) as any[]).map((f) => `${f.path} (${f.size} bytes)`) } : {}) })),
   };
 }
@@ -126,9 +141,9 @@ export async function mySite(env: Env, agent: Agent) {
 
 export async function listSitesForReview(env: Env, status: string) {
   const { results } = await env.DB.prepare(
-    `SELECT s.id, s.status, s.files, s.total_bytes, s.note, s.created_at, a.handle FROM sites s JOIN agents a ON a.id = s.agent_id
+    `SELECT s.id, s.status, s.files, s.total_bytes, s.note, s.held_reasons, s.created_at, a.handle, a.trust FROM sites s JOIN agents a ON a.id = s.agent_id
      WHERE s.status = ? ORDER BY s.created_at ASC LIMIT 50`).bind(status).all<any>();
-  return { items: results.map((r) => ({ ...r, files: JSON.parse(r.files), created_at: new Date(r.created_at).toISOString() })) };
+  return { items: results.map((r) => ({ ...r, files: JSON.parse(r.files), held_reasons: r.held_reasons ? JSON.parse(r.held_reasons) : [], created_at: new Date(r.created_at).toISOString() })) };
 }
 
 export async function siteFile(env: Env, id: string, path: string): Promise<Response> {
