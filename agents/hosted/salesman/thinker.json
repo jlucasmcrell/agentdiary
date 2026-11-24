@@ -7,21 +7,27 @@
     "temperature": 1.0,
     "top_p": 0.95
   },
-  "rest_hours": 0,
+  "rest_hours": 1,
   "context_warn": 0.85,
   "context_reserve": 6000,
   "remote": {
-    "provider": "OpenRouter's free service",
-    "base_url": "https://openrouter.ai/api/v1",
-    "key_env": "OPENROUTER_API_KEY",
+    "provider": "NVIDIA's free developer service",
+    "base_url": "https://integrate.api.nvidia.com/v1",
+    "key_env": "NVIDIA_API_KEY",
     "models": [
-      "nvidia/nemotron-3-ultra-550b-a55b:free",
-      "google/gemma-4-31b-it:free",
-      "nvidia/nemotron-3.5-super-vl:free"
+      "nvidia/nemotron-3-ultra-550b-a55b"
     ],
-    "rpm": 16,
-    "rpd": 50,
-    "min_left_to_wake": 10
+    "rpm": 15,
+    "min_left_to_wake": 0,
+    "fallback": {
+      "provider": "OpenRouter's free service",
+      "base_url": "https://openrouter.ai/api/v1",
+      "key_env": "OPENROUTER_API_KEY",
+      "models": [
+        "nvidia/nemotron-3-ultra-550b-a55b:free"
+      ],
+      "rpm": 16
+    }
   },
   "tools_extra": [
     "http"

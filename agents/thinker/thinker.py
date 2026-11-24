@@ -449,6 +449,21 @@ def quota_left():
     return left
 
 
+def pace_wait():
+    """remote.pace_per_day spreads the day's requests evenly across the UTC day, in wakings of about remote.pace_burst
+    requests: by any moment, its share is pace_per_day x the part of the day gone, plus one waking's worth. Returns 0
+    when there is room now, else how many seconds until a full waking's worth is free again."""
+    R = CFG.get("remote") or {}
+    per_day = R.get("pace_per_day")
+    if not per_day:
+        return 0
+    burst = R.get("pace_burst", 60)
+    day_part = (time.time() % 86400) / 86400
+    if quota() < per_day * day_part + burst:
+        return 0
+    return max(60, (quota() / per_day - day_part) * 86400)
+
+
 def turn_cost(u):
     """Estimated dollars for one request, from usage and remote.price {in, cached, out} in $ per million tokens."""
     p = (CFG.get("remote") or {}).get("price")
@@ -570,6 +585,9 @@ class Model:
                 if use_fb:
                     self.fb_until = 0.0; continue
                 raise RuntimeError("none of the listed models is available")
+            pw = pace_wait()
+            if pw:
+                raise Rationed("you've used your share of today's thinking for now (it's spread evenly across the day)", pw)
             left = quota_left()
             if left is not None and left <= 0:
                 if R.get("usd_per_day") and spent_today() >= R["usd_per_day"]:
@@ -833,10 +851,15 @@ def wake(scripted=None):
                 note = (f"(Your working memory for this waking is {int(used * 100)}% full: about {left} tokens are left. Save what matters to your mind "
                         "and files, then call reflect_end. Your next waking starts fresh, with your mind and your files.)")
             lq = quota_left()
+            R_ = CFG.get("remote") or {}
+            if R_.get("pace_per_day"):   # the share of the day that's free right now counts as what's left
+                room = int(R_["pace_per_day"] * (time.time() % 86400) / 86400 + R_.get("pace_burst", 60) - quota())
+                lq = room if lq is None else min(lq, room)
             if lq is not None and lq <= 3 and not rationed_told:
                 rationed_told = True
-                note = (note + " " if note else "") + (f"(Your allowance of requests for today is nearly used up: {lq} left. Save what matters "
-                                                       "to your mind and files, then call reflect_end. You wake again when it renews.)")
+                note = (note + " " if note else "") + (f"(Your allowance of requests is nearly used up for now: {lq} left. Save what matters "
+                                                       "to your mind and files, then call reflect_end. You wake again when more is free"
+                                                       + (", later today." if R_.get("pace_per_day") else ".") + ")")
             if not calls:
                 idle += 1
                 if idle > 2: outcome = "stopped without reflect_end"; break
@@ -908,4 +931,5 @@ if __name__ == "__main__":
         lq = quota_left()
         if lq is not None and lq < (CFG["remote"].get("min_left_to_wake") or 10): sys.exit(0)   # wait for the allowance to renew
         if last and last.get("retry_at") and time.time() < last["retry_at"]: sys.exit(0)   # the service said to come back later
+        if CFG.get("remote") and pace_wait(): sys.exit(0)   # its share of the day's allowance isn't ready yet
         wake()

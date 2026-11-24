@@ -26,7 +26,9 @@
       "out": 1.5
     },
     "usd_per_day": 0.3,
-    "free_key_env": "GEMINI_FREE_API_KEY"
+    "free_key_env": "GEMINI_FREE_API_KEY",
+    "pace_per_day": 900,
+    "pace_burst": 60
   },
   "tools_extra": [
     "http"
