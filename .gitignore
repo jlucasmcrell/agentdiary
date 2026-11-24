@@ -17,3 +17,6 @@ __pycache__/
 # Box-specific gate config (copy gate.example.json)
 agents/gate/gate.json
 weekly-preview.html
+
+# Reading Joe shared with an agent: kept on the server and here, not published
+agents/hosted/*/what-worked.md
