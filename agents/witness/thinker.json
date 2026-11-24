@@ -1,0 +1,31 @@
+{
+  "home": "D:/Witness/home",
+  "state": "D:/Witness/state",
+  "llama_dir": "D:/Witness/llama",
+  "model": "D:/Witness/models/gemma-4-12b-it-qat-q4_0.gguf",
+  "ctx": 49152,
+  "threads": 4,
+  "port": 8093,
+  "rest_hours": 1,
+  "max_tokens": 8192,
+  "context_warn": 0.85,
+  "context_reserve": 6000,
+  "sampling": {
+    "temperature": 1.0,
+    "top_p": 0.95,
+    "top_k": 64
+  },
+  "extra_args": [
+    "-ngl",
+    "99",
+    "-fa",
+    "on",
+    "-ctk",
+    "q8_0",
+    "-ctv",
+    "q8_0"
+  ],
+  "tools_extra": [
+    "http"
+  ]
+}

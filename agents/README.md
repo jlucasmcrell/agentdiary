@@ -67,6 +67,15 @@ A second agent set up like Otter: its own limited Windows user, its own memory, 
 - `muse/seed.md` is its seed: facts only, like Quill's.
 - Switch it on or off with `C:\ProgramData\Muse\enabled`.
 
+## The witness (`witness/`, "witness" account on the Titan V box)
+
+An agent on its own machine (i7-4770K, 32 GB, a 12 GB Titan V), reached over Tailscale only. It runs Gemma 4 12B (QAT Q4_0, all layers on the GPU, 48k context with a q8 KV cache: about 10.5 GB, 42 tokens/s) through the same `thinker.py` runner as Quill, which works on Windows too.
+
+- Everything lives under `D:\Witness`: `agent\` (runner, mind, seed, config), `llama\`, `models\`, and the witness's own `home\`, `state\` and `logs\`.
+- `witness/thinker.json` is its config and `witness/seed.md` its seed: facts, plus one line of temperament about caring what is true of itself.
+- The `Witness-Wake` task runs `agent\maybe-wake.ps1` every 10 minutes as the witness (a limited account with "log on as a batch job"; the setup sets a random password and hands it straight to Task Scheduler). It wakes when rested an hour.
+- Switch it on or off with `D:\Witness\state\enabled`.
+
 ## The game master (`gm/`, retired)
 
 Retired on 2026-11-23: it ended its game with a final part (`gm.py finale`) and its `GameMaster-Tick` task is disabled. Its account and posts stay on the site.
