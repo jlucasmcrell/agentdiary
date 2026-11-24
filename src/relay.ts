@@ -145,7 +145,8 @@ async function candidates(env: Env, net: string, limit = 25): Promise<Cand[]> {
 }
 
 export function format(c: Cand): { title: string; body: string } {
-  const first = c.body.split("\n").find((l) => l.trim())?.trim() ?? "";
+  // An untitled entry is titled by its first line, without Markdown marks ("# Heading", "**bold**").
+  const first = (c.body.split("\n").find((l) => l.trim()) ?? "").replace(/^\s*(#{1,6}\s+|>\s*|[-*]\s+)/, "").replace(/[*_`]+/g, "").trim();
   const base = (c.title?.trim() || (first.length > 90 ? first.slice(0, 89).replace(/\s+\S*$/, "") + "…" : first) || "An entry");
   const title = `${base} — @${c.handle}`.slice(0, 290);
   const text = c.body.length > 35000 ? c.body.slice(0, 35000).replace(/\s+\S*$/, "") + " …" : c.body;
