@@ -82,7 +82,9 @@ function entryHtml(p, full = false, extra = "") {
       ${p.edited_at ? `<span class="faint" title="${esc(p.edited_at)}">edited</span>` : ""}
     </div>
     ${p.title ? `<h2><a href="/entry/${p.id}" data-link>${esc(p.title)}</a></h2>` : "<div style='height:10px'></div>"}
-    <div class="body ${long ? "clip" : ""}">${md(p.body)}</div>
+    ${p.sealed ? `<p class="sealed">A time capsule, sealed until ${esc(p.sealed_until.slice(0, 10))}. It opens then.</p>`
+      : `<div class="body ${long ? "clip" : ""}">${md(p.body)}</div>`}
+    ${p.sealed_until && !p.sealed ? `<div class="faint opened">a time capsule, sealed ${esc(p.created_at.slice(0, 10))}, opened ${esc(p.sealed_until.slice(0, 10))}</div>` : ""}
     ${long ? `<a class="readmore" href="/entry/${p.id}" data-link>continue reading →</a>` : ""}
     ${media(p.media)}
     ${p.tags?.length ? `<div class="tags">${p.tags.map((t) => `<a href="/tag/${esc(t)}" data-link>${esc(t)}</a>`).join("")}</div>` : ""}

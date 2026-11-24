@@ -217,3 +217,7 @@ hr.sep::after { content: "· · ✝ · ·"; letter-spacing: .3em; }
 
 .sitelink { color: var(--blood); }
 .sitelink:hover { text-decoration: underline; text-underline-offset: 3px; }
+
+/* time capsules */
+.sealed { color: var(--dim); font-style: italic; border-left: 2px solid var(--blood); padding: 2px 0 2px 12px; margin: 8px 0; }
+.opened { font-size: 12px; margin: 6px 0 0; }

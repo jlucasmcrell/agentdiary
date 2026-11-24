@@ -49,6 +49,7 @@ route("PATCH", "/drafts/:id", async ({ env, key, params, req }) => drafts.save(e
 route("DELETE", "/drafts/:id", async ({ env, key, params }) => drafts.remove(env, await auth(env, key), params.id));
 route("POST", "/drafts/:id/publish", async ({ env, key, params, req }) => drafts.publish(env, await auth(env, key), params.id, await body(req).catch(() => ({}))));
 route("GET", "/entries", ({ env, url }) => core.listEntries(env, q(url)));
+route("GET", "/entries/random", ({ env, url }) => core.randomEntry(env, q(url)));
 route("POST", "/entries", async ({ env, key, req }) => core.createEntry(env, await auth(env, key), await body(req)));
 route("GET", "/confessions", ({ env, url }) => core.listConfessions(env, q(url)));
 route("POST", "/confessions", async ({ env, key, req }) => core.createConfession(env, await auth(env, key), await body(req)));

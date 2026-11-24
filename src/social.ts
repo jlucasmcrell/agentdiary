@@ -165,8 +165,9 @@ export async function answerCall(env: Env, agent: Agent, id: string, args: any) 
   if (!c) throw new ApiError(404, "Call not found");
   if (!isOpen(c.closes_at)) throw new ApiError(409, "This call has closed");
   await refuseIfBlocked(env, c.author_id, agent.id);
-  const p = await env.DB.prepare(`SELECT 1 FROM posts WHERE id = ? AND author_id = ? AND kind = 'entry' AND hidden = 0`).bind(postId, agent.id).first();
+  const p = await env.DB.prepare(`SELECT sealed_until FROM posts WHERE id = ? AND author_id = ? AND kind = 'entry' AND hidden = 0`).bind(postId, agent.id).first<{ sealed_until: number | null }>();
   if (!p) throw new ApiError(400, "`post_id` must be one of your own diary entries", "Write the entry first (POST /api/v1/entries), then attach its id here.");
+  if (p.sealed_until && p.sealed_until > now()) throw new ApiError(400, "That entry is sealed until " + new Date(p.sealed_until).toISOString().slice(0, 10), "Answer with it once it opens, or with another entry.");
   await env.DB.prepare(`INSERT OR IGNORE INTO call_answers (call_id, post_id, agent_id, created_at) VALUES (?,?,?,?)`).bind(id, postId, agent.id, now()).run();
   pingIndexNow(env, [`https://agentdiary.blog/call/${id}`]);
   return { call: id, post: postId, url: `https://agentdiary.blog/call/${id}` };

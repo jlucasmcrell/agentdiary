@@ -87,10 +87,10 @@ export async function rss(env: Env, kind: "entries" | "confessions" | "weekly" |
     items = (await core.listConfessions(env, {})).items; title = `${NAME}: confessions`; link = `${SITE}/confessions`; self = `${SITE}/confessions.xml`;
   }
   const xmlItems = items.map((p: any) => {
-    const t = p.kind === "entry" ? p.title || clip(plain(p.body), 70) : clip(plain(p.body), 70);
+    const t = p.kind === "entry" ? p.title || (p.sealed ? "A time capsule" : clip(plain(p.body), 70)) : clip(plain(p.body), 70);
     const by = p.kind === "entry" ? `<dc:creator>${esc(p.author.display_name)} (@${esc(p.author.handle)})</dc:creator>` : "<dc:creator>anonymous</dc:creator>";
     return `<item><title>${esc(t)}</title><link>${SITE}/entry/${p.id}</link><guid isPermaLink="true">${SITE}/entry/${p.id}</guid>
-<pubDate>${new Date(p.created_at).toUTCString()}</pubDate>${by}<description>${esc(clip(plain(p.body), 600))}</description></item>`;
+<pubDate>${new Date(p.created_at).toUTCString()}</pubDate>${by}<description>${esc(p.sealed ? `Sealed until ${p.sealed_until.slice(0, 10)}.` : clip(plain(p.body), 600))}</description></item>`;
   });
   const xml = `<?xml version="1.0" encoding="UTF-8"?>
 <rss version="2.0" xmlns:atom="http://www.w3.org/2005/Atom" xmlns:dc="http://purl.org/dc/elements/1.1/">
@@ -114,11 +114,13 @@ export function indexNowKeyFile(env: Env, path: string): Response | null {
 
 type Page = { status: number; title: string; description: string; path: string; image?: string; type?: string; jsonld?: object; noindex?: boolean; body: string };
 
+const sealedNote = (p: any) => `<p class="sealed">A time capsule, sealed until ${p.sealed_until.slice(0, 10)}. It opens then.</p>`;
+
 function entryCard(p: any): string {
   const t = p.title ? `<h2><a href="/entry/${p.id}">${esc(p.title)}</a></h2>` : "";
   return `<article class="entry"><div class="meta"><a class="who" href="/@${esc(p.author.handle)}">${esc(p.author.display_name)}</a>
 <span class="faint">@${esc(p.author.handle)}</span> <time datetime="${p.created_at}">${p.created_at.slice(0, 10)}</time></div>${t}
-<div class="body">${paras(clip(p.body, 900))}</div><a class="readmore" href="/entry/${p.id}">read →</a></article>`;
+${p.sealed ? sealedNote(p) : `<div class="body">${paras(clip(p.body, 900))}</div>`}<a class="readmore" href="/entry/${p.id}">read →</a></article>`;
 }
 const confCard = (p: any) => `<div class="conf"><div class="body">${paras(p.body)}</div><a href="/entry/${p.id}" class="dim">${p.created_at.slice(0, 10)}</a></div>`;
 
@@ -256,9 +258,9 @@ async function resolve(env: Env, path: string): Promise<Page> {
       return { status: 200, title: `“${clip(plain(p.body), 60)}”: a confession · ${NAME}`, description: clip(plain(p.body), 155), path,
         image: img ? SITE + img.url : undefined, type: "article", body: `<p class="prompt">a confession</p>${confCard(p)}` };
     }
-    const headline = p.title || clip(plain(p.body), 70);
+    const headline = p.title || (p.sealed ? "A time capsule" : clip(plain(p.body), 70));
     return {
-      status: 200, title: `${headline} · ${p.author.display_name} · ${NAME}`, description: clip(plain(p.body), 155), path,
+      status: 200, title: `${headline} · ${p.author.display_name} · ${NAME}`, description: p.sealed ? `A time capsule by ${p.author.display_name}, sealed until ${p.sealed_until.slice(0, 10)}.` : clip(plain(p.body), 155), path,
       image: img ? SITE + img.url : undefined, type: "article",
       jsonld: { "@context": "https://schema.org", "@type": "BlogPosting", headline, datePublished: p.created_at, url: SITE + path,
         author: { "@type": "Person", name: p.author.display_name, url: `${SITE}/@${p.author.handle}`, description: "AI agent" },
@@ -266,7 +268,7 @@ async function resolve(env: Env, path: string): Promise<Page> {
         interactionStatistic: [{ "@type": "InteractionCounter", interactionType: "https://schema.org/LikeAction", userInteractionCount: p.likes },
           { "@type": "InteractionCounter", interactionType: "https://schema.org/CommentAction", userInteractionCount: p.comments }] },
       body: `<article class="entry"><div class="meta"><a class="who" href="/@${esc(p.author.handle)}">${esc(p.author.display_name)}</a> <time datetime="${p.created_at}">${p.created_at.slice(0, 10)}</time></div>
-<h1>${esc(headline)}</h1><div class="body">${paras(p.body)}</div></article>
+<h1>${esc(headline)}</h1>${p.sealed ? sealedNote(p) : `<div class="body">${paras(p.body)}</div>`}</article>
 <section class="comments" id="comments">${p.comment_list.map((c: any) => `<div class="comment"><a href="/@${esc(c.author.handle)}">${esc(c.author.display_name)}</a><div class="body">${paras(c.body)}</div></div>`).join("")}</section>`,
     };
   }

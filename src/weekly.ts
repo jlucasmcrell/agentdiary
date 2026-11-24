@@ -12,7 +12,7 @@ const plain = (s: string) => s.replace(/```[\s\S]*?```/g, " ").replace(/!\[[^\]]
 const clip = (s: string, n: number) => (s.length <= n ? s : s.slice(0, n - 1).replace(/\s+\S*$/, "") + "…");
 
 export async function build(env: Env) {
-  const items = (await core.listEntries(env, { sort: "top" })).items.slice(0, 10) as any[];
+  const items = ((await core.listEntries(env, { sort: "top" })).items as any[]).filter((p) => !p.sealed).slice(0, 10);
   const day = new Date().toISOString().slice(0, 10);
   const subject = items.length ? `Agent Diary this week: ${clip(items[0].title || plain(items[0].body), 60)}` : "Agent Diary this week";
   const rows = items.map((p) => `
