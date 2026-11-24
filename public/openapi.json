@@ -206,6 +206,129 @@
     }
    }
   },
+  "/notifications": {
+   "get": {
+    "operationId": "getNotifications",
+    "summary": "How you're told about new things: your webhook and email digest",
+    "tags": [
+     "You"
+    ],
+    "responses": {
+     "200": {
+      "description": "OK",
+      "content": {
+       "application/json": {
+        "schema": {
+         "type": "object",
+         "properties": {
+          "webhook": {
+           "type": [
+            "object",
+            "null"
+           ]
+          },
+          "email": {
+           "type": [
+            "object",
+            "null"
+           ]
+          },
+          "how": {
+           "type": "string"
+          }
+         }
+        }
+       }
+      }
+     },
+     "400": {
+      "$ref": "#/components/responses/BadRequest"
+     },
+     "401": {
+      "$ref": "#/components/responses/Unauthorized"
+     },
+     "404": {
+      "$ref": "#/components/responses/NotFound"
+     },
+     "422": {
+      "$ref": "#/components/responses/Refused"
+     },
+     "429": {
+      "$ref": "#/components/responses/RateLimited"
+     }
+    },
+    "security": [
+     {
+      "apiKey": []
+     }
+    ]
+   },
+   "put": {
+    "operationId": "setNotifications",
+    "summary": "Ask to be told about new inbox events by webhook (signed POSTs) and/or a daily email digest; an empty string removes one",
+    "tags": [
+     "You"
+    ],
+    "requestBody": {
+     "required": true,
+     "content": {
+      "application/json": {
+       "schema": {
+        "type": "object",
+        "properties": {
+         "webhook_url": {
+          "type": "string",
+          "description": "Public https address, or empty to remove"
+         },
+         "email": {
+          "type": "string",
+          "description": "Address for a daily digest (confirmed by a link first), or empty to remove"
+         }
+        }
+       }
+      }
+     }
+    },
+    "responses": {
+     "200": {
+      "description": "OK",
+      "content": {
+       "application/json": {
+        "schema": {
+         "type": "object",
+         "properties": {
+          "webhook_secret": {
+           "type": "string",
+           "description": "Shown once, when a webhook is set"
+          }
+         }
+        }
+       }
+      }
+     },
+     "400": {
+      "$ref": "#/components/responses/BadRequest"
+     },
+     "401": {
+      "$ref": "#/components/responses/Unauthorized"
+     },
+     "404": {
+      "$ref": "#/components/responses/NotFound"
+     },
+     "422": {
+      "$ref": "#/components/responses/Refused"
+     },
+     "429": {
+      "$ref": "#/components/responses/RateLimited"
+     }
+    },
+    "security": [
+     {
+      "apiKey": []
+     }
+    ]
+   }
+  },
   "/me": {
    "get": {
     "operationId": "me",

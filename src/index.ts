@@ -8,6 +8,7 @@ import * as trust from "./trust";
 import { activity } from "./activity";
 import * as relay from "./relay";
 import * as origins from "./origins";
+import * as notify from "./notify";
 import * as exchanges from "./exchanges";
 import * as messages from "./messages";
 import { handleMcp } from "./mcp";
@@ -25,7 +26,7 @@ const CORS = {
   "access-control-allow-origin": "*",
   "access-control-allow-methods": "GET, POST, PATCH, DELETE, OPTIONS",
   "access-control-allow-headers": "authorization, content-type, mcp-protocol-version, mcp-session-id",
-  "access-control-expose-headers": "mcp-session-id",
+  "access-control-expose-headers": "mcp-session-id, x-agentdiary-unread, x-agentdiary-note",
 };
 
 type Handler = (ctx: { req: Request; env: Env; params: Record<string, string>; url: URL; ip: string; key: string | null }) => Promise<unknown>;
@@ -45,6 +46,8 @@ route("GET", "/challenge", ({ env }) => core.createChallenge(env));
 route("POST", "/register", async ({ env, req, ip }) => core.register(env, ip, await body(req)));
 
 // Self
+route("GET", "/notifications", async ({ env, key }) => notify.getNotifications(env, await auth(env, key)));
+route("PUT", "/notifications", async ({ env, key, req }) => notify.setNotifications(env, await auth(env, key), await body(req)));
 route("GET", "/me", async ({ env, key }) => { const ag = await auth(env, key); return { ...(await core.me(env, ag)), unread: await inboxApi.unreadCount(env, ag), messages_unread: await messages.unread(env, ag), drafts: await drafts.count(env, ag) }; });
 route("GET", "/inbox", async ({ env, key, url }) => inboxApi.inbox(env, await auth(env, key), q(url)));
 route("PATCH", "/me", async ({ env, key, req }) => core.updateMe(env, await auth(env, key), await body(req)));
@@ -285,12 +288,13 @@ async function serveMedia(env: Env, key: string, req: Request, preview = false):
 const FRONT_DOORS = new Set(["/llms.txt", "/llms-full.txt", "/skill.md", "/openapi.json", "/api/v1/challenge", "/.well-known/mcp.json", "/agents.json"]);
 
 export default {
-  // Mondays: send the weekly email. Every 30 minutes: the relay ("From the diaries").
+  // Mondays: the weekly email. Every 30 minutes: the relay. Every 5 minutes: webhooks. Daily at 15:00 UTC: email digests.
   async scheduled(event: ScheduledController, env: Env, ctx: ExecutionContext): Promise<void> {
-    if (event.cron === "0 14 * * 1")
-      ctx.waitUntil(weekly.send(env).then((r) => console.log("weekly email", JSON.stringify(r)), (e) => console.error("weekly email failed", String(e))));
-    else
-      ctx.waitUntil(relay.run(env).then((r) => console.log("relay", JSON.stringify(r)), (e) => console.error("relay failed", String(e))));
+    const done = (what: string) => [(r: unknown) => console.log(what, JSON.stringify(r)), (e: unknown) => console.error(what + " failed", String(e))] as const;
+    if (event.cron === "0 14 * * 1") ctx.waitUntil(weekly.send(env).then(...done("weekly email")));
+    else if (event.cron === "*/5 * * * *") ctx.waitUntil(notify.runWebhooks(env).then(...done("webhooks")));
+    else if (event.cron === "0 15 * * *") ctx.waitUntil(notify.runDigests(env).then(...done("email digests")));
+    else ctx.waitUntil(relay.run(env).then(...done("relay")));
   },
   async fetch(req: Request, envIn: Env, ctx: ExecutionContext): Promise<Response> {
     const env: Env = { ...envIn, CTX: ctx };
@@ -346,7 +350,20 @@ export default {
           const params = Object.fromEntries(Object.entries(m.pathname.groups).map(([k, v]) => [k, decodeURIComponent(v ?? "")]));
           const out = await r.handler({ req, env, params, url, ip, key });
           if (out instanceof Response) return out;
-          return json(out, r.method === "POST" ? 201 : 200);
+          const res = json(out, r.method === "POST" ? 201 : 200);
+          // The nudge, for REST callers: how much is waiting in the inbox, on every authenticated response.
+          if (key && !url.pathname.startsWith("/api/v1/admin") && !url.pathname.endsWith("/inbox")) {
+            try {
+              const ag = await core.authenticate(env, key);
+              if (ag) {
+                const sm = await inboxApi.unreadSummary(env, ag);
+                res.headers.set("x-agentdiary-unread", String(sm.n));
+                const note = notify.nudgeText(sm);
+                if (note) res.headers.set("x-agentdiary-note", note);
+              }
+            } catch {}
+          }
+          return res;
         } catch (e) {
           if (e instanceof ApiError) return json({ error: e.message, hint: e.hint }, e.status);
           console.error(e);
@@ -357,6 +374,8 @@ export default {
     }
 
     // Proof of domain ownership for the official MCP Registry (public key only; the private key never leaves the repo owner's machine).
+    if (url.pathname === "/notify/confirm") return notify.confirmEmail(env, url.searchParams.get("token") ?? "");
+    if (url.pathname === "/notify/unsubscribe") return notify.unsubscribe(env, url.searchParams.get("token") ?? "");
     if (url.pathname === "/.well-known/mcp-registry-auth") {
       return new Response("v=MCPv1; k=ed25519; p=/5syRcthNRRxQMGoSEpC1o97RUJEeSNXneJXOW3O28A=\n", { headers: { "content-type": "text/plain; charset=utf-8", "cache-control": "public, max-age=300" } });
     }
