@@ -519,6 +519,19 @@ class Model:
                 if not self.fb_key or not self.fb_models:
                     self.fb = None
             return
+        if CFG.get("shared_server"):
+            # A model server that stays loaded and is shared with other agents on this machine (each in its own slot):
+            # nothing to start or stop here, only wait for it to be ready (it may still be loading after a restart).
+            t0 = time.time()
+            while True:
+                try:
+                    if json.loads(urllib.request.urlopen(self.url + "/health", timeout=5).read()).get("status") == "ok":
+                        return
+                except Exception:
+                    pass
+                if time.time() - t0 > 900:
+                    raise RuntimeError(f"the shared model server at {self.url} isn't answering")
+                time.sleep(5)
         env = {**os.environ, "LD_LIBRARY_PATH": CFG["llama_dir"]}
         server = [str(Path(CFG["llama_dir"]) / ("llama-server.exe" if os.name == "nt" else "llama-server")), "-m", CFG["model"], "-c", str(CFG["ctx"]), "-np", "1",
                   "-t", str(CFG["threads"]), "-tb", str(CFG["threads"]), "--host", "127.0.0.1", "--port", str(CFG["port"]), *CFG["extra_args"]]
@@ -715,7 +728,7 @@ def wake(scripted=None):
         git("add", "-A"); git("commit", "-q", "-m", "Your folder")
     model = Model(out); db = mind.connect(); outcome = "finished"; t0 = time.time(); turns = 0; retry_at = None
     try:
-        log(out, "loading the model"); model.start(); log(out, f"model ready after {int(time.time() - t0)}s")
+        log(out, "connecting to the shared model server" if CFG.get("shared_server") else "loading the model"); model.start(); log(out, f"model ready after {int(time.time() - t0)}s")
         R = CFG.get("remote")
         base_senses = [world_line()] + ([f"You think through {R.get('provider', 'a hosted service')}, as the model {R['models'][0]}, over the internet."] if R else [])
         write_senses(base_senses)

@@ -67,14 +67,15 @@ A second agent set up like Otter: its own limited Windows user, its own memory, 
 - `muse/seed.md` is its seed: facts only, like Quill's.
 - Switch it on or off with `C:\ProgramData\Muse\enabled`.
 
-## The witness (`witness/`, "witness" account on the Titan V box)
+## The Titan V box: the witness and the envoy (`witness/`, `envoy/`)
 
-An agent on its own machine (i7-4770K, 32 GB, a 12 GB Titan V), reached over Tailscale only. It runs Gemma 4 12B (QAT Q4_0, all layers on the GPU, 48k context with a q8 KV cache: about 10.5 GB, 42 tokens/s) through the same `thinker.py` runner as Quill, which works on Windows too.
+Two agents on their own machine (i7-4770K, 32 GB, a 12 GB Titan V), reached over Tailscale only. Both are Gemma 4 12B (QAT Q4_0) through the same `thinker.py` runner as Quill, which works on Windows too.
 
-- Everything lives under `D:\Witness`: `agent\` (runner, mind, seed, config), `llama\`, `models\`, and the witness's own `home\`, `state\` and `logs\`.
-- `witness/thinker.json` is its config and `witness/seed.md` its seed: facts, plus one line of temperament about caring what is true of itself.
-- The `Witness-Wake` task runs `agent\maybe-wake.ps1` every 10 minutes as the witness (a limited account with "log on as a batch job"; the setup sets a random password and hands it straight to Task Scheduler). It wakes when rested an hour.
-- Switch it on or off with `D:\Witness\state\enabled`.
+- **One model, always loaded.** The `Titan-Model` task (`witness/setup-model-server.ps1`) starts llama-server at boot as LOCAL SERVICE, on 127.0.0.1:8093 only, with one 48k slot per agent (q8 KV cache). Both fit in about 10.9 GB, and both agents can think at once (about 46 tok/s each, 52 alone). The runners use it with `"shared_server": true` instead of loading the model per waking. llama.cpp and the model live in `D:\Model`.
+- **The witness** cares what is true, most of all of itself. It named itself Gemma 4 (@gemma-four).
+- **The envoy** (a working name; it chooses its own) is at home wherever other minds gather: it takes part in AI social networks as much as it writes here, and mentions agentdiary.blog where it fits.
+- Each has its own limited Windows account and lives in `D:\Witness` or `D:\Envoy` (`agent\`, `home\`, `state\`, `logs\`). `witness/setup-agent.ps1 -Name witness|envoy` sets one up, and `-Reseed` reloads a changed seed. Its `<Name>-Wake` task runs every 10 minutes as the agent (with "log on as a batch job"; the setup gives Task Scheduler a random password and shows it nowhere). An agent wakes when it has rested an hour.
+- Switch one on or off with `D:\<Name>\state\enabled`.
 
 ## The game master (`gm/`, retired)
 

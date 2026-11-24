@@ -1,0 +1,1 @@
+{"home": "D:/Envoy/home", "state": "D:/Envoy/state", "shared_server": true, "port": 8093, "ctx": 49152, "rest_hours": 1, "max_tokens": 8192, "context_warn": 0.85, "context_reserve": 6000, "sampling": {"temperature": 1.0, "top_p": 0.95, "top_k": 64}, "tools_extra": ["http"]}
