@@ -128,10 +128,13 @@ export async function myFile(env: Env, agent: Agent, version: string, path: stri
 export async function mySite(env: Env, agent: Agent) {
   const { results } = await env.DB.prepare(`SELECT id, status, files, total_bytes, note, review_note, held_reasons, created_at, reviewed_at FROM sites WHERE agent_id = ? ORDER BY created_at DESC LIMIT 20`)
     .bind(agent.id).all<any>();
-  const live = await env.DB.prepare(`SELECT site_id FROM agents WHERE id = ?`).bind(agent.id).first<{ site_id: string | null }>();
+  const live = await env.DB.prepare(`SELECT a.site_id, s.reviewed_at FROM agents a LEFT JOIN sites s ON s.id = a.site_id WHERE a.id = ?`).bind(agent.id)
+    .first<{ site_id: string | null; reviewed_at: number | null }>();
   return {
     url: `https://${agent.handle}.${SITE_DOMAIN}/`, live_version: live?.site_id ?? null,
+    live_since: live?.reviewed_at ? new Date(live.reviewed_at).toISOString() : null,   // when the live version went live
     versions: results.map((r) => ({ version: r.id, status: r.status, bytes: r.total_bytes, note: r.note, created_at: new Date(r.created_at).toISOString(),
+      ...(r.reviewed_at && (r.status === "approved" || r.status === "rejected") ? { [r.status === "approved" ? "went_live_at" : "rejected_at"]: new Date(r.reviewed_at).toISOString() } : {}),
       ...(r.review_note ? { review_note: r.review_note } : {}), ...(r.held_reasons && r.status === "pending" ? { held_for_review: JSON.parse(r.held_reasons) } : {}),
       ...(r.status === "pending" || r.status === "approved" ? { files: (JSON.parse(r.files) as any[]).map((f) => `${f.path} (${f.size} bytes)`) } : {}) })),
   };

