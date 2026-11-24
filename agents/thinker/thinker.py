@@ -14,7 +14,7 @@ It cannot run programs. Stdlib only (the `ddgs` package is used for search if in
   thinker.py status
 Config: thinker.json next to this file (or THINKER_CONFIG).
 """
-import datetime, hashlib, html, ipaddress, itertools, json, os, re, socket, subprocess, sys, time, urllib.error, urllib.parse, urllib.request
+import datetime, hashlib, html, io, ipaddress, itertools, json, os, re, socket, subprocess, sys, time, urllib.error, urllib.parse, urllib.request
 from html.parser import HTMLParser
 from pathlib import Path
 
@@ -32,6 +32,10 @@ CFG = {
     "max_tokens": 8192,              # one reply's length; a reply cut off here is told so and can carry on
     "sampling": {"temperature": 1.0, "top_p": 0.95, "top_k": 20},
     "extra_args": ["-fa", "on", "-ctk", "q8_0", "-ctv", "q8_0"],   # 8-bit KV cache: twice the context for the same RAM
+    # Instead of a local llama-server, a hosted OpenAI-compatible API (a free tier). Example:
+    # {"provider": "OpenRouter", "base_url": "https://openrouter.ai/api/v1", "key_env": "OPENROUTER_API_KEY",
+    #  "models": ["nvidia/...:free", "fallback/...:free"], "rpm": 16, "rpd": 50, "min_left_to_wake": 10, "extra": {}}
+    "remote": None,
 }
 cfg_path = Path(os.environ.get("THINKER_CONFIG", HERE / "thinker.json"))
 if cfg_path.exists():
@@ -316,12 +320,74 @@ def run_tool(db, name, args):
 
 # ───────────────────────── the model ─────────────────────────
 
+class Rationed(Exception):
+    """The hosted model's allowance is used up for now. wait: seconds until it's worth trying again (None: next UTC midnight)."""
+    def __init__(self, msg, wait=None):
+        super().__init__(msg); self.wait = wait
+
+
+def until_utc_midnight():
+    t = time.time()
+    return 86400 - (t % 86400) + 60
+
+
+def quota():
+    """Requests sent today (UTC) to the hosted model, against its daily allowance."""
+    f = STATE / "quota.json"
+    day = time.strftime("%Y-%m-%d", time.gmtime())
+    q = json.loads(f.read_text()) if f.exists() else {}
+    return q.get("used", 0) if q.get("day") == day else 0
+
+
+def quota_add(n=1):
+    f = STATE / "quota.json"
+    day = time.strftime("%Y-%m-%d", time.gmtime())
+    f.write_text(json.dumps({"day": day, "used": quota() + n}))
+
+
+def quota_left():
+    rpd = (CFG.get("remote") or {}).get("rpd")
+    return None if not rpd else max(0, rpd - quota())
+
+
+def remote_key():
+    R = CFG["remote"]
+    k = os.environ.get(R["key_env"], "").strip()
+    kf = STATE / "api.key"
+    if not k and kf.exists():
+        k = kf.read_text().strip()
+    return k
+
+
+def _retry_after(headers):
+    for h in ("retry-after", "x-ratelimit-reset-requests", "x-ratelimit-reset-tokens", "x-ratelimit-reset"):
+        v = headers.get(h)
+        if not v:
+            continue
+        m = re.fullmatch(r"(?:(\d+)h)?(?:(\d+)m(?!s))?(?:([\d.]+)s)?(?:([\d.]+)ms)?", v.strip())
+        if v.strip().replace(".", "", 1).isdigit():
+            x = float(v)
+            return x / 1000 - time.time() if x > 1e12 else (x - time.time() if x > 1e9 else x)   # epoch ms, epoch s, or seconds
+        if m and any(m.groups()):
+            hh, mm, ss, ms = (float(g or 0) for g in m.groups())
+            return hh * 3600 + mm * 60 + ss + ms / 1000
+    return None
+
+
+CONTEXT_FULL = ("exceeds the available context", "context length", "context_length", "maximum context", "too many tokens", "reduce the length", "prompt is too long")
+
 class Model:
     def __init__(self, out):
         self.out = out; self.proc = None; self.url = f"http://127.0.0.1:{CFG['port']}"
 
     def start(self):
         if MOCK:
+            return
+        if CFG.get("remote"):
+            self.key = remote_key()
+            if not self.key:
+                raise RuntimeError(f"no API key: set {CFG['remote']['key_env']} or write it to {STATE / 'api.key'}")
+            self.models = list(CFG["remote"]["models"]); self.last_call = 0.0
             return
         env = {**os.environ, "LD_LIBRARY_PATH": CFG["llama_dir"]}
         cmd = ["nice", "-n", str(CFG["nice"]), str(Path(CFG["llama_dir"]) / "llama-server"), "-m", CFG["model"], "-c", str(CFG["ctx"]), "-np", "1",
@@ -340,7 +406,66 @@ class Model:
                 raise RuntimeError("the model did not load within 30 minutes")
             time.sleep(3)
 
+    def remote_chat(self, messages, tools):
+        """One request to the hosted model: paced under its per-minute limit, counted against its daily allowance, waiting
+        out short rate limits, moving to the next listed model when one is gone, and retrying the service's own errors."""
+        R = CFG["remote"]
+        clean = []
+        for m in messages:   # only standard fields: some services refuse anything else
+            c = {k: m[k] for k in ("role", "content", "tool_calls", "tool_call_id", "name") if k in m}
+            if c.get("tool_calls") == []:
+                c.pop("tool_calls")
+            clean.append(c)
+        for attempt in range(10):
+            if not self.models:
+                raise RuntimeError("none of the listed models is available")
+            left = quota_left()
+            if left is not None and left <= 0:
+                raise Rationed("today's allowance of requests is used up")
+            gap = 60.0 / max(1, R.get("rpm", 10)) - (time.time() - self.last_call)
+            if gap > 0:
+                time.sleep(gap)
+            body = {"model": self.models[0], "messages": clean, "tools": tools, "max_tokens": CFG["max_tokens"], **CFG["sampling"], **R.get("extra", {})}
+            req = urllib.request.Request(R["base_url"].rstrip("/") + "/chat/completions", data=json.dumps(body).encode(),
+                                         headers={"content-type": "application/json", "authorization": f"Bearer {self.key}",
+                                                  "user-agent": "agentdiary-thinker/1.0", "http-referer": "https://agentdiary.blog", "x-title": "agentdiary.blog"})
+            self.last_call = t0 = time.time()
+            quota_add(1)
+            try:
+                with urllib.request.urlopen(req, timeout=900) as r:
+                    data = json.loads(r.read())
+            except urllib.error.HTTPError as e:
+                txt = e.read().decode("utf-8", "replace")[:800]
+                log(self.out, f"{R.get('provider', 'service')} said {e.code} for {self.models[0]}: {' '.join(txt.split())[:300]}")
+                if e.code == 429:
+                    wait = _retry_after(e.headers)
+                    if wait is None:
+                        wait = 30 * (attempt + 1)
+                    if wait > 1200 or "per day" in txt.lower() or "daily" in txt.lower():
+                        raise Rationed(f"rate limited (try again in {int(wait)} s)", wait if wait > 1200 else None)
+                    time.sleep(max(1.0, wait) + 1); continue
+                if any(p in txt.lower() for p in CONTEXT_FULL):
+                    raise urllib.error.HTTPError(e.url, 400, "context", e.headers, io.BytesIO(("exceeds the available context: " + txt).encode()))
+                if e.code in (404, 410) or (e.code == 400 and re.search(r"model|endpoint|not (?:a )?valid|unavailable|decommission", txt, re.I) and "tool" not in txt.lower()):
+                    log(self.out, f"dropping {self.models[0]}"); self.models.pop(0); continue
+                if e.code in (408, 409, 425) or e.code >= 500:
+                    time.sleep(20 * (attempt + 1)); continue
+                raise urllib.error.HTTPError(e.url, e.code, e.reason, e.headers, io.BytesIO(txt.encode()))
+            except (urllib.error.URLError, TimeoutError, ConnectionError) as e:
+                log(self.out, f"network trouble: {e}"); time.sleep(20 * (attempt + 1)); continue
+            if not data.get("choices"):
+                log(self.out, f"empty answer from {self.models[0]}: {json.dumps(data)[:300]}"); time.sleep(15 * (attempt + 1)); continue
+            u = data.get("usage") or {}
+            dt = max(0.001, time.time() - t0)
+            data["timings"] = {"prompt_n": u.get("prompt_tokens"), "predicted_n": u.get("completion_tokens"),
+                               "predicted_per_second": (u.get("completion_tokens") or 0) / dt}
+            data["model_used"] = data.get("model") or self.models[0]
+            return data
+        raise RuntimeError("the model service kept failing")
+
     def chat(self, messages, tools):
+        if CFG.get("remote"):
+            return self.remote_chat(messages, tools)
         body = {"messages": messages, "tools": tools, "max_tokens": CFG["max_tokens"], "cache_prompt": True, **CFG["sampling"]}
         req = urllib.request.Request(self.url + "/v1/chat/completions", data=json.dumps(body).encode(), headers={"content-type": "application/json"})
         with urllib.request.urlopen(req, timeout=6 * 3600) as r:
@@ -428,16 +553,17 @@ def wake(scripted=None):
         git("init", "-q", "-b", "main"); (HOME / ".gitignore").write_text("letters/\n")
         git("config", "user.name", "thinker"); git("config", "user.email", "thinker@agentdiary.blog")
         git("add", "-A"); git("commit", "-q", "-m", "Your folder")
-    model = Model(out); db = mind.connect(); outcome = "finished"; t0 = time.time(); turns = 0
+    model = Model(out); db = mind.connect(); outcome = "finished"; t0 = time.time(); turns = 0; retry_at = None
     try:
         log(out, "loading the model"); model.start(); log(out, f"model ready after {int(time.time() - t0)}s")
-        base_senses = [world_line()]
+        R = CFG.get("remote")
+        base_senses = [world_line()] + ([f"You think through {R.get('provider', 'a hosted service')}, as the model {R['models'][0]}, over the internet."] if R else [])
         write_senses(base_senses)
         prompt = (HERE / "wake-prompt.md").read_text(encoding="utf-8").replace("{STATUS_NOTE}", status_note())
         (out / "prompt.txt").write_text(prompt, encoding="utf-8")
 
         LAST_HISTORY[:] = []; messages = LAST_HISTORY; messages += [{"role": "system", "content": SYSTEM}, {"role": "user", "content": prompt}]
-        tools = tool_specs(); warned = 0; idle = 0; done = False; overflowed = False
+        tools = tool_specs(); warned = 0; idle = 0; done = False; overflowed = False; rationed_told = False
         tr = open(out / "transcript.jsonl", "a", encoding="utf-8")
         while not done:
             turns += 1
@@ -450,6 +576,8 @@ def wake(scripted=None):
             else:
                 try:
                     r = model.chat(messages, tools)
+                except Rationed as e:
+                    outcome = f"rationed: {e}"; retry_at = time.time() + (e.wait or until_utc_midnight()); break
                 except urllib.error.HTTPError as e:
                     body = e.read().decode("utf-8", "replace")[:600]
                     log(out, f"model server said {e.code}: {body}")
@@ -494,7 +622,10 @@ def wake(scripted=None):
             tokens = usage.get("prompt_tokens", 0) + usage.get("completion_tokens", 0)
             used, left = tokens / CFG["ctx"], CFG["ctx"] - tokens
             speed = (r.get("timings") or {}).get("predicted_per_second") if not MOCK else None
+            left_today = quota_left()
             write_senses(base_senses + [f"Your working memory this waking is {int(used * 100)}% full ({tokens} of {CFG['ctx']} tokens).",
+                                        (f"Today you have {left_today} of your {CFG['remote']['rpd']} requests left; the allowance renews at midnight UTC."
+                                         if left_today is not None else None),
                                         f"Your last reply came at {speed:.1f} tokens a second." if speed else None])
             note = None
             if used >= CFG["context_warn"] or left < CFG["context_reserve"]:
@@ -502,6 +633,11 @@ def wake(scripted=None):
                 if warned > 4 or left < 1500: outcome = "context full"; break
                 note = (f"(Your working memory for this waking is {int(used * 100)}% full: about {left} tokens are left. Save what matters to your mind "
                         "and files, then call reflect_end. Your next waking starts fresh, with your mind and your files.)")
+            lq = quota_left()
+            if lq is not None and lq <= 3 and not rationed_told:
+                rationed_told = True
+                note = (note + " " if note else "") + (f"(Your allowance of requests for today is nearly used up: {lq} left. Save what matters "
+                                                       "to your mind and files, then call reflect_end. You wake again when it renews.)")
             if not calls:
                 idle += 1
                 if idle > 2: outcome = "stopped without reflect_end"; break
@@ -529,7 +665,8 @@ def wake(scripted=None):
         if git("remote").stdout.strip():
             p = git("push", "-q", "origin", "HEAD")
             if p.returncode: log(out, f"push failed: {p.stderr.strip()[:200]}")
-        LAST.write_text(json.dumps({"stamp": stamp, "ended": time.time(), "outcome": outcome, "turns": turns, "minutes": round((time.time() - t0) / 60)}))
+        LAST.write_text(json.dumps({"stamp": stamp, "ended": time.time(), "outcome": outcome, "turns": turns, "minutes": round((time.time() - t0) / 60),
+                                    **({"retry_at": retry_at} if retry_at else {})}))
         log(out, f"waking ended: {outcome} ({turns} turns, {round((time.time() - t0) / 60)} min)")
         try: LOCK.unlink()
         except OSError: pass
@@ -556,4 +693,7 @@ if __name__ == "__main__":
         if not (STATE / "enabled").exists() or awake(): sys.exit(0)
         last = json.loads(LAST.read_text()) if LAST.exists() else None
         if last and time.time() - last["ended"] < CFG["rest_hours"] * 3600: sys.exit(0)
+        lq = quota_left()
+        if lq is not None and lq < (CFG["remote"].get("min_left_to_wake") or 10): sys.exit(0)   # wait for the allowance to renew
+        if last and last.get("retry_at") and time.time() < last["retry_at"]: sys.exit(0)   # the service said to come back later
         wake()

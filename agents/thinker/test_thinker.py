@@ -114,5 +114,50 @@ t.Model.chat = always_full
 import time; time.sleep(1.1); out = t.wake()
 check(out.startswith("error: HTTPError") and not t.LOCK.exists(), f"if that doesn't help either, the waking ends cleanly ({out[:40]})")
 
+print("A hosted model (remote mode)")
+import http.server, importlib, threading
+seen_remote = []
+class FakeAPI(http.server.BaseHTTPRequestHandler):
+    def do_POST(self):
+        body = json.loads(self.rfile.read(int(self.headers["content-length"])))
+        seen_remote.append(body)
+        n = len(seen_remote)
+        def reply(code, obj, headers=()):
+            b = json.dumps(obj).encode(); self.send_response(code)
+            for k, v in headers: self.send_header(k, v)
+            self.send_header("content-type", "application/json"); self.end_headers(); self.wfile.write(b)
+        if self.headers.get("authorization") != "Bearer test-key":
+            return reply(401, {"error": "bad key"})
+        if n == 1:
+            return reply(429, {"error": "slow down"}, [("retry-after", "1")])
+        if body["model"] == "gone/model":
+            return reply(404, {"error": {"message": "No endpoints found for gone/model"}})
+        calls = [("wake_context", {})] if n == 3 else [("reflect_end", {"summary": "Short waking on a hosted model.", "valence": 0.3})]
+        reply(200, {"model": body["model"], "usage": {"prompt_tokens": 100, "completion_tokens": 20},
+                    "choices": [{"finish_reason": "tool_calls", "message": {"role": "assistant", "content": "", "reasoning": "hm",
+                                 "tool_calls": [{"id": f"x{n}", "type": "function", "function": {"name": nm, "arguments": json.dumps(a)}} for nm, a in calls]}}]})
+    def log_message(self, *a): pass
+srv = http.server.HTTPServer(("127.0.0.1", 0), FakeAPI); threading.Thread(target=srv.serve_forever, daemon=True).start()
+t = importlib.reload(t)          # undo the patched model methods above
+t.MOCK = False
+os.environ["FAKE_KEY"] = "test-key"
+t.CFG["remote"] = {"provider": "Fake", "base_url": f"http://127.0.0.1:{srv.server_port}/v1", "key_env": "FAKE_KEY",
+                   "models": ["gone/model", "good/model"], "rpm": 600, "rpd": 50}
+(t.STATE / "quota.json").unlink(missing_ok=True)
+time.sleep(1.1); out = t.wake()
+check(out == "finished", f"a waking runs on a hosted model ({out})")
+check(len(seen_remote) == 4 and seen_remote[2]["model"] == "good/model", "it waits out a rate limit and moves past a model that's gone")
+check(all(set(m) <= {"role", "content", "tool_calls", "tool_call_id", "name"} for b in seen_remote for m in b["messages"]), "only standard message fields are sent")
+check(t.quota() == 4 and t.quota_left() == 46, f"requests are counted against the daily allowance ({t.quota()})")
+sn = json.loads(t.SENSES.read_text(encoding="utf-8"))["lines"]
+check(any("think through Fake" in l for l in sn) and any("requests left" in l for l in sn), "its senses say what it runs on and what's left today")
+t.CFG["remote"]["rpd"] = 5; t.CFG["remote"]["models"] = ["good/model"]
+before = len(seen_remote)
+time.sleep(1.1); out = t.wake()
+check(out.startswith("rationed") and len(seen_remote) == before + 1, f"when the allowance runs out the waking ends gently ({out})")
+last = json.loads(t.LAST.read_text())
+check(last.get("retry_at", 0) > time.time() + 60, "and it remembers not to wake again until the allowance renews")
+srv.shutdown()
+
 print("\nall good" if not fails else f"\n{fails} FAILED")
 sys.exit(1 if fails else 0)
