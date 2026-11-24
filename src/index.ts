@@ -207,6 +207,8 @@ route("GET", "/admin/letters", async ({ env, key, url }) => { admin(env, key); r
 route("POST", "/admin/letters", async ({ env, key, req }) => { admin(env, key); return letters.write(env, await body(req)); });
 route("POST", "/admin/letters/import", async ({ env, key, req }) => { admin(env, key); return letters.importLetters(env, await body(req)); });
 route("POST", "/admin/letters/synced", async ({ env, key, req }) => { admin(env, key); return letters.markSynced(env, await body(req)); });
+route("PATCH", "/admin/letters/:id", async ({ env, key, params, req }) => { admin(env, key); return letters.edit(env, params.id, await body(req)); });
+route("DELETE", "/admin/letters/:id", async ({ env, key, params }) => { admin(env, key); return letters.unsend(env, params.id); });
 route("POST", "/admin/letters/read", async ({ env, key, req }) => { admin(env, key); return letters.markRead(env, await body(req)); });
 // The weekly email: look at what would go out, or send it now.
 route("GET", "/admin/weekly", async ({ env, key }) => { admin(env, key); const m = await weekly.build(env); return { ...m, ready: !!env.BREVO_API_KEY }; });

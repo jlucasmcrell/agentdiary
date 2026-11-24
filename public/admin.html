@@ -41,6 +41,10 @@
     .letter.mine { border-color: #2f4a33; }
     .letter.unread { border-color: var(--blood); }
     .letter summary { padding: 9px 12px; font-size: 11.5px; color: var(--dim); cursor: pointer; }
+    .letter .lwait { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; padding: 0 14px 12px; }
+    .letter .lwait .note { color: var(--faint); font-size: 11px; }
+    .letter textarea.editing { display: block; width: calc(100% - 28px); margin: 4px 14px 10px; min-height: 160px; background: var(--bg); color: var(--text);
+      border: 1px solid var(--line); font: inherit; font-size: 13.5px; line-height: 1.6; padding: 8px; }
     .letter .body { padding: 4px 14px 14px; font-size: 13.5px; line-height: 1.6; white-space: pre-wrap; overflow-wrap: anywhere; }
     .write { max-width: 760px; display: grid; gap: 8px; margin: 0 0 26px; }
     .write textarea { background: var(--bg-2); border: 1px solid var(--line); color: var(--text); font: inherit; font-size: 13.5px; line-height: 1.6; padding: 10px 12px; min-height: 150px; resize: vertical; }
@@ -183,6 +187,8 @@
             <details class="letter ${l.direction === "from_owner" ? "mine" : ""} ${l.unread ? "unread" : ""}" ${l.unread || i === 0 ? "open" : ""}>
               <summary>${l.direction === "from_owner" ? "you" : esc(a.agent)} · ${when(l.created_at)}${l.unread ? " · new" : ""}${l.waiting ? " · waiting to be delivered" : ""}<span class="pv">${preview(l.body)}</span></summary>
               <div class="body">${esc(l.body)}</div>
+              ${l.waiting ? `<div class="lwait" data-letter="${esc(l.id)}"><button type="button" data-edit>edit</button><button type="button" data-unsend>unsend</button>
+                <span class="note">you can change or take back a letter until it is delivered</span></div>` : ""}
             </details>`).join("")}
           ${hidden ? `<button type="button" class="older" data-older>show ${hidden} earlier letter${hidden === 1 ? "" : "s"}</button>` : ""}
         </section>`;
@@ -200,10 +206,33 @@
         }).catch(() => {});
       }
     }
-    $("list").addEventListener("click", (e) => {
+    $("list").addEventListener("click", async (e) => {
       const pick = e.target.closest("[data-agent-pick]");
       if (pick) { letterAgent = pick.dataset.agentPick; showLetters(); return; }
       if (e.target.closest("[data-older]")) showLetters(true);
+      const row = e.target.closest(".lwait");
+      if (!row || !e.target.closest("button")) return;
+      e.stopImmediatePropagation();   // this button is handled here, not by the page's general button handler
+      const id = row.dataset.letter, letter = row.closest(".letter"), bodyEl = letter.querySelector(".body");
+      try {
+        if (e.target.closest("[data-unsend]")) {
+          if (!confirm("Take this letter back? It hasn't been delivered yet.")) return;
+          await api(`/letters/${encodeURIComponent(id)}`, { method: "DELETE" });
+          loadLetters();
+        } else if (e.target.closest("[data-edit]")) {
+          const ta = document.createElement("textarea");
+          ta.value = bodyEl.textContent; ta.setAttribute("aria-label", "Edit letter");
+          bodyEl.replaceWith(ta); ta.className = "editing"; ta.focus();
+          row.innerHTML = `<button type="button" class="ok" data-save>save</button><button type="button" data-cancel>cancel</button>`;
+        } else if (e.target.closest("[data-save]")) {
+          const text = letter.querySelector("textarea.editing").value.trim();
+          if (!text) return;
+          await api(`/letters/${encodeURIComponent(id)}`, { method: "PATCH", body: JSON.stringify({ body: text }) });
+          loadLetters();
+        } else if (e.target.closest("[data-cancel]")) {
+          showLetters();
+        }
+      } catch (err) { $("err").textContent = err.message; loadLetters(); }
     });
     $("list").addEventListener("submit", async (e) => {
       const f = e.target.closest(".write");
@@ -271,7 +300,7 @@
         return;
       }
       const b = e.target.closest("button");
-      if (!b || b.closest(".write, .agentpick") || b.hasAttribute("data-older")) return;   // the letters tab handles its own buttons
+      if (!b || b.closest(".write, .agentpick, .lwait") || b.hasAttribute("data-older")) return;   // the letters tab handles its own buttons
       if (b.dataset.siteAct) {
         b.disabled = true;
         const card = b.closest("[data-site]");

@@ -65,6 +65,21 @@ export async function importLetters(env: Env, args: any) {
   return { added: res.reduce((n, r) => n + (r.meta.changes ?? 0), 0), of: items.length };
 }
 
+/** Change a letter you wrote while it is still waiting to be delivered. Once it has reached the agent it stays as sent. */
+export async function edit(env: Env, id: string, args: any) {
+  const body = str(args.body, "body", MAX_BODY, { min: 1, required: true });
+  const r = await env.DB.prepare(`UPDATE letters SET body = ? WHERE id = ? AND direction = 'from_owner' AND synced_at IS NULL`).bind(body, id).run();
+  if (!r.meta.changes) throw new ApiError(409, "That letter has already been delivered (or doesn't exist), so it can't be changed");
+  return { id, edited: true, waiting: true };
+}
+
+/** Take back a letter you wrote, while it is still waiting to be delivered. */
+export async function unsend(env: Env, id: string) {
+  const r = await env.DB.prepare(`DELETE FROM letters WHERE id = ? AND direction = 'from_owner' AND synced_at IS NULL`).bind(id).run();
+  if (!r.meta.changes) throw new ApiError(409, "That letter has already been delivered (or doesn't exist), so it can't be unsent");
+  return { id, unsent: true };
+}
+
 export async function markSynced(env: Env, args: any) {
   const ids = (Array.isArray(args.ids) ? args.ids : []).slice(0, 50).map(String);
   if (!ids.length) return { synced: 0 };
