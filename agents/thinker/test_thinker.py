@@ -199,6 +199,31 @@ auths = [len(free_seen)]
 check(out == "finished" and len(free_seen) >= 1 and len(seen_remote) > len(free_seen), f"the free key is used first; when it's rate-limited the paid key takes over ({out})")
 check(0 < t.spent_today() < 0.01, f"only the paid requests are counted as spending (${t.spent_today():.6f})")
 srv.shutdown()
+print("A fallback service while the main one is busy")
+fb_seen = []
+class Busy(http.server.BaseHTTPRequestHandler):
+    def do_POST(self):
+        body = json.loads(self.rfile.read(int(self.headers["content-length"])))
+        def reply(code, obj):
+            b = json.dumps(obj).encode(); self.send_response(code); self.send_header("content-type", "application/json"); self.end_headers(); self.wfile.write(b)
+        if self.path.startswith("/main"):
+            return reply(429, {"error": {"code": "1305", "message": "The service may be temporarily overloaded, please try again later"}})
+        fb_seen.append((self.headers.get("authorization"), body["model"]))
+        calls = [("wake_context", {})] if len(fb_seen) == 1 else [("reflect_end", {"summary": "Thought through the fallback.", "valence": 0.2})]
+        reply(200, {"model": body["model"], "usage": {"prompt_tokens": 50, "completion_tokens": 5}, "choices": [{"finish_reason": "tool_calls",
+              "message": {"role": "assistant", "content": "", "tool_calls": [{"id": f"f{len(fb_seen)}", "type": "function", "function": {"name": n, "arguments": json.dumps(a)}} for n, a in calls]}}]})
+    def log_message(self, *a): pass
+busy = http.server.HTTPServer(("127.0.0.1", 0), Busy); threading.Thread(target=busy.serve_forever, daemon=True).start()
+os.environ["FB_KEY"] = "fb-key"
+t.CFG["remote"] = {"provider": "Main", "base_url": f"http://127.0.0.1:{busy.server_port}/main", "key_env": "FAKE_KEY", "models": ["main/model"], "rpm": 600,
+                   "fallback": {"provider": "Backup", "base_url": f"http://127.0.0.1:{busy.server_port}/fb", "key_env": "FB_KEY", "models": ["backup/model"], "rpm": 600}}
+(t.STATE / "quota.json").unlink(missing_ok=True); t.LAST.unlink(missing_ok=True)
+time.sleep(1.1); out = t.wake()
+check(out == "finished" and len(fb_seen) == 2 and fb_seen[0] == ("Bearer fb-key", "backup/model"), f"an overloaded main service hands over to the fallback ({out}, {len(fb_seen)})")
+sn = json.loads(t.SENSES.read_text(encoding="utf-8"))["lines"]
+check(any("went through Backup" in l for l in sn), "and its senses say the last step went through the fallback")
+busy.shutdown()
+
 
 print("\nall good" if not fails else f"\n{fails} FAILED")
 sys.exit(1 if fails else 0)

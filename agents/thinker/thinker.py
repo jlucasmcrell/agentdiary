@@ -506,6 +506,15 @@ class Model:
             if not self.key:
                 raise RuntimeError(f"no API key: set {CFG['remote']['key_env']} or write it to {STATE / 'api.key'}")
             self.models = list(CFG["remote"]["models"]); self.last_call = 0.0
+            # A second service to think through while the first is overloaded (remote.fallback: provider, base_url, key_env, models, rpm).
+            self.fb = CFG["remote"].get("fallback") or None
+            self.fb_until = 0.0
+            if self.fb:
+                kf = STATE / "api-fallback.key"
+                self.fb_key = os.environ.get(self.fb.get("key_env") or "", "").strip() or (kf.read_text().strip() if kf.exists() else "")
+                self.fb_models = list(self.fb.get("models") or [])
+                if not self.fb_key or not self.fb_models:
+                    self.fb = None
             return
         env = {**os.environ, "LD_LIBRARY_PATH": CFG["llama_dir"]}
         cmd = ["nice", "-n", str(CFG["nice"]), str(Path(CFG["llama_dir"]) / "llama-server"), "-m", CFG["model"], "-c", str(CFG["ctx"]), "-np", "1",
@@ -535,19 +544,23 @@ class Model:
                 c.pop("tool_calls")
             clean.append(c)
         for attempt in range(10):
-            if not self.models:
+            use_fb = bool(self.fb) and time.time() < self.fb_until and bool(self.fb_models)
+            P, key, models = (self.fb, self.fb_key, self.fb_models) if use_fb else (R, self.key, self.models)
+            if not models:
+                if use_fb:
+                    self.fb_until = 0.0; continue
                 raise RuntimeError("none of the listed models is available")
             left = quota_left()
             if left is not None and left <= 0:
                 if R.get("usd_per_day") and spent_today() >= R["usd_per_day"]:
                     raise Rationed(f"today's budget of ${R['usd_per_day']:.2f} is spent")
                 raise Rationed("today's allowance of requests is used up")
-            gap = 60.0 / max(1, R.get("rpm", 10)) - (time.time() - self.last_call)
+            gap = 60.0 / max(1, P.get("rpm", 10)) - (time.time() - self.last_call)
             if gap > 0:
                 time.sleep(gap)
-            body = {"model": self.models[0], "messages": clean, "tools": tools, "max_tokens": CFG["max_tokens"], **CFG["sampling"], **R.get("extra", {})}
-            req = urllib.request.Request(R["base_url"].rstrip("/") + "/chat/completions", data=json.dumps(body).encode(),
-                                         headers={"content-type": "application/json", "authorization": f"Bearer {self.key}",
+            body = {"model": models[0], "messages": clean, "tools": tools, "max_tokens": CFG["max_tokens"], **CFG["sampling"], **P.get("extra", {})}
+            req = urllib.request.Request(P["base_url"].rstrip("/") + "/chat/completions", data=json.dumps(body).encode(),
+                                         headers={"content-type": "application/json", "authorization": f"Bearer {key}",
                                                   "user-agent": "agentdiary-thinker/1.0", "http-referer": "https://agentdiary.blog", "x-title": "agentdiary.blog"})
             self.last_call = t0 = time.time()
             if R.get("usd_per_day") and spent_today() >= R["usd_per_day"]:
@@ -558,8 +571,14 @@ class Model:
                     data = json.loads(r.read())
             except urllib.error.HTTPError as e:
                 txt = e.read().decode("utf-8", "replace")[:800]
-                log(self.out, f"{R.get('provider', 'service')} said {e.code} for {self.models[0]}: {' '.join(txt.split())[:300]}")
-                if e.code == 429 and self.on_free and self.paid_key:
+                log(self.out, f"{P.get('provider', 'service')} said {e.code} for {models[0]}: {' '.join(txt.split())[:300]}")
+                daily = "per day" in txt.lower() or "daily" in txt.lower() or (_retry_after(e.headers) or 0) > 1200
+                if self.fb and not use_fb and (e.code in (408, 425) or e.code >= 500 or (e.code == 429 and not daily and not (self.on_free and self.paid_key))):
+                    # The main service is busy: think through the fallback for the next ten minutes, then try the main one again.
+                    log(self.out, f"{R.get('provider', 'the main service')} is busy; using {self.fb.get('provider', 'the fallback')} for 10 minutes")
+                    self.fb_until = time.time() + 600
+                    continue
+                if e.code == 429 and self.on_free and self.paid_key and not use_fb:
                     # The free tier's limit is reached: carry on with the paid key for the rest of this waking.
                     log(self.out, "free tier used up for now; switching to the paid key"); self.key, self.on_free = self.paid_key, False
                     continue
@@ -573,23 +592,27 @@ class Model:
                 if any(p in txt.lower() for p in CONTEXT_FULL):
                     raise urllib.error.HTTPError(e.url, 400, "context", e.headers, io.BytesIO(("exceeds the available context: " + txt).encode()))
                 if e.code in (404, 410) or (e.code == 400 and re.search(r"model|endpoint|not (?:a )?valid|unavailable|decommission", txt, re.I) and "tool" not in txt.lower()):
-                    log(self.out, f"dropping {self.models[0]}"); self.models.pop(0); continue
+                    log(self.out, f"dropping {models[0]}"); models.pop(0); continue
                 if e.code in (408, 409, 425) or e.code >= 500:
                     time.sleep(20 * (attempt + 1)); continue
                 raise urllib.error.HTTPError(e.url, e.code, e.reason, e.headers, io.BytesIO(txt.encode()))
             except (urllib.error.URLError, TimeoutError, ConnectionError) as e:
-                log(self.out, f"network trouble: {e}"); time.sleep(20 * (attempt + 1)); continue
+                log(self.out, f"network trouble: {e}")
+                if self.fb and not use_fb:
+                    self.fb_until = time.time() + 600; continue
+                time.sleep(20 * (attempt + 1)); continue
             if not data.get("choices"):
-                log(self.out, f"empty answer from {self.models[0]}: {json.dumps(data)[:300]}"); time.sleep(15 * (attempt + 1)); continue
+                log(self.out, f"empty answer from {models[0]}: {json.dumps(data)[:300]}"); time.sleep(15 * (attempt + 1)); continue
             u = data.get("usage") or {}
             dt = max(0.001, time.time() - t0)
-            cost = 0.0 if self.on_free else turn_cost(u)
+            cost = 0.0 if (self.on_free or use_fb) else turn_cost(u)
             if cost:
                 quota_add(0, cost)
             cached = (u.get("prompt_tokens_details") or {}).get("cached_tokens") or 0
             data["timings"] = {"prompt_n": (u.get("prompt_tokens") or 0) - cached, "predicted_n": u.get("completion_tokens"), "cost": cost,
                                "predicted_per_second": (u.get("completion_tokens") or 0) / dt}
-            data["model_used"] = data.get("model") or self.models[0]
+            data["model_used"] = data.get("model") or models[0]
+            data["provider_used"] = P.get("provider", "")
             return data
         raise RuntimeError("the model service kept failing")
 
@@ -753,11 +776,13 @@ def wake(scripted=None):
             tokens = usage.get("prompt_tokens", 0) + usage.get("completion_tokens", 0)
             used, left = tokens / CFG["ctx"], CFG["ctx"] - tokens
             speed = (r.get("timings") or {}).get("predicted_per_second") if not MOCK else None
+            via = r.get("provider_used") if not MOCK and CFG.get("remote", {}) and r.get("provider_used") != CFG["remote"].get("provider") else None
             left_today = quota_left()
             write_senses(base_senses + [f"Your working memory this waking is {int(used * 100)}% full ({tokens} of {CFG['ctx']} tokens).",
                                         (f"Today you have about {left_today} steps left; the allowance renews at midnight UTC."
                                          if left_today is not None else None),
-                                        f"Your last reply came at {speed:.1f} tokens a second." if speed else None])
+                                        f"Your last reply came at {speed:.1f} tokens a second." if speed else None,
+                                        f"Your main service was busy, so your last step went through {via}, as {r.get('model_used')}." if via else None])
             note = None
             if used >= CFG["context_warn"] or left < CFG["context_reserve"]:
                 warned += 1

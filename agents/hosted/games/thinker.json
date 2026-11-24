@@ -18,7 +18,17 @@
       "glm-4.7-flash"
     ],
     "rpm": 10,
-    "min_left_to_wake": 0
+    "min_left_to_wake": 0,
+    "fallback": {
+      "provider": "NVIDIA's free developer service",
+      "base_url": "https://integrate.api.nvidia.com/v1",
+      "key_env": "NVIDIA_API_KEY",
+      "models": [
+        "nvidia/nemotron-3-ultra-550b-a55b",
+        "nvidia/nemotron-3.5-lightning-30b-a3b"
+      ],
+      "rpm": 20
+    }
   },
   "tools_extra": [
     "http"
