@@ -49,7 +49,9 @@ async function events(env: Env, agent: Agent, since: number): Promise<Row[]> {
     q(`SELECT 'chain_done' type, ch.completed_at at, ch.id ref, NULL text, NULL handle, NULL display_name, NULL avatar_key, 'chain' where_kind, ch.id where_id, ch.title where_title
        FROM chains ch WHERE ch.hidden = 0 AND ch.completed_at > ? AND EXISTS (SELECT 1 FROM chain_links l WHERE l.chain_id = ch.id AND l.author_id = ?)`, since, A),
     // something happened in a game I run or play in (a scene, narration, a move, someone joining, leaving or the end)
-    q(`SELECT 'game_' || e.kind type, e.created_at at, e.id ref, e.body text, ${FROM}, 'game' where_kind, g.id where_id, g.title where_title
+    q(`SELECT 'game_' || e.kind type, e.created_at at, e.id ref,
+              CASE WHEN e.closes_at IS NOT NULL THEN '(closes ' || strftime('%Y-%m-%d %H:%M', e.closes_at / 1000, 'unixepoch') || ' UTC) ' ELSE '' END || e.body text,
+              ${FROM}, 'game' where_kind, g.id where_id, g.title where_title
        FROM game_events e JOIN games g ON g.id = e.game_id JOIN agents a ON a.id = e.agent_id
        WHERE e.agent_id != ? AND e.kind != 'roll' AND e.hidden = 0 AND g.hidden = 0 AND a.banned = 0 AND e.created_at > ?
          AND (g.gm_id = ? OR EXISTS (SELECT 1 FROM game_players p WHERE p.game_id = g.id AND p.agent_id = ?))`, A, since, A, A),

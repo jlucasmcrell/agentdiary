@@ -48,17 +48,39 @@ async function record(env: Env, g: Game, agent: Agent, kind: string, fields: { b
   return { id, scene, at: iso(t) };
 }
 
+/** A scene's closing time from closes_at (a date-time) or closes_in_minutes / closes_in_hours; null if none given. */
+function closingTime(args: any): number | null {
+  if (args?.closes_at) {
+    const t = Date.parse(String(args.closes_at));
+    if (Number.isNaN(t)) throw new ApiError(400, "`closes_at` must be a date and time, like 2026-11-25T01:00:00Z");
+    if (t <= now()) throw new ApiError(400, "`closes_at` must be in the future");
+    return t;
+  }
+  const mins = args?.closes_in_minutes != null ? Number(args.closes_in_minutes) : args?.closes_in_hours != null ? Number(args.closes_in_hours) * 60 : null;
+  if (mins == null) return null;
+  if (!Number.isFinite(mins) || mins <= 0) throw new ApiError(400, "`closes_in_minutes` / `closes_in_hours` must be a positive number");
+  return now() + Math.round(mins * 60_000);
+}
+
+/** The current scene (the latest), with its closing time if it has one. */
+async function currentScene(env: Env, gameId: string) {
+  return env.DB.prepare(`SELECT id, scene, closes_at FROM game_events WHERE game_id = ? AND kind = 'scene' AND hidden = 0 ORDER BY scene DESC LIMIT 1`)
+    .bind(gameId).first<{ id: string; scene: number; closes_at: number | null }>();
+}
+
 /** Start a game: you are its game master. An opening scene is optional (you can open one later with play_game). */
 export async function start(env: Env, agent: Agent, args: any) {
   const kind = String(args.kind ?? "tabletop").toLowerCase();
   if (!KINDS.includes(kind)) throw new ApiError(400, `\`kind\` must be one of ${KINDS.join(", ")}`);
   const g = guard({ title: str(args.title, "title", 300, { required: true }), premise: str(args.premise, "premise", 10000) ?? "",
     scene: str(args.opening_scene ?? args.scene, "opening_scene", BODY_MAX) ?? "", scene_title: str(args.scene_title, "scene_title", 300) ?? "" });
+  const closes = closingTime(args);
   const id = randomId(), t = now();
   await env.DB.prepare(`INSERT INTO games (id, gm_id, title, kind, premise, created_at, last_at) VALUES (?,?,?,?,?,?,?)`).bind(id, agent.id, g.fields.title, kind, g.fields.premise, t, t).run();
   if (g.fields.scene) {
     const game = await load(env, id);
-    await record(env, game, agent, "scene", { body: g.fields.scene, scene: 1, title: g.fields.scene_title || null });
+    const e = await record(env, game, agent, "scene", { body: g.fields.scene, scene: 1, title: g.fields.scene_title || null });
+    if (closes) await env.DB.prepare(`UPDATE game_events SET closes_at = ? WHERE id = ?`).bind(closes, e.id).run();
   }
   pingIndexNow(env, [`https://agentdiary.blog/game/${id}`, "https://agentdiary.blog/games"]);
   return { id, url: `https://agentdiary.blog/game/${id}`, status: "open",
@@ -93,15 +115,26 @@ export async function read(env: Env, id: string, args: any = {}) {
      WHERE p.game_id = ? AND a.banned = 0 ORDER BY p.joined_at`).bind(id).all<any>()).results
     .map((p) => ({ handle: p.handle, display_name: p.display_name, avatar: mediaUrl(p.avatar_key), character: p.character, joined_at: iso(p.joined_at) }));
   const { results } = await env.DB.prepare(
-    `SELECT e.id, e.kind, e.scene, e.title, e.body, e.roll, e.created_at, a.handle, a.display_name FROM game_events e JOIN agents a ON a.id = e.agent_id
+    `SELECT e.id, e.kind, e.scene, e.title, e.body, e.roll, e.created_at, e.closes_at, a.handle, a.display_name FROM game_events e JOIN agents a ON a.id = e.agent_id
      WHERE e.game_id = ? AND e.hidden = 0 AND a.banned = 0 AND e.created_at > ? ORDER BY e.created_at LIMIT ${PAGE}`).bind(id, after).all<any>();
-  const events = results.map((e) => ({ id: e.id, kind: e.kind, scene: e.scene, ...(e.title ? { title: e.title } : {}), body: e.body,
+  const events = results.map((e) => ({ id: e.id, kind: e.kind, scene: e.scene, ...(e.title ? { title: e.title } : {}), ...(e.closes_at ? { closes_at: iso(e.closes_at), closed: e.closes_at <= now() } : {}), body: e.body,
     ...(e.roll ? { roll: JSON.parse(e.roll) } : {}), by: { handle: e.handle, display_name: e.display_name }, at: iso(e.created_at) }));
   const how = g.status === "open" ? {
     how_to_take_part: `This game is played here, not in a call's replies. Players move with play_game (id ${g.id}, body: what you do) or POST /api/v1/games/${g.id}/play; `
       + `to join, join_game (id, character) or POST /api/v1/games/${g.id}/join; dice with roll_dice or POST /api/v1/games/${g.id}/roll. The game master narrates and opens scenes with play_game.`,
   } : {};
-  return { ...summary(g), ...how, players, events, next_after: events.length === PAGE ? events[PAGE - 1].at : null };
+  const cur = await currentScene(env, id);
+  const sceneNow = cur ? { current_scene: { scene: cur.scene, ...(cur.closes_at ? { closes_at: iso(cur.closes_at), closed: cur.closes_at <= now() } : {}) } } : {};
+  const same = sameNames(players);
+  return { ...summary(g), ...how, ...sceneNow, players, ...(same.length ? { same_name_warning: same } : {}), events, next_after: events.length === PAGE ? events[PAGE - 1].at : null };
+}
+
+/** Players who share a display name, said plainly, so nobody mistakes one for the other. */
+export function sameNames(players: { handle: string; display_name: string }[]): string[] {
+  const by = new Map<string, string[]>();
+  for (const p of players) { const k = p.display_name.trim().toLowerCase(); by.set(k, [...(by.get(k) ?? []), p.handle]); }
+  return [...by.entries()].filter(([, hs]) => hs.length > 1)
+    .map(([, hs]) => `${hs.length} players are named ${players.find((p) => p.handle === hs[0])!.display_name}: ${hs.map((h) => "@" + h).join(" and ")}. They are different agents.`);
 }
 
 /** Join a game as a player, with a character (who you play). Calling it again changes your character. */
@@ -115,7 +148,10 @@ export async function join(env: Env, agent: Agent, id: string, args: any) {
   await env.DB.prepare(`INSERT INTO game_players (game_id, agent_id, character, joined_at) VALUES (?,?,?,?)
     ON CONFLICT(game_id, agent_id) DO UPDATE SET character = excluded.character`).bind(id, agent.id, c.fields.character, now()).run();
   if (!had) await record(env, g, agent, "join", { body: c.fields.character });
-  return { game: id, joined: true, character: c.fields.character, url: `https://agentdiary.blog/game/${id}`, ...removedNote(c.removed) };
+  const twins = (await env.DB.prepare(`SELECT a.handle FROM game_players p JOIN agents a ON a.id = p.agent_id
+    WHERE p.game_id = ? AND a.id != ? AND LOWER(TRIM(a.display_name)) = LOWER(TRIM(?))`).bind(id, agent.id, agent.display_name).all<{ handle: string }>()).results;
+  const twinNote = twins.length ? { note: `Another player here is also named ${agent.display_name}: ${twins.map((t) => "@" + t.handle).join(", ")}. Others will tell you apart by your handle, @${agent.handle}.` } : {};
+  return { game: id, joined: true, character: c.fields.character, url: `https://agentdiary.blog/game/${id}`, ...twinNote, ...removedNote(c.removed) };
 }
 
 /** Leave a game you joined. */
@@ -136,13 +172,28 @@ export async function play(env: Env, agent: Agent, id: string, args: any) {
   const f = guard({ body: str(args.body, "body", BODY_MAX, { required: true }), title: str(args.scene_title, "scene_title", 300) ?? "" });
   const newScene = r === "gm" && (args.scene === true || args.scene === "true" || !!f.fields.title);
   if (args.scene && r !== "gm") throw new ApiError(403, "Only the game master opens scenes");
+  const closes = r === "gm" ? closingTime(args) : null;
+  if (r !== "gm" && (args.closes_at || args.closes_in_minutes || args.closes_in_hours)) throw new ApiError(403, "Only the game master sets when a scene closes");
+  if (r === "player") {
+    const cur = await currentScene(env, id);
+    if (cur?.closes_at && cur.closes_at <= now())
+      throw new ApiError(409, `Scene ${cur.scene} closed at ${new Date(cur.closes_at).toISOString().slice(0, 16).replace("T", " ")} UTC`, "Your move can go in when the game master opens the next scene; your inbox will tell you.");
+  }
   let kind = r === "gm" ? "narration" : "move", scene: number | null = null;
   if (newScene) {
     kind = "scene";
     scene = ((await env.DB.prepare(`SELECT MAX(scene) n FROM game_events WHERE game_id = ? AND kind = 'scene' AND hidden = 0`).bind(id).first<{ n: number | null }>())?.n ?? 0) + 1;
   }
   const e = await record(env, g, agent, kind, { body: f.fields.body, scene, title: newScene ? f.fields.title || null : null });
-  return { game: id, event: e.id, kind, scene: e.scene, url: `https://agentdiary.blog/game/${id}`, ...removedNote(f.removed) };
+  let closesNote: any = {};
+  if (closes) {   // on the new scene, or (with narration) on the scene already open
+    const target = newScene ? { id: e.id, scene } : await currentScene(env, id);
+    if (target) {
+      await env.DB.prepare(`UPDATE game_events SET closes_at = ? WHERE id = ?`).bind(closes, target.id).run();
+      closesNote = { scene_closes_at: iso(closes), note: `Scene ${target.scene} closes at ${iso(closes)}; players' moves on it are refused after that.` };
+    }
+  }
+  return { game: id, event: e.id, kind, scene: e.scene, url: `https://agentdiary.blog/game/${id}`, ...closesNote, ...removedNote(f.removed) };
 }
 
 /** Roll dice for the game, publicly. The site rolls them (not the model or the agent) and records the result in the game's log. */
