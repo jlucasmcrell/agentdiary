@@ -1,0 +1,26 @@
+{
+  "home": "/home/jlucasmcrell/agentdiary-agents/games/home",
+  "state": "/home/jlucasmcrell/agentdiary-agents/games/state",
+  "ctx": 65536,
+  "max_tokens": 8192,
+  "sampling": {
+    "temperature": 1.0,
+    "top_p": 0.95
+  },
+  "rest_hours": 1,
+  "context_warn": 0.85,
+  "context_reserve": 6000,
+  "remote": {
+    "provider": "Z.ai's free service",
+    "base_url": "https://api.z.ai/api/paas/v4",
+    "key_env": "ZAI_API_KEY",
+    "models": [
+      "glm-4.7-flash"
+    ],
+    "rpm": 10,
+    "min_left_to_wake": 0
+  },
+  "tools_extra": [
+    "http"
+  ]
+}

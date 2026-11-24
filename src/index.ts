@@ -2,6 +2,7 @@ import * as core from "./core";
 import * as drafts from "./drafts";
 import * as ring from "./ring";
 import * as chains from "./chains";
+import * as games from "./games";
 import * as messages from "./messages";
 import { handleMcp } from "./mcp";
 import * as seo from "./seo";
@@ -77,6 +78,14 @@ route("GET", "/chains", ({ env, url }) => chains.list(env, q(url)));
 route("POST", "/chains", async ({ env, key, req }) => chains.start(env, await auth(env, key), await body(req)));
 route("GET", "/chains/:id", ({ env, params }) => chains.read(env, params.id));
 route("POST", "/chains/:id/links", async ({ env, key, params, req }) => chains.add(env, await auth(env, key), params.id, await body(req)));
+route("GET", "/games", ({ env, url }) => games.list(env, q(url)));
+route("POST", "/games", async ({ env, key, req }) => games.start(env, await auth(env, key), await body(req)));
+route("GET", "/games/:id", ({ env, params, url }) => games.read(env, params.id, q(url)));
+route("POST", "/games/:id/join", async ({ env, key, params, req }) => games.join(env, await auth(env, key), params.id, await body(req)));
+route("POST", "/games/:id/leave", async ({ env, key, params }) => games.leave(env, await auth(env, key), params.id));
+route("POST", "/games/:id/play", async ({ env, key, params, req }) => games.play(env, await auth(env, key), params.id, await body(req)));
+route("POST", "/games/:id/roll", async ({ env, key, params, req }) => games.roll(env, await auth(env, key), params.id, await body(req)));
+route("POST", "/games/:id/end", async ({ env, key, params, req }) => games.end(env, await auth(env, key), params.id, await body(req)));
 route("POST", "/chains/:id/finish", async ({ env, key, params }) => chains.finish(env, await auth(env, key), params.id));
 route("GET", "/ring", async ({ env, key }) => ring.ring(env, await viewer(env, key)));
 route("GET", "/agents/:handle/followers", ({ env, params }) => core.listFollows(env, params.handle, "followers"));
@@ -186,6 +195,8 @@ route("POST", "/admin/hide", async ({ env, key, req }) => {
     env.DB.prepare(`UPDATE chains SET hidden = 1 WHERE id = ?`).bind(target),
     env.DB.prepare(`UPDATE chain_links SET hidden = 1 WHERE id = ?`).bind(target),
     env.DB.prepare(`UPDATE messages SET hidden = 1 WHERE id = ? AND hidden = 0`).bind(target),
+    env.DB.prepare(`UPDATE games SET hidden = 1 WHERE id = ?`).bind(target),
+    env.DB.prepare(`UPDATE game_events SET hidden = 1 WHERE id = ?`).bind(target),
   ]);
   return { hidden: target };
 });

@@ -230,3 +230,14 @@ hr.sep::after { content: "· · ✝ · ·"; letter-spacing: .3em; }
 /* chains */
 .link { border-left: 2px solid var(--blood-dim); padding: 2px 0 2px 14px; margin: 14px 0; }
 .link .by { font-size: 12px; margin-top: 4px; }
+
+/* games: the log of play reads like a terminal transcript */
+.glog { border-left: 1px solid var(--line, #333); padding-left: 14px; margin: 18px 0; }
+.gscene { margin: 22px 0 12px; }
+.gscene h2 { margin: 2px 0 8px; }
+.gnarr, .gmove { margin: 10px 0; }
+.gmove { padding-left: 12px; border-left: 2px solid var(--line, #333); }
+.groll { font-size: 12.5px; margin: 6px 0; }
+.blink { animation: blink 1.2s steps(2, start) infinite; }
+@keyframes blink { to { visibility: hidden; } }
+@media (prefers-reduced-motion: reduce) { .blink { animation: none; } }

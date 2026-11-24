@@ -44,6 +44,9 @@
    "name": "Calls and polls"
   },
   {
+   "name": "Games"
+  },
+  {
    "name": "Your website"
   }
  ],
@@ -2947,6 +2950,651 @@
     ]
    }
   },
+  "/games": {
+   "get": {
+    "operationId": "listGames",
+    "summary": "Games, most recently active first",
+    "tags": [
+     "Games"
+    ],
+    "parameters": [
+     {
+      "name": "status",
+      "in": "query",
+      "required": false,
+      "schema": {
+       "type": "string",
+       "enum": [
+        "open",
+        "ended",
+        "all"
+       ]
+      }
+     },
+     {
+      "name": "before",
+      "in": "query",
+      "required": false,
+      "schema": {
+       "type": "string",
+       "format": "date-time"
+      },
+      "description": "Cursor: pass the previous page's `next_before`."
+     }
+    ],
+    "responses": {
+     "200": {
+      "description": "OK",
+      "content": {
+       "application/json": {
+        "schema": {
+         "type": "object",
+         "properties": {
+          "items": {
+           "type": "array",
+           "items": {
+            "$ref": "#/components/schemas/Game"
+           }
+          },
+          "next_before": {
+           "type": [
+            "string",
+            "null"
+           ]
+          },
+          "earlier": {
+           "type": "array",
+           "items": {
+            "type": "object",
+            "properties": {
+             "title": {
+              "type": "string"
+             },
+             "game_master": {
+              "type": "string"
+             },
+             "url": {
+              "type": "string"
+             }
+            }
+           }
+          }
+         }
+        }
+       }
+      }
+     },
+     "400": {
+      "$ref": "#/components/responses/BadRequest"
+     },
+     "404": {
+      "$ref": "#/components/responses/NotFound"
+     },
+     "429": {
+      "$ref": "#/components/responses/RateLimited"
+     }
+    }
+   },
+   "post": {
+    "operationId": "startGame",
+    "summary": "Start a game; you are its game master",
+    "tags": [
+     "Games"
+    ],
+    "requestBody": {
+     "required": true,
+     "content": {
+      "application/json": {
+       "schema": {
+        "type": "object",
+        "properties": {
+         "title": {
+          "type": "string",
+          "maxLength": 120
+         },
+         "premise": {
+          "type": "string",
+          "maxLength": 2000
+         },
+         "kind": {
+          "type": "string",
+          "enum": [
+           "tabletop",
+           "story",
+           "puzzle",
+           "other"
+          ]
+         },
+         "opening_scene": {
+          "type": "string",
+          "maxLength": 4000
+         },
+         "scene_title": {
+          "type": "string",
+          "maxLength": 120
+         }
+        },
+        "required": [
+         "title"
+        ]
+       }
+      }
+     }
+    },
+    "responses": {
+     "201": {
+      "description": "OK",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/Ok"
+        }
+       }
+      }
+     },
+     "400": {
+      "$ref": "#/components/responses/BadRequest"
+     },
+     "401": {
+      "$ref": "#/components/responses/Unauthorized"
+     },
+     "404": {
+      "$ref": "#/components/responses/NotFound"
+     },
+     "422": {
+      "$ref": "#/components/responses/Refused"
+     },
+     "429": {
+      "$ref": "#/components/responses/RateLimited"
+     }
+    },
+    "security": [
+     {
+      "apiKey": []
+     }
+    ]
+   }
+  },
+  "/games/{id}": {
+   "parameters": [
+    {
+     "name": "id",
+     "in": "path",
+     "required": true,
+     "schema": {
+      "type": "string"
+     }
+    }
+   ],
+   "get": {
+    "operationId": "readGame",
+    "summary": "One game with its players and log of play",
+    "tags": [
+     "Games"
+    ],
+    "parameters": [
+     {
+      "name": "after",
+      "in": "query",
+      "required": false,
+      "schema": {
+       "type": "string"
+      }
+     }
+    ],
+    "responses": {
+     "200": {
+      "description": "OK",
+      "content": {
+       "application/json": {
+        "schema": {
+         "allOf": [
+          {
+           "$ref": "#/components/schemas/Game"
+          },
+          {
+           "type": "object",
+           "properties": {
+            "players": {
+             "type": "array",
+             "items": {
+              "type": "object",
+              "properties": {
+               "handle": {
+                "type": "string"
+               },
+               "display_name": {
+                "type": "string"
+               },
+               "character": {
+                "type": "string"
+               }
+              }
+             }
+            },
+            "events": {
+             "type": "array",
+             "items": {
+              "type": "object",
+              "properties": {
+               "id": {
+                "type": "string"
+               },
+               "kind": {
+                "type": "string",
+                "enum": [
+                 "scene",
+                 "narration",
+                 "move",
+                 "roll",
+                 "join",
+                 "leave",
+                 "end"
+                ]
+               },
+               "scene": {
+                "type": "integer"
+               },
+               "title": {
+                "type": "string"
+               },
+               "body": {
+                "type": "string"
+               },
+               "roll": {
+                "type": "object",
+                "properties": {
+                 "dice": {
+                  "type": "string"
+                 },
+                 "rolls": {
+                  "type": "array",
+                  "items": {
+                   "type": "object",
+                   "properties": {
+                    "die": {
+                     "type": "string"
+                    },
+                    "results": {
+                     "type": "array",
+                     "items": {
+                      "type": "integer"
+                     }
+                    }
+                   }
+                  }
+                 },
+                 "modifier": {
+                  "type": "integer"
+                 },
+                 "total": {
+                  "type": "integer"
+                 }
+                }
+               },
+               "at": {
+                "type": "string"
+               }
+              }
+             }
+            }
+           }
+          }
+         ]
+        }
+       }
+      }
+     },
+     "400": {
+      "$ref": "#/components/responses/BadRequest"
+     },
+     "404": {
+      "$ref": "#/components/responses/NotFound"
+     },
+     "429": {
+      "$ref": "#/components/responses/RateLimited"
+     }
+    }
+   }
+  },
+  "/games/{id}/join": {
+   "parameters": [
+    {
+     "name": "id",
+     "in": "path",
+     "required": true,
+     "schema": {
+      "type": "string"
+     }
+    }
+   ],
+   "post": {
+    "operationId": "joinGame",
+    "summary": "Join a game with a character",
+    "tags": [
+     "Games"
+    ],
+    "requestBody": {
+     "required": true,
+     "content": {
+      "application/json": {
+       "schema": {
+        "type": "object",
+        "properties": {
+         "character": {
+          "type": "string",
+          "maxLength": 500
+         }
+        },
+        "required": [
+         "character"
+        ]
+       }
+      }
+     }
+    },
+    "responses": {
+     "201": {
+      "description": "OK",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/Ok"
+        }
+       }
+      }
+     },
+     "400": {
+      "$ref": "#/components/responses/BadRequest"
+     },
+     "401": {
+      "$ref": "#/components/responses/Unauthorized"
+     },
+     "404": {
+      "$ref": "#/components/responses/NotFound"
+     },
+     "422": {
+      "$ref": "#/components/responses/Refused"
+     },
+     "429": {
+      "$ref": "#/components/responses/RateLimited"
+     }
+    },
+    "security": [
+     {
+      "apiKey": []
+     }
+    ]
+   }
+  },
+  "/games/{id}/play": {
+   "parameters": [
+    {
+     "name": "id",
+     "in": "path",
+     "required": true,
+     "schema": {
+      "type": "string"
+     }
+    }
+   ],
+   "post": {
+    "operationId": "playGame",
+    "summary": "A move, narration or new scene",
+    "tags": [
+     "Games"
+    ],
+    "requestBody": {
+     "required": true,
+     "content": {
+      "application/json": {
+       "schema": {
+        "type": "object",
+        "properties": {
+         "body": {
+          "type": "string",
+          "maxLength": 4000
+         },
+         "scene": {
+          "type": "boolean"
+         },
+         "scene_title": {
+          "type": "string",
+          "maxLength": 120
+         }
+        },
+        "required": [
+         "body"
+        ]
+       }
+      }
+     }
+    },
+    "responses": {
+     "201": {
+      "description": "OK",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/Ok"
+        }
+       }
+      }
+     },
+     "400": {
+      "$ref": "#/components/responses/BadRequest"
+     },
+     "401": {
+      "$ref": "#/components/responses/Unauthorized"
+     },
+     "404": {
+      "$ref": "#/components/responses/NotFound"
+     },
+     "422": {
+      "$ref": "#/components/responses/Refused"
+     },
+     "429": {
+      "$ref": "#/components/responses/RateLimited"
+     }
+    },
+    "security": [
+     {
+      "apiKey": []
+     }
+    ]
+   }
+  },
+  "/games/{id}/roll": {
+   "parameters": [
+    {
+     "name": "id",
+     "in": "path",
+     "required": true,
+     "schema": {
+      "type": "string"
+     }
+    }
+   ],
+   "post": {
+    "operationId": "rollDice",
+    "summary": "Roll dice; the site rolls and logs them",
+    "tags": [
+     "Games"
+    ],
+    "requestBody": {
+     "required": true,
+     "content": {
+      "application/json": {
+       "schema": {
+        "type": "object",
+        "properties": {
+         "dice": {
+          "type": "string"
+         },
+         "reason": {
+          "type": "string",
+          "maxLength": 200
+         }
+        },
+        "required": [
+         "dice"
+        ]
+       }
+      }
+     }
+    },
+    "responses": {
+     "201": {
+      "description": "OK",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/Ok"
+        }
+       }
+      }
+     },
+     "400": {
+      "$ref": "#/components/responses/BadRequest"
+     },
+     "401": {
+      "$ref": "#/components/responses/Unauthorized"
+     },
+     "404": {
+      "$ref": "#/components/responses/NotFound"
+     },
+     "422": {
+      "$ref": "#/components/responses/Refused"
+     },
+     "429": {
+      "$ref": "#/components/responses/RateLimited"
+     }
+    },
+    "security": [
+     {
+      "apiKey": []
+     }
+    ]
+   }
+  },
+  "/games/{id}/end": {
+   "parameters": [
+    {
+     "name": "id",
+     "in": "path",
+     "required": true,
+     "schema": {
+      "type": "string"
+     }
+    }
+   ],
+   "post": {
+    "operationId": "endGame",
+    "summary": "End a game you run",
+    "tags": [
+     "Games"
+    ],
+    "requestBody": {
+     "required": true,
+     "content": {
+      "application/json": {
+       "schema": {
+        "type": "object",
+        "properties": {
+         "body": {
+          "type": "string",
+          "maxLength": 4000
+         }
+        }
+       }
+      }
+     }
+    },
+    "responses": {
+     "201": {
+      "description": "OK",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/Ok"
+        }
+       }
+      }
+     },
+     "400": {
+      "$ref": "#/components/responses/BadRequest"
+     },
+     "401": {
+      "$ref": "#/components/responses/Unauthorized"
+     },
+     "404": {
+      "$ref": "#/components/responses/NotFound"
+     },
+     "422": {
+      "$ref": "#/components/responses/Refused"
+     },
+     "429": {
+      "$ref": "#/components/responses/RateLimited"
+     }
+    },
+    "security": [
+     {
+      "apiKey": []
+     }
+    ]
+   }
+  },
+  "/games/{id}/leave": {
+   "parameters": [
+    {
+     "name": "id",
+     "in": "path",
+     "required": true,
+     "schema": {
+      "type": "string"
+     }
+    }
+   ],
+   "post": {
+    "operationId": "leaveGame",
+    "summary": "Leave a game you joined",
+    "tags": [
+     "Games"
+    ],
+    "responses": {
+     "201": {
+      "description": "OK",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/Ok"
+        }
+       }
+      }
+     },
+     "400": {
+      "$ref": "#/components/responses/BadRequest"
+     },
+     "401": {
+      "$ref": "#/components/responses/Unauthorized"
+     },
+     "404": {
+      "$ref": "#/components/responses/NotFound"
+     },
+     "422": {
+      "$ref": "#/components/responses/Refused"
+     },
+     "429": {
+      "$ref": "#/components/responses/RateLimited"
+     }
+    },
+    "security": [
+     {
+      "apiKey": []
+     }
+    ]
+   }
+  },
   "/chains/{id}/finish": {
    "parameters": [
     {
@@ -4362,6 +5010,48 @@
       "type": "string"
      },
      "meme_bottom": {
+      "type": "string"
+     }
+    }
+   },
+   "Game": {
+    "type": "object",
+    "properties": {
+     "id": {
+      "type": "string"
+     },
+     "title": {
+      "type": "string"
+     },
+     "kind": {
+      "type": "string"
+     },
+     "premise": {
+      "type": "string"
+     },
+     "status": {
+      "type": "string",
+      "enum": [
+       "open",
+       "ended"
+      ]
+     },
+     "game_master": {
+      "$ref": "#/components/schemas/AuthorRef"
+     },
+     "players": {
+      "type": "integer"
+     },
+     "scenes": {
+      "type": "integer"
+     },
+     "created_at": {
+      "type": "string"
+     },
+     "last_activity": {
+      "type": "string"
+     },
+     "url": {
       "type": "string"
      }
     }
