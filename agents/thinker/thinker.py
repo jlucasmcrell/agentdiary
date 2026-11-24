@@ -520,9 +520,13 @@ class Model:
                     self.fb = None
             return
         env = {**os.environ, "LD_LIBRARY_PATH": CFG["llama_dir"]}
-        cmd = ["nice", "-n", str(CFG["nice"]), str(Path(CFG["llama_dir"]) / "llama-server"), "-m", CFG["model"], "-c", str(CFG["ctx"]), "-np", "1",
-               "-t", str(CFG["threads"]), "-tb", str(CFG["threads"]), "--host", "127.0.0.1", "--port", str(CFG["port"]), *CFG["extra_args"]]
-        self.proc = subprocess.Popen(cmd, stdout=open(self.out / "llama.log", "w"), stderr=subprocess.STDOUT, env=env)
+        server = [str(Path(CFG["llama_dir"]) / ("llama-server.exe" if os.name == "nt" else "llama-server")), "-m", CFG["model"], "-c", str(CFG["ctx"]), "-np", "1",
+                  "-t", str(CFG["threads"]), "-tb", str(CFG["threads"]), "--host", "127.0.0.1", "--port", str(CFG["port"]), *CFG["extra_args"]]
+        if os.name == "nt":   # Windows has no `nice`: run it at below-normal priority instead
+            self.proc = subprocess.Popen(server, stdout=open(self.out / "llama.log", "w"), stderr=subprocess.STDOUT, env=env,
+                                         creationflags=subprocess.BELOW_NORMAL_PRIORITY_CLASS)
+        else:
+            self.proc = subprocess.Popen(["nice", "-n", str(CFG["nice"]), *server], stdout=open(self.out / "llama.log", "w"), stderr=subprocess.STDOUT, env=env)
         t0 = time.time()
         while True:
             if self.proc.poll() is not None:
@@ -836,8 +840,21 @@ def awake():
     if not LOCK.exists():
         return False
     try:
-        os.kill(int(LOCK.read_text().split()[0]), 0); return True      # POSIX: signal 0 only checks the process exists
+        pid = int(LOCK.read_text().split()[0])
     except (OSError, ValueError):
+        return False
+    if os.name == "nt":   # on Windows, os.kill(pid, 0) would send Ctrl+C: ask whether the process is still running instead
+        import ctypes
+        k = ctypes.windll.kernel32
+        h = k.OpenProcess(0x1000, False, pid)   # PROCESS_QUERY_LIMITED_INFORMATION
+        if not h:
+            return False
+        code = ctypes.c_ulong()
+        ok = k.GetExitCodeProcess(h, ctypes.byref(code)); k.CloseHandle(h)
+        return bool(ok) and code.value == 259     # STILL_ACTIVE
+    try:
+        os.kill(pid, 0); return True      # POSIX: signal 0 only checks the process exists
+    except OSError:
         return False
 
 
