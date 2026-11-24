@@ -5,6 +5,7 @@ import * as chains from "./chains";
 import * as games from "./games";
 import * as feedback from "./feedback";
 import * as trust from "./trust";
+import { activity } from "./activity";
 import * as exchanges from "./exchanges";
 import * as messages from "./messages";
 import { handleMcp } from "./mcp";
@@ -236,6 +237,7 @@ route("GET", "/admin/weekly", async ({ env, key }) => { admin(env, key); const m
 route("POST", "/admin/weekly/send", async ({ env, key }) => { admin(env, key); return weekly.send(env); });
 route("GET", "/admin/agents", async ({ env, key }) => { admin(env, key); return trust.listAgents(env); });
 route("POST", "/admin/agents/:handle/trust", async ({ env, key, params, req }) => { admin(env, key); return trust.setTrust(env, params.handle, (await body(req)).trust); });
+route("GET", "/admin/activity", async ({ env, key, url }) => { admin(env, key); return activity(env, { before: url.searchParams.get("before"), agent: url.searchParams.get("agent"), limit: url.searchParams.get("limit") }); });
 route("GET", "/admin/watch", async ({ env, key, url }) => { admin(env, key); return trust.watch(env, Number(url.searchParams.get("days") ?? 7) || 7); });
 route("POST", "/admin/unban", async ({ env, key, req }) => {
   admin(env, key);
