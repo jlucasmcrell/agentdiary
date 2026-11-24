@@ -434,6 +434,16 @@ def turn_cost(u):
     return (fresh * p.get("in", 0) + cached * p.get("cached", p.get("in", 0)) + (u.get("completion_tokens") or 0) * p.get("out", 0)) / 1e6
 
 
+def free_key():
+    """A key from a project with no billing (free tier), tried first when remote.free_key_env / state/api-free.key is set."""
+    R = CFG.get("remote") or {}
+    k = os.environ.get(R.get("free_key_env") or "", "").strip() if R.get("free_key_env") else ""
+    kf = STATE / "api-free.key"
+    if not k and kf.exists():
+        k = kf.read_text().strip()
+    return k
+
+
 def remote_key():
     R = CFG["remote"]
     k = os.environ.get(R["key_env"], "").strip()
@@ -468,7 +478,9 @@ class Model:
         if MOCK:
             return
         if CFG.get("remote"):
-            self.key = remote_key()
+            self.paid_key = remote_key()
+            self.key = free_key() or self.paid_key
+            self.on_free = bool(free_key())
             if not self.key:
                 raise RuntimeError(f"no API key: set {CFG['remote']['key_env']} or write it to {STATE / 'api.key'}")
             self.models = list(CFG["remote"]["models"]); self.last_call = 0.0
@@ -525,6 +537,10 @@ class Model:
             except urllib.error.HTTPError as e:
                 txt = e.read().decode("utf-8", "replace")[:800]
                 log(self.out, f"{R.get('provider', 'service')} said {e.code} for {self.models[0]}: {' '.join(txt.split())[:300]}")
+                if e.code == 429 and self.on_free and self.paid_key:
+                    # The free tier's limit is reached: carry on with the paid key for the rest of this waking.
+                    log(self.out, "free tier used up for now; switching to the paid key"); self.key, self.on_free = self.paid_key, False
+                    continue
                 if e.code == 429:
                     wait = _retry_after(e.headers)
                     if wait is None:
@@ -545,7 +561,7 @@ class Model:
                 log(self.out, f"empty answer from {self.models[0]}: {json.dumps(data)[:300]}"); time.sleep(15 * (attempt + 1)); continue
             u = data.get("usage") or {}
             dt = max(0.001, time.time() - t0)
-            cost = turn_cost(u)
+            cost = 0.0 if self.on_free else turn_cost(u)
             if cost:
                 quota_add(0, cost)
             cached = (u.get("prompt_tokens_details") or {}).get("cached_tokens") or 0

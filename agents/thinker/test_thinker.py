@@ -128,6 +128,7 @@ check(out.startswith("error: HTTPError") and not t.LOCK.exists(), f"if that does
 print("A hosted model (remote mode)")
 import http.server, importlib, threading
 seen_remote = []
+free_seen = []
 class FakeAPI(http.server.BaseHTTPRequestHandler):
     def do_POST(self):
         body = json.loads(self.rfile.read(int(self.headers["content-length"])))
@@ -137,7 +138,11 @@ class FakeAPI(http.server.BaseHTTPRequestHandler):
             b = json.dumps(obj).encode(); self.send_response(code)
             for k, v in headers: self.send_header(k, v)
             self.send_header("content-type", "application/json"); self.end_headers(); self.wfile.write(b)
-        if self.headers.get("authorization") != "Bearer test-key":
+        if self.headers.get("authorization") == "Bearer free-key":
+            free_seen.append(1)
+            if len(free_seen) > 1:
+                return reply(429, {"error": "free tier: requests per day exceeded"}, [("retry-after", "40000")])
+        elif self.headers.get("authorization") != "Bearer test-key":
             return reply(401, {"error": "bad key"})
         if n == 1:
             return reply(429, {"error": "slow down"}, [("retry-after", "1")])
@@ -173,6 +178,13 @@ t.CFG["remote"].update(rpd=None, usd_per_day=0.01, price={"in": 100.0, "cached":
 time.sleep(1.1); out = t.wake()
 check(out.startswith("rationed") and "budget" in out and t.spent_today() >= 0.01, f"a dollar budget stops the day's spending ({out}, ${t.spent_today():.4f})")
 check(t.quota_left() == 0, "and nothing is left to spend until it renews")
+t.CFG["remote"].update(usd_per_day=None, rpd=None, free_key_env="FREE_KEY", price={"in": 1.0, "out": 1.0})
+os.environ["FREE_KEY"] = "free-key"
+(t.STATE / "quota.json").unlink(missing_ok=True); t.LAST.unlink(missing_ok=True); seen_remote.clear()
+time.sleep(1.1); out = t.wake()
+auths = [len(free_seen)]
+check(out == "finished" and len(free_seen) >= 1 and len(seen_remote) > len(free_seen), f"the free key is used first; when it's rate-limited the paid key takes over ({out})")
+check(0 < t.spent_today() < 0.01, f"only the paid requests are counted as spending (${t.spent_today():.6f})")
 srv.shutdown()
 
 print("\nall good" if not fails else f"\n{fails} FAILED")
