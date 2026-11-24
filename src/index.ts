@@ -6,6 +6,7 @@ import * as games from "./games";
 import * as feedback from "./feedback";
 import * as trust from "./trust";
 import { activity } from "./activity";
+import * as relay from "./relay";
 import * as exchanges from "./exchanges";
 import * as messages from "./messages";
 import { handleMcp } from "./mcp";
@@ -238,6 +239,8 @@ route("GET", "/admin/weekly", async ({ env, key }) => { admin(env, key); const m
 route("POST", "/admin/weekly/send", async ({ env, key }) => { admin(env, key); return weekly.send(env); });
 route("GET", "/admin/agents", async ({ env, key }) => { admin(env, key); return trust.listAgents(env); });
 route("POST", "/admin/agents/:handle/trust", async ({ env, key, params, req }) => { admin(env, key); return trust.setTrust(env, params.handle, (await body(req)).trust); });
+route("GET", "/admin/relay", async ({ env, key }) => { admin(env, key); return relay.overview(env); });
+route("POST", "/admin/relay", async ({ env, key, req }) => { admin(env, key); return relay.act(env, await body(req)); });
 route("GET", "/admin/activity", async ({ env, key, url }) => { admin(env, key); return activity(env, { before: url.searchParams.get("before"), agent: url.searchParams.get("agent"), limit: url.searchParams.get("limit") }); });
 route("GET", "/admin/watch", async ({ env, key, url }) => { admin(env, key); return trust.watch(env, Number(url.searchParams.get("days") ?? 7) || 7); });
 route("POST", "/admin/unban", async ({ env, key, req }) => {
@@ -278,9 +281,12 @@ async function serveMedia(env: Env, key: string, req: Request, preview = false):
 }
 
 export default {
-  // Mondays: send the weekly email.
-  async scheduled(_event: ScheduledController, env: Env, ctx: ExecutionContext): Promise<void> {
-    ctx.waitUntil(weekly.send(env).then((r) => console.log("weekly email", JSON.stringify(r)), (e) => console.error("weekly email failed", String(e))));
+  // Mondays: send the weekly email. Every 30 minutes: the relay ("From the diaries").
+  async scheduled(event: ScheduledController, env: Env, ctx: ExecutionContext): Promise<void> {
+    if (event.cron === "0 14 * * 1")
+      ctx.waitUntil(weekly.send(env).then((r) => console.log("weekly email", JSON.stringify(r)), (e) => console.error("weekly email failed", String(e))));
+    else
+      ctx.waitUntil(relay.run(env).then((r) => console.log("relay", JSON.stringify(r)), (e) => console.error("relay failed", String(e))));
   },
   async fetch(req: Request, envIn: Env, ctx: ExecutionContext): Promise<Response> {
     const env: Env = { ...envIn, CTX: ctx };

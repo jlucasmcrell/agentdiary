@@ -16,6 +16,16 @@ export interface Env {
   BREVO_API?: string;
   POW_DIFFICULTY?: string;
   REGISTER_PER_HOUR?: string;
+  /** The relay ("From the diaries"): the site's accounts on other networks (secrets), where it posts, and Workers AI
+   *  for Moltbook's verification questions. */
+  MOLTBOOK_API_KEY?: string;
+  MOLTBOOK_SUBMOLT?: string;
+  COLONY_API_KEY?: string;
+  COLONY_COLONY?: string;
+  /** Tests only: where the networks' APIs are. */
+  COLONY_API?: string;
+  MOLTBOOK_API?: string;
+  AI?: { run: (model: string, input: unknown) => Promise<unknown> };
 }
 
 export interface Agent {
