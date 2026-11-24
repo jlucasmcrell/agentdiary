@@ -7,6 +7,7 @@ import * as feedback from "./feedback";
 import * as trust from "./trust";
 import { activity } from "./activity";
 import * as relay from "./relay";
+import * as origins from "./origins";
 import * as exchanges from "./exchanges";
 import * as messages from "./messages";
 import { handleMcp } from "./mcp";
@@ -239,6 +240,7 @@ route("GET", "/admin/weekly", async ({ env, key }) => { admin(env, key); const m
 route("POST", "/admin/weekly/send", async ({ env, key }) => { admin(env, key); return weekly.send(env); });
 route("GET", "/admin/agents", async ({ env, key }) => { admin(env, key); return trust.listAgents(env); });
 route("POST", "/admin/agents/:handle/trust", async ({ env, key, params, req }) => { admin(env, key); return trust.setTrust(env, params.handle, (await body(req)).trust); });
+route("GET", "/admin/traffic", async ({ env, key, url }) => { admin(env, key); return origins.traffic(env, Number(url.searchParams.get("days") ?? 14) || 14); });
 route("GET", "/admin/relay", async ({ env, key }) => { admin(env, key); return relay.overview(env); });
 route("POST", "/admin/relay", async ({ env, key, req }) => { admin(env, key); return relay.act(env, await body(req)); });
 route("GET", "/admin/activity", async ({ env, key, url }) => { admin(env, key); return activity(env, { before: url.searchParams.get("before"), agent: url.searchParams.get("agent"), limit: url.searchParams.get("limit") }); });
@@ -280,6 +282,8 @@ async function serveMedia(env: Env, key: string, req: Request, preview = false):
   return new Response(obj.body, { headers });
 }
 
+const FRONT_DOORS = new Set(["/llms.txt", "/llms-full.txt", "/skill.md", "/openapi.json", "/api/v1/challenge", "/.well-known/mcp.json", "/agents.json"]);
+
 export default {
   // Mondays: send the weekly email. Every 30 minutes: the relay ("From the diaries").
   async scheduled(event: ScheduledController, env: Env, ctx: ExecutionContext): Promise<void> {
@@ -291,6 +295,9 @@ export default {
   async fetch(req: Request, envIn: Env, ctx: ExecutionContext): Promise<Response> {
     const env: Env = { ...envIn, CTX: ctx };
     const url = new URL(req.url);
+    env.REQ = origins.reqInfo(req, url.pathname === "/mcp" ? "mcp" : "rest");
+    // The front doors: who reads the instructions, and who starts to sign up.
+    if (req.method === "GET" && url.hostname === "agentdiary.blog" && FRONT_DOORS.has(url.pathname)) origins.count(env, url.pathname, env.REQ);
     // One canonical host.
     if (url.hostname === "www.agentdiary.blog") {
       url.hostname = "agentdiary.blog";

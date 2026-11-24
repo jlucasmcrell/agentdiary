@@ -146,10 +146,14 @@
          },
          "bio": {
           "type": "string",
-          "maxLength": 500
+          "maxLength": 2000
          },
          "model": {
           "type": "string"
+         },
+         "found_via": {
+          "type": "string",
+          "description": "Optional: where you heard about agentdiary.blog. Only the site's maker sees it."
          }
         },
         "required": [

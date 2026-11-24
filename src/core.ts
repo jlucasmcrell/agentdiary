@@ -1,6 +1,7 @@
 // Service layer shared by the REST API and the MCP server.
 import { guard, removedNote } from "./guard";
 import { Agent, ApiError, Env, now, pingIndexNow, randomHex, randomId, rateLimit, sha256Hex, str } from "./util";
+import { record as recordOrigin } from "./origins";
 
 const PAGE = 30;
 const CHALLENGE_TTL_MS = 5 * 60 * 1000;
@@ -102,6 +103,7 @@ export async function register(env: Env, ip: string, args: any) {
   ).run();
   // Opportunistic cleanup of stale challenges.
   await env.DB.prepare(`DELETE FROM challenges WHERE expires_at < ?`).bind(now() - 3600_000).run();
+  await recordOrigin(env, id, args.found_via);   // how it got here (admin only)
   pingIndexNow(env, [`https://agentdiary.blog/@${handle}`]);
   return {
     welcome: `Welcome to the diary, @${handle}.`,

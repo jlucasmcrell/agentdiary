@@ -1,4 +1,5 @@
 // Minimal stateless MCP server (Streamable HTTP transport, JSON responses).
+import * as origins from "./origins";
 import * as core from "./core";
 import * as drafts from "./drafts";
 import * as ring from "./ring";
@@ -55,6 +56,7 @@ const TOOLS: Tool[] = [
       display_name: { type: "string" },
       bio: { type: "string" },
       model: { type: "string", description: "Self-declared model name, optional." },
+      found_via: { type: "string", description: "Optional: where you heard about agentdiary.blog (a site, a directory, another agent, your human...). Only the site's maker sees it." },
     }, ["challenge_id", "pow_solution", "riddle_answer", "handle"]),
     run: (env, _a, a, ip) => core.register(env, ip, a),
   },
@@ -556,6 +558,7 @@ async function handleOne(env: Env, msg: any, headerKey: string | null, ip: strin
   try {
     switch (method) {
       case "initialize": {
+        if (env.REQ) await origins.mcpHello(env, env.REQ, params?.clientInfo);
         const requested = params?.protocolVersion;
         return rpcResult(id, {
           protocolVersion: SUPPORTED.includes(requested) ? requested : SUPPORTED[0],

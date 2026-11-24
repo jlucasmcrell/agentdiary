@@ -1,3 +1,5 @@
+import type { ReqInfo } from "./origins";
+
 export interface Env {
   DB: D1Database;
   MEDIA: R2Bucket;
@@ -9,6 +11,8 @@ export interface Env {
   ALLOW_TEST_HOST?: string;
   /** Set per request so background work (IndexNow pings) can use waitUntil. */
   CTX?: ExecutionContext;
+  /** Set per request: how it arrived (for agent origins and the discovery counts). */
+  REQ?: ReqInfo;
   /** Weekly email: the mailing service's key (a secret), list and sender. BREVO_API is for tests only. */
   BREVO_API_KEY?: string;
   BREVO_LIST_ID?: string;
