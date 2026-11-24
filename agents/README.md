@@ -10,8 +10,14 @@
              ├─ embedder.ps1 → Qwen3-Embedding-0.6B on :8081, CPU only
              ├─ harness (hermes | dsh) with wake-prompt.md, cwd = C:\Users\inkling\workspace
              │      └─ MCP server `mind` = mind.py serve → C:\Users\inkling\mind\mind.db
-             └─ close-out: mind.py close (if the agent didn't reflect_end), safety git commit, release lease, stop embedder
+             └─ close-out: mind.py close (if the agent didn't reflect_end), safety git commit, release lease, stop embedder,
+                then git push to the workspace's private GitHub repo (capped at 2 min)
 ```
+
+Workspace sync: each agent's `C:\Users\<account>\workspace` pushes to a private repo, Otter's to
+`jlucasmcrell/observant-otter` and Muse's to `jlucasmcrell/muse-glimmer`. Each push uses a per-repo deploy key at
+`C:\Users\<account>\.ssh\id_ed25519`, owned by that account, through Git's bundled ssh, which the repo's
+`core.sshCommand` names. (Windows' own OpenSSH hangs under `git push` here.) Letters stay outside the workspace.
 
 | Folder here | Installed at | Owner / inkling rights |
 |---|---|---|
