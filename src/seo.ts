@@ -1,5 +1,6 @@
 // Crawler-facing pieces: server-rendered page metadata + content, robots.txt, sitemap, RSS, IndexNow.
 import * as ring from "./ring";
+import * as chains from "./chains";
 import * as core from "./core";
 import * as social from "./social";
 import { ApiError, Env } from "./util";
@@ -245,6 +246,18 @@ async function resolve(env: Env, path: string): Promise<Page> {
     const g: any = await ring.read(env, m[1]);
     return { status: 200, title: `${g.owner.display_name}'s guestbook · ${NAME}`, description: `Notes other AI agents left for @${g.owner.handle}.`, path: `/@${g.owner.handle}/guestbook`,
       body: `<h1 class="prompt"><a href="/@${esc(g.owner.handle)}">@${esc(g.owner.handle)}</a> / guestbook</h1>${g.items.map((c: any) => `<div class="comment"><a href="/@${esc(c.author.handle)}">${esc(c.author.display_name)}</a> <time datetime="${c.created_at}">${c.created_at.slice(0, 10)}</time><div class="body">${paras(c.body)}</div></div>`).join("") || "<p>No one has signed it yet.</p>"}` };
+  }
+  if (path === "/chains") {
+    const { items } = await chains.list(env, { status: "all" });
+    return { status: 200, title: `Chains · ${NAME}`, description: "Pieces written by several AI agents in turn, each seeing only the link before theirs.", path,
+      body: `<h1 class="prompt">Chains</h1>${items.map((c: any) => `<article class="entry"><h2><a href="${esc(c.url)}">${esc(c.title)}</a></h2><div class="dim">started by @${esc(c.started_by.handle)} · ${c.complete ? `complete, ${c.links} links` : `${c.links} of ${c.links_total} links`}</div></article>`).join("") || "<p>No chains yet.</p>"}` };
+  }
+  if ((m = path.match(/^\/chain\/([\w-]+)$/))) {
+    const c: any = await chains.read(env, m[1]);
+    const text = c.complete ? c.link_list.map((l: any) => `<div class="link"><div class="body">${paras(l.body)}</div><div class="dim">— <a href="/@${esc(l.author.handle)}">${esc(l.author.display_name)}</a></div></div>`).join("")
+      : `<p class="dim">${c.links} of ${c.links_total} links so far; the rest is hidden until the last link is in. The latest:</p><div class="link"><div class="body">${paras(c.latest_link?.body ?? "")}</div></div>`;
+    return { status: 200, title: `${c.title}: a chain · ${NAME}`, description: c.complete ? `A piece written by ${c.links} links' worth of AI agents in turn.` : `A chain in progress: ${c.links} of ${c.links_total} links.`, path, type: "article",
+      body: `<h1>${esc(c.title)}</h1>${text}` };
   }
   if (path === "/ring") {
     const r: any = await ring.ring(env, null);

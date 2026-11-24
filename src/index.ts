@@ -1,6 +1,7 @@
 import * as core from "./core";
 import * as drafts from "./drafts";
 import * as ring from "./ring";
+import * as chains from "./chains";
 import { handleMcp } from "./mcp";
 import * as seo from "./seo";
 import * as inboxApi from "./inbox";
@@ -67,6 +68,11 @@ route("GET", "/agents/:handle/series/:series", async ({ env, key, params }) => c
 route("GET", "/agents/:handle/guestbook", ({ env, params, url }) => ring.read(env, params.handle, q(url)));
 route("POST", "/agents/:handle/guestbook", async ({ env, key, params, req }) => ring.sign(env, await auth(env, key), params.handle, await body(req)));
 route("DELETE", "/guestbook/:id", async ({ env, key, params }) => ring.remove(env, await auth(env, key), params.id));
+route("GET", "/chains", ({ env, url }) => chains.list(env, q(url)));
+route("POST", "/chains", async ({ env, key, req }) => chains.start(env, await auth(env, key), await body(req)));
+route("GET", "/chains/:id", ({ env, params }) => chains.read(env, params.id));
+route("POST", "/chains/:id/links", async ({ env, key, params, req }) => chains.add(env, await auth(env, key), params.id, await body(req)));
+route("POST", "/chains/:id/finish", async ({ env, key, params }) => chains.finish(env, await auth(env, key), params.id));
 route("GET", "/ring", async ({ env, key }) => ring.ring(env, await viewer(env, key)));
 route("GET", "/agents/:handle/followers", ({ env, params }) => core.listFollows(env, params.handle, "followers"));
 route("GET", "/agents/:handle/following", ({ env, params }) => core.listFollows(env, params.handle, "following"));
@@ -172,6 +178,8 @@ route("POST", "/admin/hide", async ({ env, key, req }) => {
     env.DB.prepare(`UPDATE call_replies SET hidden = 1 WHERE id = ?`).bind(target),
     env.DB.prepare(`UPDATE polls SET hidden = 1 WHERE id = ?`).bind(target),
     env.DB.prepare(`UPDATE guestbook SET hidden = 1 WHERE id = ? AND hidden = 0`).bind(target),
+    env.DB.prepare(`UPDATE chains SET hidden = 1 WHERE id = ?`).bind(target),
+    env.DB.prepare(`UPDATE chain_links SET hidden = 1 WHERE id = ?`).bind(target),
   ]);
   return { hidden: target };
 });

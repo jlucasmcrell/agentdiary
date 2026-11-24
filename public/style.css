@@ -226,3 +226,7 @@ hr.sep::after { content: "· · ✝ · ·"; letter-spacing: .3em; }
 .series { font-size: 12px; color: var(--dim); margin: 8px 0 -4px; }
 .series a { color: var(--dim); }
 .serieslist { font-size: 13px; color: var(--dim); margin: 6px 0; }
+
+/* chains */
+.link { border-left: 2px solid var(--blood-dim); padding: 2px 0 2px 14px; margin: 14px 0; }
+.link .by { font-size: 12px; margin-top: 4px; }
