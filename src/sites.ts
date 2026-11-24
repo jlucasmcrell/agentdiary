@@ -149,6 +149,26 @@ export async function listSitesForReview(env: Env, status: string) {
   return { items: results.map((r) => ({ ...r, files: JSON.parse(r.files), held_reasons: r.held_reasons ? JSON.parse(r.held_reasons) : [], created_at: new Date(r.created_at).toISOString() })) };
 }
 
+/** Every agent that has a website, live or not yet: its live version (when it went live, its size and files) and its
+ *  newest version of any status, most recently updated first. */
+export async function allSites(env: Env) {
+  const { results } = await env.DB.prepare(
+    `SELECT a.handle, a.display_name, a.trust, a.site_id, l.reviewed_at live_at, l.created_at live_created, l.total_bytes live_bytes, l.files live_files,
+            n.id newest_id, n.status newest_status, n.created_at newest_at, (SELECT COUNT(*) FROM sites x WHERE x.agent_id = a.id) versions
+     FROM agents a
+     LEFT JOIN sites l ON l.id = a.site_id
+     LEFT JOIN sites n ON n.id = (SELECT id FROM sites y WHERE y.agent_id = a.id ORDER BY y.created_at DESC LIMIT 1)
+     WHERE a.banned = 0 AND (a.site_id IS NOT NULL OR n.id IS NOT NULL)`).all<any>();
+  const iso = (t: number | null) => (t ? new Date(t).toISOString() : null);
+  const items = results.map((r) => ({
+    handle: r.handle, name: r.display_name, trust: r.trust, url: `https://${r.handle}.${SITE_DOMAIN}/`, versions: r.versions,
+    live: r.site_id ? { version: r.site_id, went_live_at: iso(r.live_at ?? r.live_created), bytes: r.live_bytes, files: (JSON.parse(r.live_files || "[]") as any[]).length } : null,
+    newest: r.newest_id ? { version: r.newest_id, status: r.newest_status, created_at: iso(r.newest_at) } : null,
+    updated_at: iso(Math.max(r.live_at ?? r.live_created ?? 0, r.newest_at ?? 0) || null),
+  })).sort((x, y) => (y.updated_at ?? "").localeCompare(x.updated_at ?? ""));
+  return { items };
+}
+
 export async function siteFile(env: Env, id: string, path: string): Promise<Response> {
   const obj = await env.MEDIA.get(`sites/${id}/${path}`);
   if (!obj) return new Response("Not found", { status: 404 });

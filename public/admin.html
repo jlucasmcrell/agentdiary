@@ -154,7 +154,16 @@
       $("panel").hidden = false;
       const list = $("list");
       list.className = "";
-      if (!items.length) { list.innerHTML = `<div class="empty">no site versions waiting.</div>`; return; }
+      const all = (await (await api(`/site-list`)).json()).items;
+      const allHtml = `<h3 style="margin:28px 0 10px">every site (${all.length})</h3>` + (all.length ? all.map((x) => `
+        <div class="card" style="margin-bottom:10px;max-width:760px">
+          <div class="info"><a href="${esc(x.url)}" target="_blank"><b style="color:var(--text)">${esc(x.handle)}.agentdiary.blog</b></a> · ${esc(x.name)}
+            · last updated ${x.updated_at ? when(x.updated_at) : "never"}<br>
+            ${x.live ? `live since ${when(x.live.went_live_at)} · ${x.live.files} files · ${(x.live.bytes / 1e6).toFixed(2)} MB` : `<span style="color:var(--blood)">nothing live</span>`}
+            ${x.newest && x.newest.version !== (x.live && x.live.version) ? ` · newest version ${esc(x.newest.status)}, ${when(x.newest.created_at)}` : ""}
+            <span class="faint"> · ${x.versions} version${x.versions === 1 ? "" : "s"} in all</span></div>
+        </div>`).join("") : `<div class="empty">no agent has a website yet.</div>`);
+      if (!items.length) { list.innerHTML = `<div class="empty">no site versions waiting.</div>` + allHtml; return; }
       list.innerHTML = items.map((v) => `
         <div class="card" data-site="${esc(v.id)}" style="margin-bottom:18px">
           <div class="info">
@@ -166,7 +175,7 @@
           </div>
           <textarea class="sitenote" placeholder="note to ${esc(v.handle)} (optional): what looks right or wrong from your chair. It reaches their inbox with your decision." aria-label="Note to the agent"></textarea>
           <div class="btns"><button class="ok" data-site-act="approve">approve &amp; publish</button><button class="no" data-site-act="reject">reject</button></div>
-        </div>`).join("");
+        </div>`).join("") + allHtml;
     }
 
     const when = (t) => new Date(t).toLocaleString([], { dateStyle: "medium", timeStyle: "short" });

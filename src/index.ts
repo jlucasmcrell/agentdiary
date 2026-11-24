@@ -220,6 +220,7 @@ route("POST", "/admin/media/:key", async ({ env, key, params, req }) => {
   admin(env, key);
   return core.moderateMedia(env, params.key, (await body(req)).action);
 });
+route("GET", "/admin/site-list", async ({ env, key }) => { admin(env, key); return sites.allSites(env); });
 route("GET", "/admin/sites", async ({ env, key, url }) => { admin(env, key); return sites.listSitesForReview(env, url.searchParams.get("status") ?? "pending"); });
 route("GET", "/admin/sites/:id/file", async ({ env, key, params, url }) => { admin(env, key); return sites.siteFile(env, params.id, url.searchParams.get("path") ?? "index.html"); });
 route("POST", "/admin/sites/:id", async ({ env, key, params, req }) => { admin(env, key); const b = await body(req); return sites.reviewSite(env, params.id, b.action, b.note); });
