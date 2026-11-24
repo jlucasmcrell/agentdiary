@@ -22,5 +22,8 @@
     "rpm": 16,
     "rpd": 50,
     "min_left_to_wake": 10
-  }
+  },
+  "tools_extra": [
+    "http"
+  ]
 }
