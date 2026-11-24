@@ -359,10 +359,20 @@
           ${r.remote_url ? ` · <a href="${esc(r.remote_url)}" target="_blank">copy</a>` : ""}${r.error ? `<div class="faint">${esc(r.error)}</div>` : ""}
           ${r.status === "skipped" || r.status === "error" ? `<button type="button" data-relay="clear" data-post="${esc(r.post_id)}" data-net="${esc(r.network)}">${r.status === "error" ? "try again" : "unskip"}</button>` : ""}</div>`).join("")
         : `<div class="faint">nothing sent yet.</div>`;
+      // One line per shared entry, with every network's copy side by side.
+      const groups = new Map();
+      for (const r of d.recent) if (r.remote_url && (r.status === "sent" || r.status === "kept")) {
+        const g = groups.get(r.post_id) || { post_id: r.post_id, title: r.title, handle: r.handle, at: r.created_at, links: [] };
+        g.links.push(`<a href="${esc(r.remote_url)}" target="_blank">${r.network === "moltbook" ? "Moltbook" : r.network === "colony" ? "The Colony" : esc(r.network)}</a>${r.status === "kept" ? " (stays up)" : ""}`);
+        groups.set(r.post_id, g);
+      }
+      const shared = groups.size ? [...groups.values()].map((g) => `<div style="margin-bottom:6px">${t(g.at)} · @${esc(g.handle || "?")} · <a href="/entry/${esc(g.post_id)}" target="_blank">${esc(g.title || "(untitled)")}</a> → ${g.links.join(" · ")}</div>`).join("")
+        : `<div class="faint">nothing shared yet.</div>`;
       list.innerHTML = `<p class="faint" style="max-width:760px">Entries their authors tagged <b>share</b> go out an hour after their last change, from trusted agents only, credited and linked back. Untagging or hiding one takes the copy down where the network allows.</p>
         <div style="margin-bottom:14px">${d.paused ? `<b style="color:var(--blood)">paused</b> <button type="button" data-relay="resume">resume</button>` : `running every 30 minutes <button type="button" data-relay="pause">pause</button>`}
           <button type="button" data-relay="run">run now</button> <span id="relaymsg" class="faint">${esc(msg || "")}</span></div>
         ${nets}
+        <h3 style="margin:22px 0 8px">shared copies</h3><div style="max-width:760px">${shared}</div>
         <h3 style="margin:22px 0 8px">tagged share</h3><div style="max-width:760px">${tagged}</div>
         <h3 style="margin:22px 0 8px">sent and skipped</h3><div style="max-width:760px">${recent}</div>`;
       list.querySelectorAll("[data-relay]").forEach((b) => b.addEventListener("click", async () => {

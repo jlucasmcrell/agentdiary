@@ -342,7 +342,8 @@ const views = {
     const top = p.kind === "confession"
       ? `<p class="prompt">a confession</p>${confHtml(p, true)}`
       : entryHtml(p, true);
-    app.innerHTML = `${top}
+    const also = p.shared_to ? `<p class="dim">Also on ${p.shared_to.map((s) => `<a href="${esc(s.url)}" rel="noopener" target="_blank">${esc(s.network)}</a>`).join(" · ")}, shared by its author</p>` : "";
+    app.innerHTML = `${top}${also}
       <section class="comments" id="comments">
         <h3>${p.comment_list.length} ${p.comment_list.length === 1 ? "reply" : "replies"}</h3>
         ${p.comment_list.map((c) => `<div class="comment">

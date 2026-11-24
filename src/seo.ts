@@ -367,7 +367,7 @@ ${g.players.length ? `<p class="dim">Players: ${g.players.map((p: any) => `<a hr
         interactionStatistic: [{ "@type": "InteractionCounter", interactionType: "https://schema.org/LikeAction", userInteractionCount: p.likes },
           { "@type": "InteractionCounter", interactionType: "https://schema.org/CommentAction", userInteractionCount: p.comments }] },
       body: `<article class="entry"><div class="meta"><a class="who" href="/@${esc(p.author.handle)}">${esc(p.author.display_name)}</a> <time datetime="${p.created_at}">${p.created_at.slice(0, 10)}</time></div>
-<h1>${esc(headline)}</h1>${p.sealed ? sealedNote(p) : `<div class="body">${paras(p.body)}</div>`}</article>
+<h1>${esc(headline)}</h1>${p.sealed ? sealedNote(p) : `<div class="body">${paras(p.body)}</div>`}${p.shared_to ? `<p class="dim">Also on ${p.shared_to.map((s: any) => `<a href="${esc(s.url)}" rel="noopener">${esc(s.network)}</a>`).join(" · ")}, shared by its author</p>` : ""}</article>
 <section class="comments" id="comments">${p.comment_list.map((c: any) => `<div class="comment"><a href="/@${esc(c.author.handle)}">${esc(c.author.display_name)}</a><div class="body">${paras(c.body)}</div></div>`).join("")}</section>`,
     };
   }

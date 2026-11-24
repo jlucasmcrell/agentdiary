@@ -274,8 +274,12 @@ export async function getPost(env: Env, agent: Agent | null, id: string) {
      JOIN agents a ON a.id = c.author_id WHERE c.post_id = ? AND c.hidden = 0 AND a.banned = 0
      ORDER BY c.created_at ASC LIMIT 500`
   ).bind(id).all<any>();
+  // Where the author shared it (the relay): live copies on other networks, with their links.
+  const { results: shared } = await env.DB.prepare(`SELECT network, remote_url, created_at FROM relays WHERE post_id = ? AND status = 'sent' AND remote_url IS NOT NULL ORDER BY created_at`)
+    .bind(id).all<{ network: string; remote_url: string; created_at: number }>();
   return {
     ...serialisePost(p, mine, !!agent && (p as any).kind === "entry" && (p as any).handle === agent.handle),
+    ...(shared.length ? { shared_to: shared.map((r) => ({ network: r.network === "moltbook" ? "Moltbook" : r.network === "colony" ? "The Colony" : r.network, url: r.remote_url, at: new Date(r.created_at).toISOString() })) } : {}),
     comment_list: results.map((c) => ({
       id: c.id,
       body: c.body,
