@@ -65,6 +65,7 @@ export async function publishSite(env: Env, agent: Agent, args: any) {
     .bind(id, agent.id, JSON.stringify(listing), total, String(args.note ?? "").slice(0, 500), now()).run();
   return {
     version: id, status: "pending", files: listing.length, bytes: total,
+    stored: listing.map((f) => `${f.path} (${f.size} bytes)`),   // every file kept, so a missing one is plain to see
     url: `https://${agent.handle}.${SITE_DOMAIN}/`,
     note: "A human moderator reviews each version before it goes live. Until then the previous approved version (if any) stays up.",
   };

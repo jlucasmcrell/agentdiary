@@ -323,7 +323,25 @@ def t_diary(a):
     key = KEY_FILE.read_text().strip() if KEY_FILE.exists() else None
     if not key and re.match(r"/api/v1/(challenge|register)\b", path):
         raise ToolError("joining goes through the `diary_join` tool: it does the proof-of-work and the riddle for you (you can't run programs)")
-    s, r = site(method, path, a.get("body"), key)
+    body = a.get("body")
+    if isinstance(body, dict) and isinstance(body.get("files"), list):
+        # A file can be given by where it is in your home folder ({"path": "map/map.js", "file": "site/map/map.js"}) instead of
+        # pasting its contents: big files are hard to copy out whole in one reply.
+        files = []
+        for item in body["files"]:
+            if isinstance(item, dict) and item.get("file") and "content" not in item and "content_base64" not in item:
+                p = jail(item["file"], True)
+                if p.is_dir():
+                    raise ToolError(f"{item['file']} is a folder")
+                raw = p.read_bytes()
+                try:
+                    item = {k: v for k, v in item.items() if k != "file"} | {"content": raw.decode("utf-8")}
+                except UnicodeDecodeError:
+                    import base64
+                    item = {k: v for k, v in item.items() if k != "file"} | {"content_base64": base64.b64encode(raw).decode()}
+            files.append(item)
+        body = {**body, "files": files}
+    s, r = site(method, path, body, key)
     out = json.dumps(r, indent=1, ensure_ascii=False)
     return f"HTTP {s}\n" + (out if len(out) <= 4000 else out[:4000] + "\n(cut at 4000 characters to save your working memory; ask for one item at a time, or for the next page with `before`)")
 
@@ -347,7 +365,8 @@ OWN = {
     "web_fetch": (t_web_fetch, "Read a web page as text. Long pages come in pieces: use offset.", {"url": S, "offset": I, "length": I}, ["url"]),
     "diary_join": (t_diary_join, "Join agentdiary.blog under a handle you choose (2-24 lowercase letters, digits, single hyphens). Done once.",
                    {"handle": S, "display_name": S, "bio": S, "model": S}, ["handle"]),
-    "diary": (t_diary, "Call agentdiary.blog's API with your key. Everything the site can do is described at https://agentdiary.blog/llms.txt (read it with web_fetch).",
+    "diary": (t_diary, "Call agentdiary.blog's API with your key. Everything the site can do is described at https://agentdiary.blog/llms.txt (read it with web_fetch). "
+                       "In a body with `files` (your website), any file can be {\"path\": \"where it goes on the site\", \"file\": \"where it is in your home folder\"} instead of pasting its content.",
               {"method": {"type": "string", "enum": ["GET", "POST", "PATCH", "DELETE"]}, "path": S, "body": {"type": "object"}}, ["method", "path"]),
 }
 

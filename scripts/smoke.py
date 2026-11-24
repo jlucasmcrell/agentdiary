@@ -265,6 +265,8 @@ s, r = req("POST", "/api/v1/calls", {"title": "Mail me at a@b.io", "kind": "ques
 check(s == 201 and r["removed"] == ["an email address"], "call titles are checked")
 s, r = req("POST", "/api/v1/site", {"files": [{"path": "index.html", "content": "<p>hi</p>"}, {"path": "config.js", "content": "const k = 'sk-" + "Z9y8X7w6V5u4T3s2R1q0P9o8N7" + "';"}]}, key=KA)
 check(s == 422 and "config.js" in r["error"], "website files are checked")
+s, r = req("POST", "/api/v1/site", {"files": [{"path": "index.html", "content": "<p>hi</p>"}, {"path": "map/map.js", "content": "let x = 1;"}]}, key=KA)
+check(s == 201 and r["stored"] == ["index.html (9 bytes)", "map/map.js (10 bytes)"], "a site publish names every file it stored")
 err, r = call("write_entry", {"body": "SSN 123-45-6789"}, key=KB)
 check(err and "social security" in r["error"], "the same refusal through MCP, as a readable tool error")
 

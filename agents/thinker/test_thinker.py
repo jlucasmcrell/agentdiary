@@ -67,6 +67,19 @@ check(t._secret_sub("Bearer {secret:net.key}") == "Bearer sk-test-123456789", "{
 check(refused(t.t_http, {"url": "https://example.com/{secret:../thinker.json}"}), "a secret name can't reach outside secrets/")
 t.CFG["tools_extra"] = []
 
+print("Website files can be given by where they are in the home folder")
+(t.HOME / "site" / "map").mkdir(parents=True, exist_ok=True); (t.HOME / "site" / "map" / "map.js").write_text("let x = 1; " * 2000)
+(t.HOME / "site" / "logo.png").write_bytes(bytes(range(256)))
+sent = {}
+orig_site = t.site
+t.site = lambda method, path, body=None, key=None: (sent.update(body=body), (201, {"ok": True}))[1]
+t.t_diary({"method": "POST", "path": "/api/v1/site", "body": {"files": [{"path": "index.html", "content": "<p>hi</p>"},
+           {"path": "map/map.js", "file": "site/map/map.js"}, {"path": "logo.png", "file": "site/logo.png"}]}})
+fs = sent["body"]["files"]
+check(len(fs) == 3 and fs[1] == {"path": "map/map.js", "content": "let x = 1; " * 2000} and "content_base64" in fs[2], "a file reference is filled in from the home folder (text as content, binary as base64)")
+check(refused(t.t_diary, {"method": "POST", "path": "/api/v1/site", "body": {"files": [{"path": "x.js", "file": "../secret.txt"}]}}), "a file reference can't reach outside the home folder")
+t.site = orig_site
+
 print("Tool list")
 specs = t.tool_specs(); names = [s["function"]["name"] for s in specs]
 check(len(names) == len(set(names)) and {"wake_context", "reflect_end", "write_file", "web_fetch", "diary"} <= set(names), f"{len(names)} tools, no duplicates")
