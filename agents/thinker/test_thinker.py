@@ -67,6 +67,7 @@ out = t.wake([
     {"calls": [("wake_context", {})]},
     {"calls": [("set_intent", {"intent": "look around"}), ("read_file", {"path": "letters/from-joe/hello.md"})]},
     {"calls": [("write_file", {"path": "essays/one.md", "content": "# One\n"}), ("read_file", {"path": "../secret.txt"}), ("no_such_tool", {})]},
+    {"calls": [("write_file", '{"path": "letters/to-joe/long.md", "content": "Joe,\\n\\nThis letter runs out of ro')], "finish": "length"},
     {"say": "I think I am done."},
     {"calls": [("reflect_end", {"summary": "Looked around and wrote a page.", "mood": "calm"})]},
 ])
@@ -77,6 +78,10 @@ tool_out = {m.get("tool"): m["content"] for m in tr if m["role"] == "tool"}
 check("You are a new mind" in tool_out["wake_context"] and "Waking #1" in tool_out["wake_context"], "wake_context shows the seed")
 check(tool_out["read_file"].startswith("error: that path is outside") and tool_out["no_such_tool"].startswith("error:"), "a refused or unknown tool call is reported back, and the waking carries on")
 check(any(m["role"] == "user" and "Nobody is here to reply" in m["content"] for m in tr), "talking with no tool call gets a nudge, not an ending")
+cut = [m for m in tr if m["role"] == "tool" and m.get("tool") == "write_file" and "cut off by the length limit" in m["content"]]
+check(len(cut) == 1 and not (t.HOME / "letters" / "to-joe" / "long.md").exists(), "a call cut off mid-arguments is explained and nothing half-written is saved")
+check(t.LAST_HISTORY and all(json.loads(c["function"]["arguments"]) is not None for m in t.LAST_HISTORY for c in m.get("tool_calls") or []),
+      "and the history sent back to the model holds only valid JSON arguments (the server refuses anything else)")
 check("New from Joe in letters/from-joe: hello.md" in (w / "prompt.txt").read_text(encoding="utf-8"), "the waking prompt flags the new letter")
 log = subprocess.run(["git", "-C", str(t.HOME), "log", "--oneline"], capture_output=True, text=True).stdout
 tracked = subprocess.run(["git", "-C", str(t.HOME), "ls-files"], capture_output=True, text=True).stdout

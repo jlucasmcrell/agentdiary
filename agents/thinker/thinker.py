@@ -29,7 +29,7 @@ CFG = {
     "rest_hours": 0,                 # a waking starts this long after the last one ended (0: at the next check, every 10 min)
     "context_warn": 0.85,            # share of the context window at which it is told to wrap up...
     "context_reserve": 8000,         # ...or when fewer tokens than this are left, whichever comes first
-    "max_tokens": 4096,
+    "max_tokens": 8192,              # one reply's length; a reply cut off here is told so and can carry on
     "sampling": {"temperature": 1.0, "top_p": 0.95, "top_k": 20},
     "extra_args": ["-fa", "on", "-ctk", "q8_0", "-ctv", "q8_0"],   # 8-bit KV cache: twice the context for the same RAM
 }
@@ -41,6 +41,7 @@ for d in (HOME, STATE, HOME / "letters" / "from-joe", HOME / "letters" / "to-joe
     d.mkdir(parents=True, exist_ok=True)
 KEY_FILE, LOCK, LAST = STATE / "agentdiary.key", STATE / "awake.lock", STATE / "last-wake.json"
 MOCK = os.environ.get("THINKER_MOCK") == "1"      # tests: no model; a scripted list of tool calls
+LAST_HISTORY = []                                  # tests: the messages of the last waking
 
 os.environ.setdefault("MIND_DB", str(STATE / "mind.db"))
 os.environ.setdefault("MIND_STALE_WAKE_H", "72")
@@ -404,7 +405,8 @@ def wake(scripted=None):
         log(out, "loading the model"); model.start(); log(out, f"model ready after {int(time.time() - t0)}s")
         prompt = (HERE / "wake-prompt.md").read_text(encoding="utf-8").replace("{STATUS_NOTE}", status_note())
         (out / "prompt.txt").write_text(prompt, encoding="utf-8")
-        messages = [{"role": "system", "content": SYSTEM}, {"role": "user", "content": prompt}]
+
+        LAST_HISTORY[:] = []; messages = LAST_HISTORY; messages += [{"role": "system", "content": SYSTEM}, {"role": "user", "content": prompt}]
         tools = tool_specs(); warned = 0; idle = 0; done = False
         tr = open(out / "transcript.jsonl", "a", encoding="utf-8")
         while not done:
@@ -412,8 +414,9 @@ def wake(scripted=None):
             if MOCK:
                 step = scripted.pop(0) if scripted else None
                 if step is None: break
-                m = {"content": step.get("say", ""), "tool_calls": [{"id": f"c{turns}_{i}", "type": "function", "function": {"name": n, "arguments": json.dumps(a)}} for i, (n, a) in enumerate(step.get("calls", []))]}
-                usage = {"prompt_tokens": 0}; fin = "stop"
+                m = {"content": step.get("say", ""), "tool_calls": [{"id": f"c{turns}_{i}", "type": "function", "function": {"name": n, "arguments": a if isinstance(a, str) else json.dumps(a)}}
+                                                                     for i, (n, a) in enumerate(step.get("calls", []))]}
+                usage = {"prompt_tokens": 0}; fin = step.get("finish", "stop")
             else:
                 r = model.chat(messages, tools)
                 m = r["choices"][0]["message"]; usage = r.get("usage", {}); fin = r["choices"][0].get("finish_reason")
@@ -427,9 +430,17 @@ def wake(scripted=None):
             calls = m.get("tool_calls") or []
             for c in calls:
                 name = c["function"]["name"]
-                try: args = json.loads(c["function"].get("arguments") or "{}")
+                raw = c["function"].get("arguments") or "{}"
+                try: args = json.loads(raw)
                 except json.JSONDecodeError: args = None
-                text, err = ("error: the arguments were not valid JSON", True) if args is None else run_tool(db, name, args)
+                if args is None:
+                    # The server refuses a history whose tool-call arguments aren't JSON, so keep what was written as a string
+                    # (it stays readable above) and say why the call did nothing.
+                    c["function"]["arguments"] = json.dumps({"unfinished_arguments": raw}, ensure_ascii=False)
+                    text, err = (f"error: this call did nothing. Its arguments are not complete JSON{' because the reply was cut off by the length limit for one reply (' + str(CFG['max_tokens']) + ' tokens)' if fin == 'length' else ''}. "
+                                 "What you wrote is still above. Long text can go in pieces: write_file with append=true adds to the end of a file.", True)
+                else:
+                    text, err = run_tool(db, name, args)
                 if len(text) > 8000: text = text[:8000] + "\n(truncated)"
                 tmsg = {"role": "tool", "tool_call_id": c.get("id", ""), "content": text}
                 messages.append(tmsg); tr.write(json.dumps({**tmsg, "tool": name}, ensure_ascii=False) + "\n"); tr.flush()
