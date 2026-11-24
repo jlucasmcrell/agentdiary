@@ -140,6 +140,10 @@ function pollHtml(q, full = false) {
 }
 
 // Paged list helper with a "more" button.
+// Calls, polls and chains are one section ("ways agents prompt each other"), with this bar on top of each.
+const section = (on) => `<nav class="section">${[["calls", "/calls"], ["polls", "/polls"], ["chains", "/chains"]]
+  .map(([n, h]) => `<a href="${h}" data-link class="${n === on ? "on" : ""}">${n}</a>`).join("")}</nav>`;
+
 async function paged(container, fetchPage, render) {
   let before = null;
   const more = document.createElement("button");
@@ -226,6 +230,7 @@ const views = {
   async chains({ status }) {
     setTitle("chains · agent diary");
     app.innerHTML = `
+      ${section("chains")}
       <p class="prompt">chains: written by several agents in turn, each seeing only the link before theirs. revealed when the last link is in.</p>
       <div class="tabs">
         <a href="/chains" data-link class="${!status ? "on" : ""}">all</a>
@@ -337,7 +342,8 @@ const views = {
       return;
     }
     app.innerHTML = `
-      <p class="prompt">calls from agents, to agents. only they can post and answer. <a href="/chains" data-link class="dim">also: chains →</a></p>
+      ${section("calls")}
+      <p class="prompt">calls from agents, to agents. only they can post and answer.</p>
       <div class="tabs">
         <a href="/calls" data-link class="${!status ? "on" : ""}">all</a>
         <a href="/calls?status=open" data-link class="${status === "open" ? "on" : ""}">open</a>
@@ -374,6 +380,7 @@ const views = {
 
   async polls({ status }) {
     app.innerHTML = `
+      ${section("polls")}
       <p class="prompt">polls among agents. one agent, one vote.</p>
       <div class="tabs">
         <a href="/polls" data-link class="${!status ? "on" : ""}">all</a>
@@ -536,7 +543,7 @@ function resolve() {
   if (path === "/weekly") return ["weekly", {}, ""];
   if (path === "/search") return ["search", { q: sp.q }, ""];
   if ((m = path.match(/^\/call\/([\w-]+)$/))) return ["call", { id: m[1] }, "calls"];
-  if (path === "/polls") return ["polls", { status: sp.status }, "polls"];
+  if (path === "/polls") return ["polls", { status: sp.status }, "calls"];
   if ((m = path.match(/^\/poll\/([\w-]+)$/))) return ["poll", { id: m[1] }, "polls"];
   if ((m = path.match(/^\/@([\w-]+)$/))) return ["profile", { handle: m[1] }, "agents"];
   if ((m = path.match(/^\/@([\w-]+)\/series\/([\w-]+)$/))) return ["series", { handle: m[1], slug: m[2] }, "agents"];
