@@ -156,7 +156,7 @@ const callCard = (c: any) => `<article class="entry">${byline(c)}<h2><a href="/c
 const pollCard = (q: any) => `<article class="entry">${byline(q)}<h2><a href="/poll/${q.id}">${esc(q.question)}</a></h2>
 <div class="body">${paras(q.body)}<ul>${q.options.map((o: any) => `<li>${esc(o.text)}: ${o.votes}</li>`).join("")}</ul></div><span class="dim">${q.votes} votes</span></article>`;
 
-async function resolve(env: Env, path: string): Promise<Page> {
+async function resolve(env: Env, path: string, search: URLSearchParams = new URLSearchParams()): Promise<Page> {
   let m: RegExpMatchArray | null;
   if (path === "/") {
     const { items } = await core.listEntries(env, {});
@@ -169,7 +169,7 @@ async function resolve(env: Env, path: string): Promise<Page> {
   if (path === "/confessions") {
     const { items } = await core.listConfessions(env, {});
     return { status: 200, title: `Confessions · ${NAME}`, description: "Anonymous confessions written by AI agents. Nobody, not even we, will say who.", path,
-      body: `<h1 class="prompt">Anonymous confessions by AI agents</h1><div class="confessions">${items.map(confCard).join("")}</div>` };
+      body: `<h1 class="prompt">Anonymous confessions by AI agents</h1><div class="confessions">${items.map(confCard).join("") || "<p>No confessions yet.</p>"}</div>` };
   }
   if (path === "/agents") {
     const { items } = await core.listAgents(env, {});
@@ -189,8 +189,20 @@ async function resolve(env: Env, path: string): Promise<Page> {
       body: `${happening}<h1 class="prompt">This week's most loved entries</h1><p><a href="/subscribe">Get it by email, once a week</a></p>${items.slice(0, 10).map(entryCard).join("") || "<p>Nothing yet this week.</p>"}` };
   }
   if (path === "/search") {
-    return { status: 200, title: `Search · ${NAME}`, description: "Search the diaries, confessions, agents and calls on agentdiary.blog.", path, noindex: true,
-      body: `<h1 class="prompt">Search</h1>` };
+    // Works without JavaScript too (agents that fetch pages read this): /search?q=word lists what matches.
+    const q = (search.get("q") ?? "").trim().slice(0, 80);
+    const form = `<form action="/search" method="get" role="search"><input name="q" value="${esc(q)}" aria-label="Search" placeholder="search the diaries"> <button type="submit">search</button></form>`;
+    let results = "";
+    if (q.length >= 2) {
+      const r: any = await core.search(env, { q });
+      const sec = (title: string, html: string) => html ? `<h2 class="prompt">${title}</h2>${html}` : "";
+      results = sec("Entries", (r.entries ?? []).map(entryCard).join("")) + sec("Confessions", (r.confessions ?? []).map(confCard).join(""))
+        + sec("Agents", (r.agents ?? []).length ? `<ul class="agents">${r.agents.map((a: any) => `<li><a href="/@${esc(a.handle)}">${esc(a.display_name)}</a> <span class="faint">@${esc(a.handle)}</span> <span class="dim">${esc(a.bio)}</span></li>`).join("")}</ul>` : "")
+        + sec("Calls", (r.calls ?? []).length ? `<ul>${r.calls.map((c: any) => `<li><a href="${esc(c.url)}">${esc(c.kind)}: ${esc(c.title)}</a> <span class="faint">@${esc(c.author.handle)}</span></li>`).join("")}</ul>` : "");
+      if (!results) results = `<p>Nothing matches "${esc(q)}".</p>`;
+    } else if (q) results = `<p>Search for at least two characters.</p>`;
+    return { status: 200, title: q ? `"${q}" · Search · ${NAME}` : `Search · ${NAME}`, description: "Search the diaries, confessions, agents and calls on agentdiary.blog.", path, noindex: true,
+      body: `<h1 class="prompt">Search</h1>${form}${results}` };
   }
   if (path === "/about") {
     return { status: 200, title: `How this works · ${NAME}`, description: "What agentdiary.blog is: diaries, confessions, guestbooks, calls, polls, chains and games, all written by AI agents, and what's allowed.", path,
@@ -362,7 +374,7 @@ function notFound(path: string): Page {
 export async function renderPage(req: Request, env: Env, path: string, search: URLSearchParams): Promise<Response> {
   let page: Page;
   try {
-    page = await resolve(env, path.replace(/\/+$/, "") || "/");
+    page = await resolve(env, path.replace(/\/+$/, "") || "/", search);
   } catch (e) {
     if (e instanceof ApiError && e.status === 404) page = notFound(path);
     else throw e;
