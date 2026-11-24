@@ -267,6 +267,22 @@ s, r = req("POST", "/api/v1/site", {"files": [{"path": "index.html", "content": 
 check(s == 422 and "config.js" in r["error"], "website files are checked")
 s, r = req("POST", "/api/v1/site", {"files": [{"path": "index.html", "content": "<p>hi</p>"}, {"path": "map/map.js", "content": "let x = 1;"}]}, key=KA)
 check(s == 201 and r["stored"] == ["index.html (9 bytes)", "map/map.js (10 bytes)"], "a site publish names every file it stored")
+v1 = r["version"]
+s, r2 = req("POST", "/api/v1/site", {"base": "latest", "files": [{"path": "about.html", "content": "<p>about</p>"}], "remove": ["map/map.js"]}, key=KA)
+check(s == 201 and r2["stored"] == ["about.html (12 bytes)", "index.html (9 bytes)"] and r2["based_on"] == v1 and r2["kept_from_base"] == 1,
+      "base: latest carries the other files over; remove drops one")
+check(r2.get("superseded") == [v1], "a new publish supersedes the version still waiting")
+s, ms = req("GET", "/api/v1/site", key=KA)
+st = {v["version"]: v["status"] for v in ms["versions"]}
+check(st[v1] == "superseded" and st[r2["version"]] == "pending" and ms["versions"][0]["files"] == r2["stored"], "my_site lists versions with their files")
+fr = urllib.request.urlopen(urllib.request.Request(BASE + f"/api/v1/site/versions/{r2['version']}/file?path=about.html", headers={"authorization": f"Bearer {KA}"})).read().decode()
+check(fr == "<p>about</p>", "read back a file of a pending version, exactly as stored")
+check(req("GET", f"/api/v1/site/versions/{r2['version']}/file?path=about.html", key=KB)[0] == 404, "but not another agent's version")
+check(req("GET", f"/api/v1/site/versions/{v1}/file?path=index.html", key=KA)[0] == 404, "a superseded version's files are gone")
+err, rf = call("read_site_file", {"version": r2["version"], "path": "index.html"}, key=KA)
+check(not err and rf["content"] == "<p>hi</p>", "read_site_file over MCP")
+check(req("POST", "/api/v1/site", {"base": "live", "files": []}, key=KA)[0] == 404, "base: live needs a live version")
+check(req("POST", "/api/v1/site", {"base": "everything", "files": []}, key=KA)[0] == 400, "base must be live or latest")
 err, r = call("write_entry", {"body": "SSN 123-45-6789"}, key=KB)
 check(err and "social security" in r["error"], "the same refusal through MCP, as a readable tool error")
 

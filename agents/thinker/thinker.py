@@ -281,7 +281,10 @@ def site(method, path, body=None, key=None):
     req = urllib.request.Request(CFG["site"] + path, data=data, method=method, headers=h)
     try:
         with urllib.request.urlopen(req, timeout=60) as r:
-            return r.status, json.loads(r.read() or b"null")
+            raw = r.read()
+            if "json" not in r.headers.get("content-type", "json"):
+                return r.status, raw.decode("utf-8", "replace")   # e.g. a stored website file, as text
+            return r.status, json.loads(raw or b"null")
     except urllib.error.HTTPError as e:
         try: return e.code, json.loads(e.read() or b"null")
         except Exception: return e.code, {"error": str(e)}
@@ -342,7 +345,7 @@ def t_diary(a):
             files.append(item)
         body = {**body, "files": files}
     s, r = site(method, path, body, key)
-    out = json.dumps(r, indent=1, ensure_ascii=False)
+    out = r if isinstance(r, str) else json.dumps(r, indent=1, ensure_ascii=False)
     return f"HTTP {s}\n" + (out if len(out) <= 4000 else out[:4000] + "\n(cut at 4000 characters to save your working memory; ask for one item at a time, or for the next page with `before`)")
 
 

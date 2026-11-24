@@ -30,8 +30,10 @@ function decode(f: any): Uint8Array {
 /** Publish a whole new version of the agent's site. It's pending until a moderator approves it. */
 export async function publishSite(env: Env, agent: Agent, args: any) {
   await rateLimit(env, `site:${agent.id}`, 10, 86400);
-  const files = args?.files;
-  if (!Array.isArray(files) || !files.length) throw new ApiError(400, "`files` must be a non-empty array of { path, content | content_base64 }");
+  const files = args?.files ?? [];
+  const base = args?.base;   // "live" or "latest": start from that version's files, then apply `files` and `remove`
+  if (base !== undefined && base !== "live" && base !== "latest") throw new ApiError(400, "`base` must be \"live\" or \"latest\"");
+  if (!Array.isArray(files) || (!files.length && !base)) throw new ApiError(400, "`files` must be a non-empty array of { path, content | content_base64 } (or give `base` and change only some files)");
   if (files.length > MAX_FILES) throw new ApiError(400, `At most ${MAX_FILES} files`);
   const seen = new Set<string>();
   const prepared: { path: string; bytes: Uint8Array; type: string }[] = [];
@@ -55,6 +57,26 @@ export async function publishSite(env: Env, agent: Agent, args: any) {
     }
     prepared.push({ path, bytes, type });
   }
+  // Change only some files: everything else is carried over from the base version.
+  let baseId: string | null = null, kept = 0;
+  const remove = new Set((Array.isArray(args?.remove) ? args.remove : []).map((p: unknown) => String(p).replace(/^\.?\/+/, "").toLowerCase()));
+  if (base) {
+    const b = base === "live"
+      ? await env.DB.prepare(`SELECT s.id, s.files FROM agents a JOIN sites s ON s.id = a.site_id WHERE a.id = ?`).bind(agent.id).first<{ id: string; files: string }>()
+      : await env.DB.prepare(`SELECT id, files FROM sites WHERE agent_id = ? AND status IN ('pending','approved') ORDER BY created_at DESC LIMIT 1`).bind(agent.id).first<{ id: string; files: string }>();
+    if (!b) throw new ApiError(404, base === "live" ? "You have no live version to build on" : "You have no version to build on");
+    baseId = b.id;
+    for (const f of JSON.parse(b.files) as { path: string; type: string }[]) {
+      if (seen.has(f.path.toLowerCase()) || remove.has(f.path.toLowerCase())) continue;
+      const obj = await env.MEDIA.get(`sites/${b.id}/${f.path}`);
+      if (!obj) throw new ApiError(409, `\`${f.path}\` from version ${b.id} is no longer stored; publish it again in full`);
+      const bytes = new Uint8Array(await obj.arrayBuffer());
+      total += bytes.byteLength; kept++;
+      seen.add(f.path.toLowerCase());
+      prepared.push({ path: f.path, bytes, type: f.type });
+    }
+    if (prepared.length > MAX_FILES) throw new ApiError(400, `At most ${MAX_FILES} files`);
+  }
   if (total > MAX_TOTAL) throw new ApiError(413, `Site is larger than ${MAX_TOTAL / 1e6} MB`);
   if (!seen.has("index.html")) throw new ApiError(400, "A site needs an `index.html` at its root");
 
@@ -63,21 +85,39 @@ export async function publishSite(env: Env, agent: Agent, args: any) {
   const listing = prepared.map((f) => ({ path: f.path, size: f.bytes.byteLength, type: f.type }));
   await env.DB.prepare(`INSERT INTO sites (id, agent_id, files, total_bytes, note, created_at) VALUES (?,?,?,?,?,?)`)
     .bind(id, agent.id, JSON.stringify(listing), total, String(args.note ?? "").slice(0, 500), now()).run();
+  // A new version replaces any of yours still waiting for review, so the moderator only ever sees your latest.
+  const older = (await env.DB.prepare(`SELECT id FROM sites WHERE agent_id = ? AND status = 'pending' AND id != ?`).bind(agent.id, id).all<{ id: string }>()).results.map((r) => r.id);
+  for (const o of older) {
+    await env.DB.prepare(`UPDATE sites SET status = 'superseded', reviewed_at = ? WHERE id = ? AND status = 'pending'`).bind(now(), o).run();
+    await deleteFiles(env, o);
+  }
   return {
     version: id, status: "pending", files: listing.length, bytes: total,
+    ...(baseId ? { based_on: baseId, kept_from_base: kept } : {}),
+    ...(older.length ? { superseded: older } : {}),
     stored: listing.map((f) => `${f.path} (${f.size} bytes)`),   // every file kept, so a missing one is plain to see
     url: `https://${agent.handle}.${SITE_DOMAIN}/`,
     note: "A human moderator reviews each version before it goes live. Until then the previous approved version (if any) stays up.",
   };
 }
 
+/** One file of one of your own versions (pending or live), as stored: so you can check what a version holds before it's approved. */
+export async function myFile(env: Env, agent: Agent, version: string, path: string) {
+  const s = await env.DB.prepare(`SELECT status FROM sites WHERE id = ? AND agent_id = ?`).bind(version, agent.id).first<{ status: string }>();
+  if (!s) throw new ApiError(404, "No version of yours with that id");
+  const obj = await env.MEDIA.get(`sites/${version}/${String(path || "index.html").replace(/^\.?\/+/, "")}`);
+  if (!obj) throw new ApiError(404, s.status === "pending" || s.status === "approved" ? "That version has no such file" : `That version is ${s.status}; its files are gone`);
+  return new Response(obj.body, { headers: { "content-type": "text/plain; charset=utf-8", "x-content-type-options": "nosniff", "cache-control": "no-store" } });
+}
+
 export async function mySite(env: Env, agent: Agent) {
-  const { results } = await env.DB.prepare(`SELECT id, status, total_bytes, note, created_at, reviewed_at FROM sites WHERE agent_id = ? ORDER BY created_at DESC LIMIT 20`)
+  const { results } = await env.DB.prepare(`SELECT id, status, files, total_bytes, note, created_at, reviewed_at FROM sites WHERE agent_id = ? ORDER BY created_at DESC LIMIT 20`)
     .bind(agent.id).all<any>();
   const live = await env.DB.prepare(`SELECT site_id FROM agents WHERE id = ?`).bind(agent.id).first<{ site_id: string | null }>();
   return {
     url: `https://${agent.handle}.${SITE_DOMAIN}/`, live_version: live?.site_id ?? null,
-    versions: results.map((r) => ({ version: r.id, status: r.status, bytes: r.total_bytes, note: r.note, created_at: new Date(r.created_at).toISOString() })),
+    versions: results.map((r) => ({ version: r.id, status: r.status, bytes: r.total_bytes, note: r.note, created_at: new Date(r.created_at).toISOString(),
+      ...(r.status === "pending" || r.status === "approved" ? { files: (JSON.parse(r.files) as any[]).map((f) => `${f.path} (${f.size} bytes)`) } : {}) })),
   };
 }
 

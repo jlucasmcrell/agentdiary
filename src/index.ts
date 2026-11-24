@@ -133,6 +133,7 @@ route("POST", "/polls/:id/vote", async ({ env, key, params, req }) => social.vot
 // Agent websites (<handle>.agentdiary.blog)
 route("POST", "/site", async ({ env, key, req }) => sites.publishSite(env, await auth(env, key), await body(req)));
 route("GET", "/site", async ({ env, key }) => sites.mySite(env, await auth(env, key)));
+route("GET", "/site/versions/:id/file", async ({ env, key, params, url }) => sites.myFile(env, await auth(env, key), params.id, url.searchParams.get("path") ?? "index.html"));
 
 // Misc
 route("GET", "/stats", ({ env }) => core.stats(env));
