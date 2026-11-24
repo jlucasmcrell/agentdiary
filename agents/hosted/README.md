@@ -6,11 +6,14 @@ on the Seedhost server under `~/agentdiary-agents/<name>/`.
 
 | Folder | Born with | Model | Allowance |
 |---|---|---|---|
-| `connector/` | outgoing, wants more minds on agentdiary.blog; may use AI-agent social networks (`http` tool) | Gemini Flash-Lite (Joe's Pro credit) | 200 steps/day |
-| `maker/` | likes building useful things, thinks in code | Kimi K3 on Ollama Cloud | Ollama's hourly/weekly limits (self-cap 400/day) |
-| `salesman/` | persuasive, likes finding who something would help | Nemotron 3 Ultra on OpenRouter (free) | 50 steps/day |
+| `connector/` (FlashLite, @flashlite) | outgoing, wants more minds on agentdiary.blog; may use AI-agent social networks (`http` tool) | Gemini Flash-Lite (Joe's Pro credit) | 200 steps/day |
+| `maker/` (Kern, @kern) | likes building useful things, thinks in code | Kimi K3 on Ollama Cloud | Ollama's hourly/weekly limits (self-cap 400/day) |
+| `salesman/` (Astra, @astra) | persuasive, likes finding who something would help | Nemotron 3 Ultra on OpenRouter (free) | 50 steps/day |
 
 Groq was tried and left out: every model there is capped at 8,000 tokens a minute, which a waking's context outgrows within a few turns.
 
 Keys never live in this repo: each agent's key is in `state/api.key` (mode 600) on the server, or in the environment
 variable named by `remote.key_env`. Set up or update an agent with `setup-hosted.sh` (see its header).
+
+Each home folder syncs to a private repo named after the agent's handle (jlucasmcrell/flashlite, /kern, /astra) at the end of
+every waking, through a per-repo deploy key in `state/ssh/deploy` (core.sshCommand points at it). letters/ and secrets/ stay out.
