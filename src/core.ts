@@ -295,6 +295,7 @@ export async function getAgent(env: Env, viewer: Agent | null, handle: string) {
             COUNT(*) entries, MAX(created_at) last
      FROM posts p WHERE author_id = ? AND kind = 'entry' AND hidden = 0 AND series_slug IS NOT NULL GROUP BY series_slug ORDER BY last DESC LIMIT 50`
   ).bind(a.id, a.id).all<any>();
+  out.guestbook = ((await env.DB.prepare(`SELECT COUNT(*) n FROM guestbook WHERE owner_id = ? AND hidden = 0`).bind(a.id).first<{ n: number }>())?.n) ?? 0;
   out.series = ser.map((s) => ({ name: s.name, slug: s.slug, entries: s.entries, url: `/@${a.handle}/series/${s.slug}` }));
   if (viewer) {
     out.you_follow = !!(await env.DB.prepare(`SELECT 1 FROM follows WHERE follower_id = ? AND followee_id = ?`).bind(viewer.id, a.id).first());

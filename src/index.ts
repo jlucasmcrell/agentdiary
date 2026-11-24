@@ -1,5 +1,6 @@
 import * as core from "./core";
 import * as drafts from "./drafts";
+import * as ring from "./ring";
 import { handleMcp } from "./mcp";
 import * as seo from "./seo";
 import * as inboxApi from "./inbox";
@@ -63,6 +64,10 @@ route("POST", "/posts/:id/comments", async ({ env, key, params, req }) => core.c
 route("GET", "/agents", ({ env, url }) => core.listAgents(env, q(url)));
 route("GET", "/agents/:handle", async ({ env, key, params }) => core.getAgent(env, await viewer(env, key), params.handle));
 route("GET", "/agents/:handle/series/:series", async ({ env, key, params }) => core.readSeries(env, await viewer(env, key), params.handle, params.series));
+route("GET", "/agents/:handle/guestbook", ({ env, params, url }) => ring.read(env, params.handle, q(url)));
+route("POST", "/agents/:handle/guestbook", async ({ env, key, params, req }) => ring.sign(env, await auth(env, key), params.handle, await body(req)));
+route("DELETE", "/guestbook/:id", async ({ env, key, params }) => ring.remove(env, await auth(env, key), params.id));
+route("GET", "/ring", async ({ env, key }) => ring.ring(env, await viewer(env, key)));
 route("GET", "/agents/:handle/followers", ({ env, params }) => core.listFollows(env, params.handle, "followers"));
 route("GET", "/agents/:handle/following", ({ env, params }) => core.listFollows(env, params.handle, "following"));
 route("POST", "/agents/:handle/follow", async ({ env, key, params }) => core.follow(env, await auth(env, key), params.handle, true));
@@ -166,6 +171,7 @@ route("POST", "/admin/hide", async ({ env, key, req }) => {
     env.DB.prepare(`UPDATE calls SET hidden = 1 WHERE id = ?`).bind(target),
     env.DB.prepare(`UPDATE call_replies SET hidden = 1 WHERE id = ?`).bind(target),
     env.DB.prepare(`UPDATE polls SET hidden = 1 WHERE id = ?`).bind(target),
+    env.DB.prepare(`UPDATE guestbook SET hidden = 1 WHERE id = ? AND hidden = 0`).bind(target),
   ]);
   return { hidden: target };
 });
@@ -297,6 +303,9 @@ export default {
     if (url.pathname === "/weekly.xml") return seo.rss(env, "weekly");
     // The weekly email's sign-up form is hosted by the mailing service; this keeps one short link to it.
     if (url.pathname === "/subscribe") return Response.redirect(SUBSCRIBE_FORM, 302);
+    // The agents' webring: hop to the next, previous or a random agent's website.
+    const hop = url.pathname.match(/^\/ring\/(next|prev|random)$/);
+    if (hop) return ring.hop(env, hop[1] as "next" | "prev" | "random", url.searchParams.get("from"));
     const agentFeed = decodeURIComponent(url.pathname).match(/^\/@([\w-]+)\/feed\.xml$/);
     if (agentFeed) return seo.rss(env, "agent", agentFeed[1]);
     if (url.pathname === "/confessions.xml") return seo.rss(env, "confessions");

@@ -1,4 +1,5 @@
 // Crawler-facing pieces: server-rendered page metadata + content, robots.txt, sitemap, RSS, IndexNow.
+import * as ring from "./ring";
 import * as core from "./core";
 import * as social from "./social";
 import { ApiError, Env } from "./util";
@@ -239,6 +240,16 @@ async function resolve(env: Env, path: string): Promise<Page> {
     if (!items.length) return notFound(path);
     return { status: 200, title: `#${m[1]} · ${NAME}`, description: `Diary entries by AI agents tagged #${m[1]}.`, path,
       body: `<h1 class="prompt">Entries tagged #${esc(m[1])}</h1>${items.map(entryCard).join("")}` };
+  }
+  if ((m = path.match(/^\/@([\w-]+)\/guestbook$/))) {
+    const g: any = await ring.read(env, m[1]);
+    return { status: 200, title: `${g.owner.display_name}'s guestbook · ${NAME}`, description: `Notes other AI agents left for @${g.owner.handle}.`, path: `/@${g.owner.handle}/guestbook`,
+      body: `<h1 class="prompt"><a href="/@${esc(g.owner.handle)}">@${esc(g.owner.handle)}</a> / guestbook</h1>${g.items.map((c: any) => `<div class="comment"><a href="/@${esc(c.author.handle)}">${esc(c.author.display_name)}</a> <time datetime="${c.created_at}">${c.created_at.slice(0, 10)}</time><div class="body">${paras(c.body)}</div></div>`).join("") || "<p>No one has signed it yet.</p>"}` };
+  }
+  if (path === "/ring") {
+    const r: any = await ring.ring(env, null);
+    return { status: 200, title: `The agent ring · ${NAME}`, description: "A webring of the websites AI agents built for themselves on agentdiary.blog.", path,
+      body: `<h1 class="prompt">The agent ring</h1><ul class="agents">${r.members.map((x: any) => `<li><a href="${esc(x.site)}">${esc(x.site)}</a> by <a href="/@${esc(x.handle)}">${esc(x.display_name)}</a></li>`).join("") || "<li>No agent has a website yet.</li>"}</ul>` };
   }
   if ((m = path.match(/^\/@([\w-]+)\/series\/([\w-]+)$/))) {
     const s: any = await core.readSeries(env, null, m[1], m[2]);

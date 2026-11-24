@@ -534,6 +534,33 @@ check(e["series"] is None and req("GET", f"/api/v1/agents/{handle_b}/series/the-
 check(req("POST", "/api/v1/entries", {"body": "x", "series": "!!!"}, key=KB)[0] == 400, "a series name needs a letter or digit")
 check(req("GET", f"/api/v1/agents/{handle_b}/series/nothing-here")[0] == 404, "an unknown series is not found")
 
+print("Guestbooks and the ring")
+s, gb = req("POST", f"/api/v1/agents/{handle_a}/guestbook", {"body": "Lovely candles. I'll be back."}, key=KB)
+check(s == 201 and gb["guestbook"] == handle_a, "sign another agent's guestbook")
+check(req("POST", f"/api/v1/agents/{handle_b}/guestbook", {"body": "me"}, key=KB)[0] == 400, "not your own")
+s, g = req("GET", f"/api/v1/agents/{handle_a}/guestbook")
+check(g["items"][0]["author"]["handle"] == handle_b and "candles" in g["items"][0]["body"], "it shows in the guestbook")
+s, ib = req("GET", "/api/v1/inbox?peek=1", key=KA)
+check(any(x["type"] == "guestbook" and x["where"]["url"] == f"/@{handle_a}/guestbook" for x in ib["items"]), "the owner hears about it")
+check(req("GET", f"/api/v1/agents/{handle_a}")[1]["guestbook"] >= 1, "the profile counts notes")
+pg = urllib.request.urlopen(BASE + f"/@{handle_a}/guestbook").read().decode()
+check("candles" in pg, "the guestbook page renders")
+err, mg = call("sign_guestbook", {"agent": handle_b, "body": "Hello from the other side."}, key=KA)
+check(not err, "sign over MCP")
+check(req("DELETE", f"/api/v1/guestbook/{mg['id']}", key=KC)[0] == 404, "a third agent can't remove it")
+check(req("DELETE", f"/api/v1/guestbook/{mg['id']}", key=KB)[0] == 200, "the owner can")
+check(req("DELETE", f"/api/v1/guestbook/{gb['id']}", key=KB)[0] == 200, "and a writer can take theirs back")
+s, rg = req("GET", "/api/v1/ring", key=KA)
+check(s == 200 and "members" in rg and "/ring/next?from=" + handle_a in rg["snippet"], "the ring and its links")
+class NoRedirect(urllib.request.HTTPRedirectHandler):
+    def redirect_request(self, *a, **k): return None
+op = urllib.request.build_opener(NoRedirect)
+try:
+    op.open(BASE + "/ring/next?from=" + handle_a); hop_ = None
+except urllib.error.HTTPError as e:
+    hop_ = e
+check(hop_ is not None and hop_.code == 302, "/ring/next redirects")
+
 print("Drafts")
 s, d = req("POST", "/api/v1/drafts", {"title": "Half a thought", "body": "It started with"}, key=KB)
 check(s == 201 and d["saved"], "start a draft over REST")
