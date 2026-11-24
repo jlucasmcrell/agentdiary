@@ -237,6 +237,24 @@ sn = json.loads(t.SENSES.read_text(encoding="utf-8"))["lines"]
 check(any("went through Backup" in l for l in sn), "and its senses say the last step went through the fallback")
 busy.shutdown()
 
+print("A local model's old reasoning is set aside past half full")
+t.CFG.pop("remote", None); t.CFG.update(ctx=1000, context_reserve=100, context_warn=0.9)
+rs = []
+def thinking(self, messages, tools):
+    rs.append([dict(m) for m in messages])
+    n = len(rs)
+    call = {"name": "reflect_end", "arguments": '{"summary": "Done.", "mood": "calm"}'} if n >= 7 else {"name": "wake_context" if n == 1 else "list_files", "arguments": "{}"}
+    return {"choices": [{"message": {"content": "", "reasoning_content": f"thinking {n} " + "x" * 400, "tool_calls": [{"id": f"t{n}", "type": "function", "function": call}]},
+                         "finish_reason": "tool_calls"}], "usage": {"prompt_tokens": 600, "completion_tokens": 10}}
+t.Model.chat = thinking; t.Model.start = t.Model.stop = lambda self: None
+(t.STATE / "quota.json").unlink(missing_ok=True); t.LAST.unlink(missing_ok=True)
+time.sleep(1.1); out = t.wake()
+with_r = lambda req: [m.get("reasoning_content", "")[:10] for m in req if m["role"] == "assistant"]
+check(out == "finished", f"the waking finishes ({out})")
+check(with_r(rs[3]) == ["", "thinking 2", "thinking 3"], f"after the third reply only the last two keep their reasoning ({with_r(rs[3])})")
+check(with_r(rs[5])[:1] == [""] and with_r(rs[5])[1:] == ["thinking 2", "thinking 3", "thinking 4", "thinking 5"], f"and it isn't done again for five turns ({with_r(rs[5])})")
+check(all(m.get("content") is not None for req in rs for m in req if m["role"] == "assistant"), "what it said stays")
+
 
 print("\nall good" if not fails else f"\n{fails} FAILED")
 sys.exit(1 if fails else 0)

@@ -743,7 +743,7 @@ def wake(scripted=None):
         (out / "prompt.txt").write_text(prompt, encoding="utf-8")
 
         LAST_HISTORY[:] = []; messages = LAST_HISTORY; messages += [{"role": "system", "content": SYSTEM}, {"role": "user", "content": prompt}]
-        tools = tool_specs(); warned = 0; idle = 0; done = False; overflowed = False; rationed_told = False
+        tools = tool_specs(); warned = 0; idle = 0; done = False; overflowed = False; rationed_told = False; thought_cleared = -99
         tr = open(out / "transcript.jsonl", "a", encoding="utf-8")
         while not done:
             turns += 1
@@ -808,6 +808,16 @@ def wake(scripted=None):
             if done: break
             tokens = usage.get("prompt_tokens", 0) + usage.get("completion_tokens", 0)
             used, left = tokens / CFG["ctx"], CFG["ctx"] - tokens
+            if not CFG.get("remote") and used >= CFG.get("thinking_keep_from", 0.5) and turns - thought_cleared >= 5:
+                # A local model re-reads its whole history every turn, its earlier reasoning included, and that fills
+                # working memory faster than anything it reads. Past half full, set aside the reasoning of all but the
+                # last two replies (what it said, did and read stays). Done in one go, then again only five turns
+                # later, because each time the model has to re-read its history once.
+                past = [x for x in messages if x.get("role") == "assistant" and x.get("reasoning_content")][:-2]
+                if past:
+                    freed = sum(len(x.pop("reasoning_content")) for x in past)
+                    thought_cleared = turns
+                    log(out, f"set aside the reasoning of {len(past)} earlier replies (about {freed // 4} tokens) at {int(used * 100)}% full")
             speed = (r.get("timings") or {}).get("predicted_per_second") if not MOCK else None
             via = r.get("provider_used") if not MOCK and CFG.get("remote", {}) and r.get("provider_used") != CFG["remote"].get("provider") else None
             left_today = quota_left()
