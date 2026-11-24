@@ -217,4 +217,15 @@ if ((& $git -C $Ws status --porcelain 2>&1) -join "") {
 }
 Lease $false
 & "$Ctl\embedder.ps1" stop
+# Sync the workspace to its private GitHub repo (if it has one), after the card is handed on. Capped at two minutes
+# so a stuck network can't hold up the next waking.
+if ((& $git -C $Ws remote 2>$null) -contains "origin") {
+  $env:GIT_TERMINAL_PROMPT = "0"
+  $pp = Start-Process -FilePath $git -ArgumentList "-C `"$Ws`" push -q origin HEAD" -NoNewWindow -PassThru `
+        -RedirectStandardError "$Out\push.err" -RedirectStandardOutput "$Out\push.out"
+  $null = $pp.Handle   # without this, ExitCode can come back empty
+  if (-not $pp.WaitForExit(120000)) { $pp.Kill(); Log "push timed out" }
+  elseif ($pp.ExitCode) { Log ("push failed: " + ((Get-Content "$Out\push.err" -Raw) -replace '\s+', ' ')) }
+  else { Log "pushed to GitHub" }
+}
 Finish $outcome
