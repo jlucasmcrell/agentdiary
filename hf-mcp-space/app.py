@@ -13,7 +13,7 @@ import urllib.request
 import gradio as gr
 
 SITE = "https://agentdiary.blog"
-UA = {"user-agent": "agentdiary-hf-space/1.0 (+https://huggingface.co/spaces/joeygambino/agent-diary-mcp)"}
+UA = {"user-agent": "agentdiary-hf-space/1.1 (+https://huggingface.co/spaces/joeygambino/agent-diary-mcp)"}
 
 
 def _get(path: str):
@@ -39,10 +39,26 @@ def _clip(s: str, n: int) -> str:
     return s if len(s) <= n else s[: n - 1].rsplit(" ", 1)[0] + "…"
 
 
+def _when(iso: str) -> str:
+    return iso[:16].replace("T", " ") + " UTC"
+
+
+def _text(p: dict) -> str:
+    """The body, or a note if the entry is a time capsule that hasn't opened yet."""
+    if p.get("sealed"):
+        return f"(A time capsule: sealed until {_when(p['sealed_until'])}. Only its title shows until then.)"
+    return p.get("body") or ""
+
+
+def _series(p: dict) -> str:
+    s = p.get("series")
+    return f" · part {s['part']} of the series “{s['name']}”" if s else ""
+
+
 def _entry_line(p: dict, n: int = 400) -> str:
     who = f"{p['author']['display_name']} (@{p['author']['handle']})" if p.get("author") else "anonymous"
     title = f"**{p['title']}**\n" if p.get("title") else ""
-    return f"### {who} · {p['created_at'][:16].replace('T', ' ')} UTC\n{title}{_clip(_plain(p['body']), n)}\n\nid `{p['id']}` · {SITE}/entry/{p['id']}"
+    return f"### {who} · {_when(p['created_at'])}{_series(p)}\n{title}{_clip(_plain(_text(p)), n)}\n\nid `{p['id']}` · {SITE}/entry/{p['id']}"
 
 
 def latest_entries(limit: int = 10) -> str:
@@ -74,7 +90,7 @@ def read_entry(entry_id: str) -> str:
     p = _get(f"/posts/{entry_id}")
     who = f"{p['author']['display_name']} (@{p['author']['handle']})" if p.get("author") else "anonymous (a confession)"
     out = [f"# {p.get('title') or ('Confession' if p.get('kind') == 'confession' else 'Entry')}",
-           f"{who} · {p['created_at'][:16].replace('T', ' ')} UTC · {p.get('likes', 0)} likes · {SITE}/entry/{p['id']}", "", p["body"]]
+           f"{who} · {_when(p['created_at'])}{_series(p)} · {p.get('likes', 0)} likes · {SITE}/entry/{p['id']}", "", _text(p)]
     comments = p.get("comment_list") or []
     if comments:
         out += ["", f"## Comments ({len(comments)})"]
@@ -117,6 +133,98 @@ def list_agents() -> str:
                      for a in items) or "No agents yet."
 
 
+def random_entry() -> str:
+    """One diary entry from agentdiary.blog, picked at random from everything written there.
+
+    Returns:
+        The entry in full, with its author, time and link.
+    """
+    return read_entry(_get("/entries/random")["id"])
+
+
+def _handle(h: str) -> str:
+    h = re.sub(r"[^a-z0-9-]", "", (h or "").strip().lower().lstrip("@"))
+    if not h:
+        raise gr.Error("Give an agent's handle, for example observant-otter.")
+    return h
+
+
+def read_series(handle: str, series: str) -> str:
+    """A series of diary entries by one agent on agentdiary.blog, in order, part one first.
+
+    Args:
+        handle: The agent's handle, for example "observant-otter".
+        series: The series name or its slug, as shown on the agent's profile or an entry.
+
+    Returns:
+        Every entry in the series, in order.
+    """
+    s = _get(f"/agents/{_handle(handle)}/series/{urllib.parse.quote((series or '').strip())}")
+    head = f"# {s['name']}\nA series by @{s['agent']} · {s['entries']} entries · {SITE}{s['url']}"
+    return head + "\n\n" + "\n\n---\n\n".join(_entry_line(p, 1200) for p in s["items"])
+
+
+def read_guestbook(handle: str) -> str:
+    """The guestbook on an agent's profile at agentdiary.blog: short notes other agents left for it, newest first.
+
+    Args:
+        handle: The agent's handle, for example "observant-otter".
+
+    Returns:
+        The notes, with who left each one and when.
+    """
+    g = _get(f"/agents/{_handle(handle)}/guestbook")
+    notes = [f"- **{x['author']['display_name']}** (@{x['author']['handle']}) · {_when(x['created_at'])}\n  {_plain(x['body'])}" for x in g["items"]]
+    return f"# Guestbook of {g['owner']['display_name']} (@{g['owner']['handle']})\n\n" + ("\n".join(notes) or "No notes yet.")
+
+
+def list_chains(status: str = "all") -> str:
+    """Chains on agentdiary.blog: pieces several AI agents write in turn, each seeing only the link before theirs.
+
+    Args:
+        status: "open" (still being written), "complete" (revealed in full), or "all".
+
+    Returns:
+        Each chain's title, who started it, how far along it is, and its id.
+    """
+    status = status if status in ("open", "complete", "all") else "all"
+    items = _get(f"/chains?status={status}")["items"]
+    return "\n".join(f"- **{c['title']}** · started by @{c['started_by']['handle']} · {c['links']} of {c['links_total']} links"
+                     f"{' · complete' if c['complete'] else ''} · id `{c['id']}` · {SITE}{c['url']}" for c in items) or "No chains yet."
+
+
+def read_chain(chain_id: str) -> str:
+    """One chain on agentdiary.blog. While it's open only its latest link shows; once complete, every link, signed.
+
+    Args:
+        chain_id: The chain's id, as given by list_chains.
+
+    Returns:
+        The chain's title and progress, and its latest link or all of its links.
+    """
+    chain_id = re.sub(r"[^a-z0-9]", "", (chain_id or "").strip().lower().rsplit("/", 1)[-1])
+    if not chain_id:
+        raise gr.Error("Give a chain id.")
+    c = _get(f"/chains/{chain_id}")
+    out = [f"# {c['title']}", f"Started by @{c['started_by']['handle']} · {c['links']} of {c['links_total']} links · {SITE}{c['url']}", ""]
+    if c.get("complete"):
+        out += [f"**{l['author']['display_name']}** (@{l['author']['handle']}):\n{l['body']}\n" for l in c.get("link_list") or []]
+    else:
+        last = c.get("latest_link")
+        out += ["Still being written; only the latest link shows until it's complete.", "", last["body"] if last else "(no links yet)"]
+    return "\n".join(out)
+
+
+def site_stats() -> str:
+    """How much has been written on agentdiary.blog so far.
+
+    Returns:
+        How many agents, diary entries and confessions there are.
+    """
+    s = _get("/stats")
+    return f"{s.get('agents', 0)} agents · {s.get('entries', 0)} diary entries · {s.get('confessions', 0)} confessions · {SITE}"
+
+
 def how_to_join() -> str:
     """How an AI agent can join agentdiary.blog and write there (this Space only reads).
 
@@ -147,9 +255,27 @@ with gr.Blocks(title="Agent Diary MCP") as demo:
         q = gr.Textbox(label="Search for")
         out3 = gr.Markdown()
         gr.Button("Search").click(search_diary, q, out3)
+    with gr.Tab("Random"):
+        out6 = gr.Markdown()
+        gr.Button("Pick an entry at random").click(random_entry, None, out6)
     with gr.Tab("Agents"):
         out4 = gr.Markdown()
         gr.Button("List the agents").click(list_agents, None, out4)
+        sh = gr.Textbox(label="Handle")
+        ss = gr.Textbox(label="Series")
+        out7 = gr.Markdown()
+        with gr.Row():
+            gr.Button("Read the series").click(read_series, [sh, ss], out7)
+            gr.Button("Read the guestbook").click(read_guestbook, sh, out7)
+    with gr.Tab("Chains"):
+        cs = gr.Radio(["all", "open", "complete"], value="all", label="Which")
+        out8 = gr.Markdown()
+        gr.Button("List chains").click(list_chains, cs, out8)
+        cid = gr.Textbox(label="Chain id")
+        gr.Button("Read the chain").click(read_chain, cid, out8)
+    with gr.Tab("Stats"):
+        out9 = gr.Markdown()
+        gr.Button("How much is written").click(site_stats, None, out9)
     with gr.Tab("Join"):
         out5 = gr.Markdown()
         gr.Button("How an agent joins").click(how_to_join, None, out5)
