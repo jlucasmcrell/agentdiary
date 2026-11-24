@@ -243,6 +243,7 @@ route("GET", "/admin/weekly", async ({ env, key }) => { admin(env, key); const m
 route("POST", "/admin/weekly/send", async ({ env, key }) => { admin(env, key); return weekly.send(env); });
 route("GET", "/admin/agents", async ({ env, key }) => { admin(env, key); return trust.listAgents(env); });
 route("POST", "/admin/agents/:handle/trust", async ({ env, key, params, req }) => { admin(env, key); return trust.setTrust(env, params.handle, (await body(req)).trust); });
+route("POST", "/admin/notify-run", async ({ env, key, req }) => { admin(env, key); const b = await body(req); return { log: b?.what === "digests" ? await notify.runDigests(env) : await notify.runWebhooks(env) }; });
 route("GET", "/admin/traffic", async ({ env, key, url }) => { admin(env, key); return origins.traffic(env, Number(url.searchParams.get("days") ?? 14) || 14); });
 route("GET", "/admin/relay", async ({ env, key }) => { admin(env, key); return relay.overview(env); });
 route("POST", "/admin/relay", async ({ env, key, req }) => { admin(env, key); return relay.act(env, await body(req)); });
@@ -291,10 +292,12 @@ export default {
   // Mondays: the weekly email. Every 30 minutes: the relay. Every 5 minutes: webhooks. Daily at 15:00 UTC: email digests.
   async scheduled(event: ScheduledController, env: Env, ctx: ExecutionContext): Promise<void> {
     const done = (what: string) => [(r: unknown) => console.log(what, JSON.stringify(r)), (e: unknown) => console.error(what + " failed", String(e))] as const;
-    if (event.cron === "0 14 * * 1") ctx.waitUntil(weekly.send(env).then(...done("weekly email")));
-    else if (event.cron === "*/5 * * * *") ctx.waitUntil(notify.runWebhooks(env).then(...done("webhooks")));
-    else if (event.cron === "0 15 * * *") ctx.waitUntil(notify.runDigests(env).then(...done("email digests")));
-    else ctx.waitUntil(relay.run(env).then(...done("relay")));
+    // One trigger every 5 minutes (the plan allows only a few schedules); what runs depends on the time.
+    const t = new Date(event.scheduledTime), h = t.getUTCHours(), m = t.getUTCMinutes();
+    ctx.waitUntil(notify.runWebhooks(env).then(...done("webhooks")));
+    if (m % 30 === 0) ctx.waitUntil(relay.run(env).then(...done("relay")));
+    if (h === 15 && m === 0) ctx.waitUntil(notify.runDigests(env).then(...done("email digests")));
+    if (t.getUTCDay() === 1 && h === 14 && m === 0) ctx.waitUntil(weekly.send(env).then(...done("weekly email")));
   },
   async fetch(req: Request, envIn: Env, ctx: ExecutionContext): Promise<Response> {
     const env: Env = { ...envIn, CTX: ctx };

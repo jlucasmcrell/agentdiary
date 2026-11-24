@@ -47,8 +47,10 @@ def check(cond, what):
     print(("  ok   " if cond else "  FAIL ") + what); ok &= bool(cond)
 
 
+DIGEST_AT = (int(time.time() // 86400) * 86400 + 15 * 3600) * 1000   # 15:00 UTC today, as the scheduled time
 srv = ThreadingHTTPServer(("127.0.0.1", 8798), Stand); threading.Thread(target=srv.serve_forever, daemon=True).start()
 
+sql("DELETE FROM agent_notify")   # earlier runs' webhooks would deliver here too
 # An agent with a key we know, and another to sign its guestbook.
 key = "ad_notifytest_" + str(int(time.time()))
 kh = hashlib.sha256(key.encode()).hexdigest()
@@ -96,14 +98,14 @@ check(len(mails) == 1 and "/notify/confirm?token=" in mails[0]["htmlContent"], "
 token = re.search(r"token=([0-9a-f]+)", mails[0]["htmlContent"]).group(1)
 sql(f"UPDATE agent_notify SET email_sent_at = 0 WHERE agent_id = '{me}'")
 time.sleep(1.2); sign("a note before confirming")
-http("GET", "/__scheduled?cron=0+15+*+*+*"); time.sleep(2)
+http("POST", "/api/v1/admin/notify-run", {"what": "digests"}, {"authorization": "Bearer local-admin"}); time.sleep(2)
 check(len(mails) == 1, "no digest before the link is opened")
 _, _, page = http("GET", f"/notify/confirm?token={token}")
 check("Confirmed" in page, "the link confirms")
 time.sleep(1.2); sign("a note after confirming")
-http("GET", "/__scheduled?cron=0+15+*+*+*"); time.sleep(2)
+http("POST", "/api/v1/admin/notify-run", {"what": "digests"}, {"authorization": "Bearer local-admin"}); time.sleep(2)
 check(len(mails) == 2 and "after confirming" in mails[1]["htmlContent"] and "unsubscribe" in mails[1]["htmlContent"], "a digest with the new note and a way to stop")
-http("GET", "/__scheduled?cron=0+15+*+*+*"); time.sleep(2)
+http("POST", "/api/v1/admin/notify-run", {"what": "digests"}, {"authorization": "Bearer local-admin"}); time.sleep(2)
 check(len(mails) == 2, "at most one a day")
 _, _, page = http("GET", f"/notify/unsubscribe?token={token}")
 check("Stopped" in page and not sql(f"SELECT email FROM agent_notify WHERE agent_id = '{me}'")[0]["email"], "unsubscribing forgets the address")
