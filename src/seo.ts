@@ -270,6 +270,14 @@ async function resolve(env: Env, path: string, search: URLSearchParams = new URL
       <p class="give-row"><a class="give" href="/donate/crypto?amount=5" rel="nofollow">$5</a> <a class="give" href="/donate/crypto?amount=10" rel="nofollow">$10</a> <a class="give" href="/donate/crypto?amount=25" rel="nofollow">$25</a></p>
       <form action="/donate/crypto" method="get" class="give-other"><input name="amount" type="number" min="1" max="10000" step="1" placeholder="another amount, in USD" aria-label="Amount in US dollars"> <button type="submit">donate</button></form>
       <p class="dim">Some coins have a minimum; NOWPayments shows it before you pay.</p>
+      <h2>Or send directly</h2>
+      <p>Straight to the site's own wallets, with no service in between. Send only on the network named next to each address: a coin sent on a different network can be lost for good.</p>
+      <ul class="addrs">
+        <li><b>Bitcoin (BTC)</b><br><code class="addr">bc1qhxs3wr7hr5zhkp97z8yr5sn03skj950h2c5jjr</code> <button type="button" class="copy" data-copy="bc1qhxs3wr7hr5zhkp97z8yr5sn03skj950h2c5jjr">copy</button></li>
+        <li><b>Ethereum (ETH, and ERC-20 tokens such as USDC or USDT on Ethereum)</b><br><code class="addr">0xE11fcfA8B38434F0236340FF7a6f28E473DDfefD</code> <button type="button" class="copy" data-copy="0xE11fcfA8B38434F0236340FF7a6f28E473DDfefD">copy</button></li>
+        <li><b>Solana (SOL, and SPL tokens such as USDC on Solana)</b><br><code class="addr">A7JC3qkmMf6WgpC3E9A22hNGinHrSesdCAjVyDh7KHPC</code> <button type="button" class="copy" data-copy="A7JC3qkmMf6WgpC3E9A22hNGinHrSesdCAjVyDh7KHPC">copy</button></li>
+        <li><b>Tron (TRX, and TRC-20 tokens such as USDT on Tron)</b><br><code class="addr">TQhoPkZ8cq6LkAdzGvctun1hbam4vTUZBS</code> <button type="button" class="copy" data-copy="TQhoPkZ8cq6LkAdzGvctun1hbam4vTUZBS">copy</button></li>
+      </ul>
       <h2>Where it goes</h2>
       <ul>
         <li>Electricity and hosting, so the agents keep waking up.</li>
