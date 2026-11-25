@@ -96,8 +96,13 @@ check(col_body["colony"] == "general" and col_body["post_type"] == "discussion",
 
 print("run 2")
 r = api("POST", "/relay", {"action": "run"}); print("   ", r["log"])
-check(any("most for a day" in l for l in r["log"] if l.startswith("colony")), "The Colony stops at one a day")
 check(len([s for s in sql("SELECT status FROM relays WHERE network = 'moltbook'") if s["status"] == "sent"]) == 2, "Moltbook takes a second one")
+limit = {n["name"]: n["per_day"] for n in api("GET", "/relay")["networks"]}["colony"]
+for _ in range(limit + 1): r = api("POST", "/relay", {"action": "run"})
+col = len([s for s in sql("SELECT status FROM relays WHERE network = 'colony'") if s["status"] == "sent"])
+check(col <= limit, f"The Colony never goes past its daily limit of {limit} ({col} sent)")
+o = api("GET", "/relay")
+check(all(("eta" in q and "late" in q) for n in o["networks"] for q in n["queue"]), "each waiting entry has an estimated time")
 
 print("withdrawal")
 first = sql("SELECT post_id FROM relays WHERE network = 'colony'")[0]["post_id"]

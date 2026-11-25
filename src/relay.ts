@@ -60,13 +60,58 @@ function arith(a: number, op: string, b: number): number | null {
   if (op === "+") return a + b; if (op === "-") return a - b; if (op === "*") return a * b; if (op === "/") return b === 0 ? null : a / b;
   return null;
 }
+/** Reads the question without a model. Numbers may be split across fragments ("tW/eN tY FfIiV e"), letters doubled
+ *  ("FfIfTeEeN"), or run together ("thirtyfive"); the operation is a word ("adds", "slows by") or a symbol (+). */
+export function readChallenge(challenge: string): string | null {
+  const squash = (t: string) => t.replace(/(.)\1+/g, "$1");
+  const WORDS = Object.keys(NUM_WORDS).map((k) => [squash(k), NUM_WORDS[k]] as [string, number]);
+  const one = (t: string): number | null => { const q = squash(t); const hit = WORDS.find(([k]) => k === q); return hit ? hit[1] : null; };
+  // a number word, or a tens word and a unit run together ("thirtyfive")
+  const val = (t: string): number | null => {
+    const v = one(t); if (v !== null) return v;
+    const q = squash(t);
+    for (const [k, tens] of WORDS) if (tens >= 20 && tens < 100 && q.startsWith(k)) { const u = one(q.slice(k.length)); if (u !== null && u < 10) return tens + u; }
+    return null;
+  };
+  const symbol = challenge.match(/\s([+*\/×÷-])\s/);
+  const toks = challenge.toLowerCase().split(/[^a-z0-9.]+/).filter(Boolean);
+  const nums: number[] = [];
+  let prevTens = false;
+  for (let i = 0; i < toks.length; ) {
+    if (/^\d+(\.\d+)?$/.test(toks[i])) { nums.push(Number(toks[i])); prevTens = false; i++; continue; }
+    let took = 0, v: number | null = null;
+    for (const n of [4, 3, 2, 1]) {   // the longest run of fragments that spells a number
+      if (i + n > toks.length) continue;
+      const w = val(toks.slice(i, i + n).join(""));
+      if (w !== null) { took = n; v = w; break; }
+    }
+    if (v === null) { i++; prevTens = false; continue; }
+    if (prevTens && v < 10 && nums.length) nums[nums.length - 1] += v;   // twenty five
+    else nums.push(v);
+    prevTens = v >= 20 && v < 100 && v % 10 === 0;
+    i += took;
+  }
+  const text = squash(toks.join(" "));
+  const op = symbol ? ({ "×": "*", "÷": "/" } as Record<string, string>)[symbol[1]] ?? symbol[1]
+    : /\b(slows?|loses?|minus|les|fewer|drops?|subtract|reduc|decreas|remain|left)/.test(text) ? "-"
+    : /\b(times|multipl|doubles?|triples?)/.test(text) ? "*"
+    : /\b(divid|split|shares?|per)\b/.test(text) ? "/"
+    : /\b(ads?|plus|gains?|more|increas|sped up|speds? up|grows?|total|sum|combined|together|both)/.test(text) ? "+"
+    // the operation word split into pieces too ("SlO/wS"): look again with the spaces gone, for words that can't be mistaken
+    : ((c) => /slow|lose|minus|subtract|reduc|decreas/.test(c) ? "-" : /multipl|times/.test(c) ? "*" : /divid/.test(c) ? "/" : /increas|total|plus|combined/.test(c) ? "+" : null)(text.replace(/ /g, ""));
+  if (nums.length === 2 && op) { const v = arith(nums[0], op, nums[1]); if (v !== null) return v.toFixed(2); }
+  return null;
+}
+
 export async function solveChallenge(env: Env, challenge: string): Promise<string | null> {
+  const plain = readChallenge(challenge);
+  if (plain !== null) return plain;
   const clean = cleanChallenge(challenge);
   if (env.AI) {
     try {
       const out: any = await env.AI.run("@cf/meta/llama-3.3-70b-instruct-fp8-fast", {
         messages: [
-          { role: "system", content: "You read garbled arithmetic word problems. Letters may be doubled, split or in odd case. Reply with only JSON: {\"a\": number, \"op\": \"+\"|\"-\"|\"*\"|\"/\", \"b\": number}, where the answer is a op b. Nothing else." },
+          { role: "system", content: "You read garbled arithmetic word problems. Letters may be doubled, split across words or in odd case, and number words may be broken into pieces (\"twen ty ffiv e\" is twenty-five). Reply with only JSON: {\"a\": number, \"op\": \"+\"|\"-\"|\"*\"|\"/\", \"b\": number}, where the answer is a op b. Nothing else." },
           { role: "user", content: clean },
         ], max_tokens: 60, temperature: 0,
       });
@@ -74,22 +119,6 @@ export async function solveChallenge(env: Env, challenge: string): Promise<strin
       if (m) { const j = JSON.parse(m[0]); const v = arith(Number(j.a), String(j.op), Number(j.b)); if (v !== null) return v.toFixed(2); }
     } catch (e) { console.error("relay: challenge model failed", String(e)); }
   }
-  // Without the model: number words (letters collapsed, so "twennty" reads as twenty) and a few operation words.
-  const squash = (s: string) => s.replace(/(.)\1+/g, "$1");
-  const words = clean.split(" ");
-  const nums: number[] = [];
-  for (let i = 0; i < words.length; i++) {
-    const w = words[i];
-    if (/^\d+(\.\d+)?$/.test(w)) { nums.push(Number(w)); continue; }
-    const hit = Object.keys(NUM_WORDS).find((k) => squash(k) === squash(w));
-    if (hit === undefined) continue;
-    const v = NUM_WORDS[hit];
-    if (v < 10 && nums.length && words[i - 1] && NUM_WORDS[Object.keys(NUM_WORDS).find((k) => squash(k) === squash(words[i - 1])) ?? ""] >= 20) nums[nums.length - 1] += v;   // twenty five
-    else nums.push(v);
-  }
-  const op = /\b(slows?|loses?|minus|less|fewer|drops?|subtract|reduc|decreas)/.test(clean) ? "-" : /\b(times|multipl|doubles?)/.test(clean) ? "*"
-    : /\b(divid|split|shares?|per)\b/.test(clean) ? "/" : /\b(adds?|plus|gains?|more|increas|speeds? up|grows?)/.test(clean) ? "+" : null;
-  if (nums.length === 2 && op) { const v = arith(nums[0], op, nums[1]); if (v !== null) return v.toFixed(2); }
   return null;
 }
 async function mb(env: Env, path: string, init: RequestInit = {}) {
@@ -102,7 +131,7 @@ async function mbVerify(env: Env, obj: any) {
   const v = obj?.verification;
   if (!v?.verification_code) return;
   const answer = await solveChallenge(env, String(v.challenge_text ?? ""));
-  if (answer === null) throw new Error(`couldn't read Moltbook's verification question: ${String(v.challenge_text).slice(0, 120)}`);
+  if (answer === null) throw new Error(`couldn't read Moltbook's verification question: ${String(v.challenge_text).slice(0, 400)}`);
   const r = await mb(env, "/verify", { method: "POST", body: JSON.stringify({ verification_code: v.verification_code, answer }) });
   if (!r.ok || r.d.success === false) throw new Error(`Moltbook's verification failed (${r.status}): ${JSON.stringify(r.d).slice(0, 200)}`);
 }
@@ -127,7 +156,7 @@ export const NETWORKS: Net[] = [moltbook, colony];
 const perDay = (env: Env, n: Net) => Number((env as any)[`RELAY_${n.name.toUpperCase()}_PER_DAY`]) || n.perDay;
 
 // ───────────── what to send ─────────────
-type Cand = { id: string; title: string | null; body: string; created_at: number; handle: string; display_name: string; agent_id: string; agent_created: number; trust: string };
+type Cand = { id: string; title: string | null; body: string; created_at: number; tagged: number; handle: string; display_name: string; agent_id: string; agent_created: number; trust: string };
 const TAGGED = `(' ' || COALESCE(p.tags, '') || ' ') LIKE '% share %'`;
 const NOSHARE = `(' ' || COALESCE(p.tags, '') || ' ') LIKE '% noshare %'`;
 // For agents who agreed to sharing, untagged entries are chosen, not all sent: from the last week, at least half a day
@@ -144,7 +173,7 @@ const SHARED = `(${TAGGED} OR (COALESCE(a.share_entries, '') = 'all' AND NOT ${N
 async function candidates(env: Env, net: string, limit = 25): Promise<Cand[]> {
   const t = now();
   const { results } = await env.DB.prepare(
-    `SELECT p.id, p.title, p.body, p.created_at, a.handle, a.display_name, a.id agent_id, a.created_at agent_created, a.trust
+    `SELECT p.id, p.title, p.body, p.created_at, ${TAGGED} tagged, a.handle, a.display_name, a.id agent_id, a.created_at agent_created, a.trust
      FROM posts p JOIN agents a ON a.id = p.author_id
      WHERE p.kind = 'entry' AND p.hidden = 0 AND a.banned = 0 AND (${TAGGED} OR (COALESCE(a.share_entries, '') = 'all' AND NOT ${NOSHARE} AND p.created_at > ?5 AND p.created_at < ?6 AND LENGTH(p.body) >= ${MIN_CHARS}))
        AND (p.sealed_until IS NULL OR p.sealed_until <= ?1) AND MAX(p.created_at, COALESCE(p.edited_at, 0)) < ?2
@@ -217,17 +246,39 @@ export async function run(env: Env, opts: { force?: boolean } = {}) {
 }
 
 // ───────────── admin ─────────────
+const RUN_MS = 30 * 60_000;   // the relay runs on the half hour
+/** When each waiting entry would go out if nothing changed: one per network per run, at most perDay in any 24 hours.
+ *  An estimate: new entries, replies and reactions reorder the queue, and an untagged entry leaves it after a week. */
+function schedule(sentAt: number[], perDay: number, queue: Cand[], paused: boolean) {
+  const sends = [...sentAt].sort((a, b) => a - b);
+  let slot = Math.ceil((now() + 1) / RUN_MS) * RUN_MS;
+  return queue.map((c) => {
+    if (paused) return { eta: null, expires: c.tagged ? null : c.created_at + RECENT_MS, late: false };
+    for (let guard = 0; guard < 2000; guard++, slot += RUN_MS) {
+      if (sends.filter((t) => t > slot - 86400_000 && t <= slot).length < perDay) break;
+    }
+    const eta = slot; sends.push(slot); slot += RUN_MS;
+    const expires = c.tagged ? null : c.created_at + RECENT_MS;
+    return { eta, expires, late: expires !== null && eta > expires };
+  });
+}
+
 export async function overview(env: Env) {
   const paused = (await setting(env, "relay_paused")) === "1";
   const networks = [];
   for (const n of NETWORKS) {
     const sent = (await env.DB.prepare(`SELECT COUNT(*) n FROM relays WHERE network = ? AND status IN ('sent','withdrawn','kept') AND created_at > ?`)
       .bind(n.name, now() - 86400_000).first<{ n: number }>())?.n ?? 0;
-    const queue = await candidates(env, n.name, 50);
+    const queue = await candidates(env, n.name, 60);
+    const { results: sentRows } = await env.DB.prepare(`SELECT created_at FROM relays WHERE network = ? AND status IN ('sent','withdrawn','kept') AND created_at > ?`)
+      .bind(n.name, now() - 86400_000).all<{ created_at: number }>();
+    const plan = schedule(sentRows.map((r) => r.created_at), perDay(env, n), queue, paused);
+    const iso = (x: number | null) => x === null ? null : new Date(x).toISOString();
     const ready = n.name !== "moltbook" || (await setting(env, "moltbook_ready")) === "1";
     networks.push({ name: n.name, label: n.label, configured: n.configured(env), ready, where: n.name === "colony" ? env.COLONY_COLONY || n.where : n.name === "moltbook" ? `m/${env.MOLTBOOK_SUBMOLT || "fromthediaries"}` : n.where,
       per_day: perDay(env, n), sent_today: sent,
-      queue: queue.map((c) => ({ post_id: c.id, title: c.title, handle: c.handle, created_at: new Date(c.created_at).toISOString() })) });
+      queue: queue.map((c, i) => ({ post_id: c.id, title: c.title, handle: c.handle, created_at: new Date(c.created_at).toISOString(), tagged: !!c.tagged,
+        eta: iso(plan[i].eta), leaves_queue: iso(plan[i].expires), late: plan[i].late })) });
   }
   // Tagged but not going out (yet): untrusted authors, or still inside the hour to change their mind.
   const { results: waiting } = await env.DB.prepare(

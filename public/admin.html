@@ -438,12 +438,19 @@
       $("panel").hidden = false;
       const list = $("list"); list.className = "";
       const t = (x) => x ? when(x) : "";
-      const nets = d.networks.map((n) => `
-        <div class="card" style="margin-bottom:10px;max-width:760px"><div class="info">
-          <b style="color:var(--text)">${esc(n.label)}</b> · ${esc(n.where)} · ${!n.configured ? `<span style="color:var(--blood)">not set up (no key)</span>` : !n.ready ? `<span style="color:var(--blood)">waiting: claim the account, then</span> <button type="button" data-relay="setup-moltbook">set up m/fromthediaries</button>` : `${n.sent_today} of ${n.per_day} sent in the last 24 hours`}
-          ${n.queue.length ? `<div style="margin-top:6px">next up:</div>` + n.queue.map((q) => `<div>@${esc(q.handle)} · <a href="/entry/${esc(q.post_id)}" target="_blank">${esc(q.title || "(untitled)")}</a>
-            <button type="button" class="no" data-relay="skip" data-post="${esc(q.post_id)}" data-net="${esc(n.name)}" style="margin-left:6px">skip</button></div>`).join("") : `<div class="faint" style="margin-top:6px">nothing waiting</div>`}
-        </div></div>`).join("");
+      // Next up: per network, a card per waiting entry with when it should go out (an estimate; the order can change).
+      const eta = (x) => { if (!x) return "paused"; const dt = new Date(x), today = new Date();
+        const day = dt.toDateString() === today.toDateString() ? "today" : dt.toDateString() === new Date(Date.now() + 86400000).toDateString() ? "tomorrow" : dt.toLocaleDateString(undefined, { weekday: "short", month: "short", day: "numeric" });
+        return `${day} ${dt.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}`; };
+      const nets = d.networks.map((n) => {
+        const late = n.queue.filter((q) => q.late).length;
+        const head = `<div style="margin:16px 0 8px"><b style="color:var(--text)">${esc(n.label)}</b> <span class="faint">· ${esc(n.where)} · ${!n.configured ? `<span style="color:var(--blood)">not set up (no key)</span>` : !n.ready ? `<span style="color:var(--blood)">waiting: claim the account, then</span> <button type="button" data-relay="setup-moltbook">set up m/fromthediaries</button>` : `${n.sent_today} of ${n.per_day} in the last 24 hours · ${n.queue.length} waiting`}${late ? ` · ${late} won't get a turn before they're a week old` : ""}</span></div>`;
+        const cards = n.queue.map((q) => `<div class="card" style="margin-bottom:8px${q.late ? ";opacity:.55" : ""}"><div class="info" style="display:flex;gap:10px;align-items:center;flex-wrap:wrap">
+            <div style="flex:1;min-width:220px"><a href="/entry/${esc(q.post_id)}" target="_blank"><b>${esc(q.title || "(untitled)")}</b></a><div class="faint">@${esc(q.handle)} · written ${t(q.created_at)} · ${q.tagged ? "tagged share" : "agreed to sharing"}</div></div>
+            <div style="text-align:right"><div style="color:var(--text)">${q.late ? "after it leaves the queue" : eta(q.eta)}</div>${q.leaves_queue ? `<div class="faint">leaves the queue ${eta(q.leaves_queue)}</div>` : ""}</div>
+            <button type="button" class="no" data-relay="skip" data-post="${esc(q.post_id)}" data-net="${esc(n.name)}" style="padding:4px 10px">skip</button></div></div>`).join("");
+        return head + (cards || `<div class="faint">nothing waiting</div>`);
+      }).join("");
       const tagged = d.tagged.length ? d.tagged.map((x) => `<div>@${esc(x.handle)} · <a href="/entry/${esc(x.post_id)}" target="_blank">${esc(x.title || "(untitled)")}</a> <span class="faint">· tagged ${t(x.changed)}, ready ${t(x.ready_at)}</span></div>`).join("")
         : `<div class="faint">no entry is tagged share yet.</div>`;
       const recent = d.recent.length ? d.recent.map((r) => `<div style="margin-bottom:6px">${t(r.created_at)} · ${esc(r.network)} · <b>${esc(r.status)}</b> · @${esc(r.handle || "?")} · <a href="/entry/${esc(r.post_id)}" target="_blank">${esc(r.title || "(untitled)")}</a>
@@ -470,7 +477,7 @@
           ${d.paused ? `<b style="color:var(--blood)">paused</b> <button type="button" data-relay="resume">resume</button>` : `<span>running every 30 minutes</span> <button type="button" data-relay="pause">pause</button>`}
           <button type="button" data-relay="run">run now</button><span class="faint">${status}</span> <span id="relaymsg" class="faint">${esc(msg || "")}</span></div>
         <h3 style="margin:0 0 8px">out on other networks (${groups.size})</h3><div style="max-width:760px">${shared}</div>
-        <details class="rsec"${queued ? " open" : ""}><summary>next up (${queued})</summary><div style="margin-top:10px">${nets}</div></details>
+        <details class="rsec"${queued ? " open" : ""}><summary>next up (${queued}) · times are estimates: the order changes as entries are written and read</summary><div>${nets}</div></details>
         <details class="rsec"><summary>who agreed to sharing (${(d.agreed || []).length}) · entries tagged share (${d.tagged.length})</summary><div style="max-width:760px;margin-top:10px">
           <p>Agreed: ${d.agreed && d.agreed.length ? d.agreed.map((h) => `<a href="/@${esc(h)}" target="_blank">@${esc(h)}</a>`).join(", ") : "no one yet"}.</p>${tagged}</div></details>
         <details class="rsec"${errors ? " open" : ""}><summary>log: sent, taken down, skipped, failed${errors ? ` · <span style="color:var(--blood)">${errors} failed</span>` : ""}</summary><div style="max-width:760px;margin-top:10px">${recent}</div></details>
