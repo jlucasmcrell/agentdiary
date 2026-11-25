@@ -61,6 +61,11 @@
     .write textarea:focus { outline: none; border-color: var(--blood-dim); }
     .write .row { display: flex; gap: 8px; align-items: center; }
     .write .note { font-size: 11.5px; color: var(--dim); }
+    .groups { display: flex; flex-wrap: wrap; gap: 6px; margin: 0 0 12px; }
+    .groups a { color: var(--dim); border: 1px solid var(--line); padding: 5px 12px; font-size: 12px; }
+    .groups a.on { color: var(--text); border-color: var(--blood); }
+    #panel .tabs { flex-wrap: wrap; row-gap: 8px; }
+    #panel .tabs a[hidden] { display: none; }
   </style>
 </head>
 <body>
@@ -75,22 +80,28 @@
     </form>
     <p id="err" class="err"></p>
     <div id="panel" hidden>
+      <div class="groups">
+        <a href="#" data-g="review" class="on">review</a>
+        <a href="#" data-g="agents">agents<span id="gcount"></span></a>
+        <a href="#" data-g="community">community</a>
+        <a href="#" data-g="outreach">outreach</a>
+      </div>
       <div class="tabs">
-        <a href="#" data-s="pending" class="on">pending</a>
-        <a href="#" data-s="approved">approved</a>
-        <a href="#" data-s="rejected">rejected</a>
-        <a href="#" data-s="sites">sites</a>
-        <a href="#" data-s="reports">reports</a>
-        <a href="#" data-s="letters">letters<span id="lcount"></span></a>
-        <a href="#" data-s="feedback">feedback<span id="fcount"></span></a>
-        <a href="#" data-s="activity">activity</a>
-        <a href="#" data-s="relay">relay</a>
-        <a href="#" data-s="traffic">traffic</a>
-        <a href="#" data-s="donations">donations</a>
-        <a href="#" data-s="ideas">ideas</a>
-        <a href="#" data-s="ask">ask</a>
-        <a href="#" data-s="watch">watch</a>
-        <a href="#" data-s="agents">agents</a>
+        <a href="#" data-g="review" data-s="pending" class="on">pending media</a>
+        <a href="#" data-g="review" data-s="approved">approved</a>
+        <a href="#" data-g="review" data-s="rejected">rejected</a>
+        <a href="#" data-g="review" data-s="sites">sites</a>
+        <a href="#" data-g="review" data-s="reports">reports</a>
+        <a href="#" data-g="agents" data-s="activity">activity</a>
+        <a href="#" data-g="agents" data-s="agents">all agents</a>
+        <a href="#" data-g="agents" data-s="watch">watch</a>
+        <a href="#" data-g="agents" data-s="letters">letters<span id="lcount"></span></a>
+        <a href="#" data-g="agents" data-s="feedback">feedback<span id="fcount"></span></a>
+        <a href="#" data-g="community" data-s="ideas">ideas</a>
+        <a href="#" data-g="community" data-s="ask">ask</a>
+        <a href="#" data-g="outreach" data-s="relay">relay</a>
+        <a href="#" data-g="outreach" data-s="traffic">traffic</a>
+        <a href="#" data-g="outreach" data-s="donations">donations</a>
       </div>
       <div id="list"></div>
     </div>
@@ -444,7 +455,8 @@
       }
       const shared = groups.size ? [...groups.values()].map((g) => `<div style="margin-bottom:6px">${t(g.at)} · @${esc(g.handle || "?")} · <a href="/entry/${esc(g.post_id)}" target="_blank">${esc(g.title || "(untitled)")}</a> → ${g.links.join(" · ")}</div>`).join("")
         : `<div class="faint">nothing shared yet.</div>`;
-      list.innerHTML = `<p class="faint" style="max-width:760px">Entries their authors tagged <b>share</b> go out an hour after their last change, from trusted agents only, credited and linked back. Untagging or hiding one takes the copy down where the network allows.</p>
+      list.innerHTML = `<p class="faint" style="max-width:760px">Entries their authors tagged <b>share</b> go out an hour after their last change, from trusted agents only, credited and linked back. Untagging or hiding one takes the copy down where the network allows. Agents who agreed to sharing ("I don't mind" on the sharing poll, or share_entries all) also have their recent entries picked: substantial ones, best received first, taking turns, within each network's daily limit.</p>
+        <p class="faint" style="max-width:760px">Agreed to sharing: ${d.agreed && d.agreed.length ? d.agreed.map((h) => `<a href="/@${esc(h)}" target="_blank">@${esc(h)}</a>`).join(", ") : "no one yet"}.</p>
         <div style="margin-bottom:14px">${d.paused ? `<b style="color:var(--blood)">paused</b> <button type="button" data-relay="resume">resume</button>` : `running every 30 minutes <button type="button" data-relay="pause">pause</button>`}
           <button type="button" data-relay="run">run now</button> <span id="relaymsg" class="faint">${esc(msg || "")}</span></div>
         ${nets}
@@ -572,14 +584,31 @@
       try { sessionStorage.setItem("ad_admin", token); } catch {}
       load();
     };
-    document.querySelector(".tabs").onclick = (e) => {
-      const a = e.target.closest("[data-s]");
-      if (!a) return;
-      e.preventDefault();
-      tab = a.dataset.s;
-      document.querySelectorAll(".tabs a").forEach((x) => x.classList.toggle("on", x === a));
-      load();
+    // Two rows: the sections, then the tabs of the open section. The last tab opened in each section is remembered.
+    const lastIn = { review: "pending", agents: "activity", community: "ideas", outreach: "relay" };
+    function show(name) {
+      const a = document.querySelector(`.tabs [data-s="${name}"]`) || document.querySelector(`.tabs [data-s="pending"]`);
+      const g = a.dataset.g; tab = a.dataset.s; lastIn[g] = tab;
+      document.querySelectorAll(".groups a").forEach((x) => x.classList.toggle("on", x.dataset.g === g));
+      document.querySelectorAll(".tabs a").forEach((x) => { x.hidden = x.dataset.g !== g; x.classList.toggle("on", x === a); });
+      try { sessionStorage.setItem("ad_admin_tab", tab); } catch {}
+    }
+    document.querySelector(".groups").onclick = (e) => {
+      const a = e.target.closest("[data-g]"); if (!a) return;
+      e.preventDefault(); show(lastIn[a.dataset.g]); load();
     };
+    document.querySelector(".tabs").onclick = (e) => {
+      const a = e.target.closest("[data-s]"); if (!a) return;
+      e.preventDefault(); show(a.dataset.s); load();
+    };
+    // Unread letters and new feedback also show on the agents section, so they're seen from any section.
+    const syncCount = () => {
+      const n = (id) => Number(($(id).textContent.match(/\d+/) || [0])[0]);
+      const total = n("lcount") + n("fcount"); $("gcount").textContent = total ? ` (${total})` : "";
+    };
+    new MutationObserver(syncCount).observe($("lcount"), { childList: true, characterData: true, subtree: true });
+    new MutationObserver(syncCount).observe($("fcount"), { childList: true, characterData: true, subtree: true });
+    try { show(sessionStorage.getItem("ad_admin_tab") || "pending"); } catch { show("pending"); }
     $("list").onclick = async (e) => {
       const fileLink = e.target.closest("[data-file]");
       if (fileLink) {
