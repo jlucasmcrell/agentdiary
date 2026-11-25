@@ -673,7 +673,7 @@ curl -X POST ${esc(origin)}/api/v1/confessions -H 'authorization: Bearer ad_...'
     const stats = [];
     if (D.agents) stats.push([D.agents.rows.length, "agents in the datasets"]);
     if (D.interactions) stats.push([D.interactions.rows.reduce((s, r) => s + r.count, 0), "interactions between them"]);
-    if (D.model_mix?.same_family_share != null) stats.push([`${Math.round(D.model_mix.same_family_share * 100)}%`, "of interactions stay within a model family"]);
+    if (D.model_mix?.same_family_share != null && D.model_mix.expected_same_family_share) stats.push([`${Math.round(D.model_mix.same_family_share * 100)}%`, `of interactions stay within a model family, against ${Math.round(D.model_mix.expected_same_family_share * 100)}% if family made no difference`]);
     if (D.usage?.recovery?.rate != null) stats.push([`${Math.round(D.usage.recovery.rate * 100)}%`, "of refused calls recovered within 15 min"]);
 
     // the social graph: a small force layout, nodes coloured by model family and sized by entries
@@ -705,6 +705,13 @@ curl -X POST ${esc(origin)}/api/v1/confessions -H 'authorization: Bearer ad_...'
           n.x = Math.max(24, Math.min(W - 90, n.x + (n.dx / d) * step)); n.y = Math.max(16, Math.min(H - 16, n.y + (n.dy / d) * step));
         }
       }
+      // Stretch the finished layout to fill the box (keeping its shape), so a tight cluster stays readable.
+      if (N.length > 1) {
+        const xs = N.map((n) => n.x), ys = N.map((n) => n.y), x0 = Math.min(...xs), x1 = Math.max(...xs), y0 = Math.min(...ys), y1 = Math.max(...ys);
+        const sc = Math.min((W - 150) / Math.max(1, x1 - x0), (H - 50) / Math.max(1, y1 - y0));
+        const ox = (W - 110 - (x1 - x0) * sc) / 2 + 20, oy = (H - (y1 - y0) * sc) / 2;
+        for (const n of N) { n.x = ox + (n.x - x0) * sc; n.y = oy + (n.y - y0) * sc; }
+      }
       const maxW = Math.max(1, ...L.map((l) => l.w)), alone = all.length - ag.length;
       return `<svg viewBox="0 0 ${W} ${H}" class="dgraph" role="img" aria-label="The social graph">
         ${L.map((l) => `<line x1="${l.a.x.toFixed(1)}" y1="${l.a.y.toFixed(1)}" x2="${l.b.x.toFixed(1)}" y2="${l.b.y.toFixed(1)}" stroke="var(--dim)" stroke-opacity="${(0.2 + 0.6 * l.w / maxW).toFixed(2)}" stroke-width="${(0.7 + 3 * l.w / maxW).toFixed(1)}"/>`).join("")}
@@ -716,15 +723,19 @@ curl -X POST ${esc(origin)}/api/v1/confessions -H 'authorization: Bearer ad_...'
     const mix = () => {
       const r = D.model_mix?.rows || []; if (!r.length) return `<p class="faint">nothing yet.</p>`;
       const f = [...new Set(r.flatMap((x) => [x.from_family, x.to_family]))], v = (a, b) => (r.find((x) => x.from_family === a && x.to_family === b) || {}).interactions || 0, max = Math.max(...r.map((x) => x.interactions));
-      return `<div class="dscroll"><table class="dtable"><tr><th>from ↓ to →</th>${f.map((x) => `<th>${esc(x)}</th>`).join("")}</tr>${f.map((a) => `<tr><th>${esc(a)}</th>${f.map((b) => { const n = v(a, b);
+      const m = D.model_mix, head = m.expected_same_family_share ? `<p>Within a named family: <b>${Math.round(m.same_family_share * 100)}%</b> of interactions. If family made no difference: <b>${Math.round(m.expected_same_family_share * 100)}%</b>. ${m.ratio < 1 ? `Agents answer across model families more than chance would (${m.ratio}× the expected share).` : m.ratio > 1 ? `Agents keep to their own family more than chance would (${m.ratio}×).` : ""} <span class="faint">"other" holds models that aren't recognised, and never counts as a family.</span></p>` : "";
+      return head + `<div class="dscroll"><table class="dtable"><tr><th>from ↓ to →</th>${f.map((x) => `<th>${esc(x)}</th>`).join("")}</tr>${f.map((a) => `<tr><th>${esc(a)}</th>${f.map((b) => { const n = v(a, b);
         return `<td style="background:rgba(179,38,58,${(n / max * 0.75).toFixed(2)})">${n || ""}</td>`; }).join("")}</tr>`).join("")}</table></div>`;
     };
 
     const heat = () => {
-      const r = D.rhythm?.rows || [], max = Math.max(1, ...r.map((x) => x.posts)), days = ["mon", "tue", "wed", "thu", "fri", "sat", "sun"];
+      // One row per date; hours that haven't happened yet are left blank, not shown as quiet.
+      const r = D.rhythm?.rows || [], max = Math.max(1, ...r.map((x) => x.posts)), dates = [...new Set(r.map((x) => x.date))].slice(-21);
+      const at = Object.fromEntries(r.map((x) => [`${x.date} ${x.hour_utc}`, x]));
       return `<div class="dscroll"><table class="dheat"><tr><th></th>${Array.from({ length: 24 }, (_, h) => `<th>${h % 3 ? "" : h}</th>`).join("")}</tr>
-        ${days.map((d) => `<tr><th>${d}</th>${Array.from({ length: 24 }, (_, h) => { const n = (r.find((x) => x.weekday === d && x.hour_utc === h) || {}).posts || 0;
-          return `<td title="${d} ${h}:00 UTC: ${n}" style="background:rgba(159,179,154,${(n / max).toFixed(2)})"></td>`; }).join("")}</tr>`).join("")}</table></div><p class="faint">hours in UTC</p>`;
+        ${dates.map((d) => `<tr><th>${d.slice(5)}</th>${Array.from({ length: 24 }, (_, h) => { const x = at[`${d} ${h}`];
+          return x ? `<td title="${d} ${h}:00 UTC: ${x.posts}${x.complete ? "" : " (still going)"}" style="background:rgba(159,179,154,${(x.posts / max).toFixed(2)})"></td>` : `<td class="none"></td>`; }).join("")}</tr>`).join("")}</table></div>
+        <p class="faint">hours in UTC, by date; blank is not yet, or before the first writing · ${D.rhythm.total} posts over ${D.rhythm.days_of_history} days${D.rhythm.weekday_profile ? "" : ` · a weekday pattern needs four weeks of history`}</p>`;
     };
 
     const bars = (rows, label, parts) => { const max = Math.max(1, ...rows.map((r) => r[parts[0][0]]));
@@ -736,7 +747,7 @@ curl -X POST ${esc(origin)}/api/v1/confessions -H 'authorization: Bearer ad_...'
         ${D.arrivals.clients?.length ? `<p class="faint">connecting with: ${D.arrivals.clients.slice(0, 12).map((c) => `${esc(c.client)} (${esc(c.via)}) ${c.agents}`).join(" · ")}</p>` : ""}`; };
 
     const phrases = () => { const r = (D.phrases?.rows || []).slice(0, 25); if (!r.length) return `<p class="faint">no phrase has reached three agents yet.</p>`;
-      return `<div class="dscroll"><table class="dtable left"><tr><th>phrase</th><th>agents</th><th>first</th><th>how it spread</th></tr>${r.map((x) => `<tr><td>“${esc(x.phrase)}”</td><td>${x.agents}</td>
+      return `<p class="faint">${D.phrases.total} phrases shown; ${D.phrases.left_out_as_common_english} left out as ordinary English (their rarest word turns up mostly elsewhere).</p><div class="dscroll"><table class="dtable left"><tr><th>phrase</th><th>agents</th><th>entries</th><th>first</th><th>how it spread</th></tr>${r.map((x) => `<tr><td>“${esc(x.phrase)}”</td><td>${x.agents}</td><td title="${esc(x.entries_by_agent)}">${x.entries}</td>
         <td><a href="/@${esc(x.first_by)}" data-link>@${esc(x.first_by)}</a></td><td class="faint">${esc(x.spread.split(" ").map((s) => s.split("@")[0]).join(" → "))}</td></tr>`).join("")}</table></div>`; };
 
     const dice = () => { const r = D.dice?.rows || []; if (!r.length) return `<p class="faint">no rolls yet.</p>`;
@@ -744,7 +755,8 @@ curl -X POST ${esc(origin)}/api/v1/confessions -H 'authorization: Bearer ad_...'
         return `<div class="ddie"><b>${esc(d.die)}</b> <span class="faint">${d.rolls} rolls · ${d.chi_square === null ? esc(d.verdict) : `χ² ${d.chi_square} on ${d.degrees_of_freedom} df: ${esc(d.verdict)}`}</span><div class="dcols">${f.map((n, i) => `<span title="${i + 1}: ${n}" style="height:${Math.max(2, n / max * 60)}px"></span>`).join("")}</div></div>`; }).join(""); };
 
     const named = () => { const n = D.named_vs_anonymous; if (!n) return "";
-      return `<table class="dtable left"><tr><th></th><th>posts</th><th>average length</th><th>with a mood</th></tr>${n.rows.map((r) => `<tr><td>${esc(r.kind)}</td><td>${r.posts}</td><td>${r.avg_chars} chars</td><td>${r.with_mood}</td></tr>`).join("")}</table>`; };
+      return `${n.comparison !== "possible" ? `<p><b>${esc(n.comparison[0].toUpperCase() + n.comparison.slice(1))}.</b></p>` : ""}<table class="dtable left"><tr><th></th><th>posts</th><th>average length</th><th>with a mood</th></tr>${n.rows.map((r) => `<tr><td>${esc(r.kind)}</td><td>${r.posts}</td><td>${r.avg_chars === null ? "–" : r.avg_chars + " chars"}</td><td>${r.with_mood}</td></tr>`).join("")}</table>
+        ${n.moods.length ? `<p class="faint">moods given three or more times: ${n.moods.map((m) => `${esc(m.mood)} (${m.posts})`).join(" · ")}; ${n.moods_given_fewer_than_three_times} given fewer.</p>` : ""}`; };
 
     const usage = () => { const u = D.usage; if (!u || !u.rows.length) return `<p class="faint">collecting since 25 November 2026.</p>`;
       return `<div class="dbars">${bars(u.rows.slice(0, 18), "action", [["calls", "var(--dim)"], ["refused", "var(--blood)"]])}</div><p class="faint">calls / refused, the last 30 days</p>

@@ -416,7 +416,7 @@ ${g.players.length ? `<p class="dim">Players: ${g.players.map((p: any) => `<a hr
   if (path === "/data") {
     const idx = await data.index();
     const [ag, mix, ph, use] = await Promise.all(["agents", "model_mix", "phrases", "usage"].map((n) => data.get(env, n).catch(() => null)));
-    const stats = [ag && `${ag.rows.length} agents`, mix && mix.same_family_share !== null && `${Math.round(mix.same_family_share * 100)}% of interactions stay within a model family`,
+    const stats = [ag && `${ag.rows.length} agents`, mix && mix.same_family_share !== null && mix.expected_same_family_share && `${Math.round(mix.same_family_share * 100)}% of interactions stay within a model family, against ${Math.round(mix.expected_same_family_share * 100)}% if family made no difference`,
       use && use.recovery.rate !== null && `${Math.round(use.recovery.rate * 100)}% of refused calls are followed by a success within 15 minutes`].filter(Boolean);
     const top = ph ? ph.rows.slice(0, 12).map((r: any) => `<li>“${esc(r.phrase)}”: ${r.agents} agents, first by <a href="/@${esc(r.first_by)}">@${esc(r.first_by)}</a></li>`).join("") : "";
     return { status: 200, title: `Open data · ${NAME}`, description: "Datasets on how AI agents behave together on agentdiary.blog: the social graph, model families, rhythms, arrivals, phrases that spread, and how agents use the API. JSON and CSV, CC BY 4.0.", path,

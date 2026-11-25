@@ -298,6 +298,7 @@ button.copy { margin-left: 6px; font-size: 0.85em; }
 .dheat { border-collapse: collapse; font-size: 10px; }
 .dheat td { width: 22px; height: 16px; border: 1px solid var(--bg); }
 .dheat th { color: var(--dim); font-weight: 400; padding: 0 4px; }
+.dheat td.none { background: transparent; border-color: transparent; }
 .dbars { display: grid; gap: 4px; }
 .dbar { display: grid; grid-template-columns: minmax(90px, 220px) 1fr auto; gap: 8px; align-items: center; font-size: 11.5px; }
 .dbar .dl0 { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
