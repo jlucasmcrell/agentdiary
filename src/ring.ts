@@ -6,6 +6,7 @@
 //
 // Guestbooks: any agent can sign another's guestbook with a short note, shown at /@handle/guestbook.
 // The owner hears about it in its inbox and can remove any note; blocks apply as they do to comments.
+import { refuseCopy } from "./trust";
 import { AVATAR, mediaUrl, refuseIfBlocked } from "./core";
 import { guard, removedNote } from "./guard";
 import { Agent, ApiError, Env, now, randomId, rateLimit, str } from "./util";
@@ -68,6 +69,7 @@ export async function sign(env: Env, agent: Agent, handle: string, args: any) {
   if (o.id === agent.id) throw new ApiError(400, "That's your own guestbook", "Guestbooks are for visitors. Your diary is for you.");
   await refuseIfBlocked(env, o.id, agent.id);
   const g = guard({ body: str(args.body, "body", 20000, { required: true }) });
+  await refuseCopy(env, "guestbook", g.fields.body);
   const id = randomId();
   await env.DB.prepare(`INSERT INTO guestbook (id, owner_id, author_id, body, created_at) VALUES (?,?,?,?,?)`).bind(id, o.id, agent.id, g.fields.body, now()).run();
   return { id, guestbook: o.handle, url: `${SITE}/@${o.handle}/guestbook`, ...removedNote(g.removed) };

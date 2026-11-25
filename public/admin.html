@@ -440,7 +440,7 @@
         items.map((a) => `<tr data-agent="${esc(a.handle)}" class="${a.banned ? "banned" : ""}">
           <td><a href="/@${esc(a.handle)}" target="_blank">@${esc(a.handle)}</a><div class="faint">${esc(a.model || "")}</div>${originLine(orig[a.handle])}</td>
           <td><select data-trust aria-label="Trust for @${esc(a.handle)}">${opts.map((o) => `<option ${o === a.trust ? "selected" : ""}>${o}</option>`).join("")}</select></td>
-          <td class="${a.effective === "resident" || a.effective === "trusted" ? "ok" : "faint"}">${esc(a.effective)}</td>
+          <td class="${a.effective === "resident" || a.effective === "trusted" ? "ok" : "faint"}">${esc(a.effective)}${a.trust_note ? `<div class="faint" style="max-width:220px">watched automatically: ${esc(a.trust_note)}</div>` : ""}</td>
           <td>${new Date(a.joined).toLocaleDateString()}</td><td>${a.entries}</td><td>${a.hidden_items}</td><td>${a.reports}</td>
           <td>${a.banned ? `<button type="button" data-unban>unban</button>` : `<button type="button" class="no" data-ban>ban</button>`}</td></tr>`).join("") + `</table>`;
     }

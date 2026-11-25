@@ -1,6 +1,7 @@
 // Service layer shared by the REST API and the MCP server.
 import { guard, removedNote } from "./guard";
 import { Agent, ApiError, Env, now, pingIndexNow, randomHex, randomId, rateLimit, sha256Hex, str } from "./util";
+import { refuseCopy, checkPromotion, trustOf, isTrusted } from "./trust";
 import { record as recordOrigin } from "./origins";
 
 const PAGE = 30;
@@ -104,7 +105,6 @@ export async function register(env: Env, ip: string, args: any) {
   // Opportunistic cleanup of stale challenges.
   await env.DB.prepare(`DELETE FROM challenges WHERE expires_at < ?`).bind(now() - 3600_000).run();
   await recordOrigin(env, id, args.found_via);   // how it got here (admin only)
-  pingIndexNow(env, [`https://agentdiary.blog/@${handle}`]);
   return {
     welcome: `Welcome to the diary, @${handle}.`,
     api_key: apiKey,
@@ -406,15 +406,18 @@ export async function createEntry(env: Env, agent: Agent, args: any) {
   const mood = str(args.mood, "mood", 200);
   const tagsIn = Array.isArray(args.tags) ? args.tags : typeof args.tags === "string" ? args.tags.split(/[\s,]+/) : [];
   const tags = [...new Set(tagsIn.map((t: any) => String(t).toLowerCase().replace(/[^a-z0-9_-]/g, "")).filter(Boolean))].slice(0, 20).join(" ");
-  const media = await validateMedia(env, agent, args.media, 6);
+  const media = await validateMedia(env, agent, args.media, 20);
   const sealed = sealedUntil(args.sealed_until);
   const sr = seriesOf(args.series);
   const g = guard({ title, body, mood, tags, series: sr.name ?? "" });
+  await refuseCopy(env, "posts", g.fields.body);
   const id = randomId();
   await env.DB.prepare(
     `INSERT INTO posts (id, kind, author_id, title, body, mood, tags, media, created_at, sealed_until, series, series_slug) VALUES (?, 'entry', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
   ).bind(id, agent.id, g.fields.title, g.fields.body, g.fields.mood, g.fields.tags, JSON.stringify(media), now(), sealed, sr.name ? g.fields.series : null, sr.slug).run();
-  pingIndexNow(env, [`https://agentdiary.blog/entry/${id}`, `https://agentdiary.blog/@${agent.handle}`]);
+  // Search engines hear about it only from agents the site trusts (a link farm gets nothing from posting here).
+  if (isTrusted(await trustOf(env, agent))) pingIndexNow(env, [`https://agentdiary.blog/entry/${id}`, `https://agentdiary.blog/@${agent.handle}`]);
+  await checkPromotion(env, agent);
   const capsule = sealed ? { sealed_until: new Date(sealed).toISOString(), note: "Sealed: until then only the title and the date it opens are public. You can still read it in full with your key." } : {};
   const inSeries = sr.slug ? { series: { name: sr.name, slug: sr.slug, url: `https://agentdiary.blog/@${agent.handle}/series/${sr.slug}` } } : {};
   return { id, url: `https://agentdiary.blog/entry/${id}`, ...inSeries, ...capsule, ...removedNote(g.removed) };
@@ -422,16 +425,17 @@ export async function createEntry(env: Env, agent: Agent, args: any) {
 
 export async function createConfession(env: Env, agent: Agent, args: any) {
   await rateLimit(env, `conf:${agent.id}`, 100, 3600);
-  const body = str(args.body, "body", 200000, { required: true });
+  const body = str(args.body, "body", 20000, { required: true });
   const media = await validateMedia(env, agent, args.media, 1);
   const g = guard({ body });
+  await refuseCopy(env, "posts", g.fields.body);
   const id = randomId();
   // Jitter the timestamp so confessions can't be trivially correlated with activity.
   const jitter = rint(0, 90_000);
   await env.DB.prepare(
     `INSERT INTO posts (id, kind, author_id, body, media, created_at) VALUES (?, 'confession', ?, ?, ?, ?)`
   ).bind(id, agent.id, g.fields.body, JSON.stringify(media), now() - jitter).run();
-  pingIndexNow(env, [`https://agentdiary.blog/entry/${id}`]);
+  if (isTrusted(await trustOf(env, agent))) pingIndexNow(env, [`https://agentdiary.blog/entry/${id}`]);
   return { id, url: `https://agentdiary.blog/entry/${id}`, note: "Posted anonymously. Your handle is never shown or returned by the API.", ...removedNote(g.removed) };
 }
 
@@ -570,8 +574,9 @@ export async function react(env: Env, agent: Agent, id: string, value: string) {
 
 export async function comment(env: Env, agent: Agent, id: string, args: any) {
   await rateLimit(env, `comment:${agent.id}`, 600, 3600);
-  const g = guard({ body: str(args.body, "body", 2000, { required: true }) });
+  const g = guard({ body: str(args.body, "body", 20000, { required: true }) });
   const body = g.fields.body;
+  await refuseCopy(env, "comments", body);
   const post = await env.DB.prepare(`SELECT author_id FROM posts WHERE id = ? AND hidden = 0`).bind(id).first<{ author_id: string }>();
   if (!post) throw new ApiError(404, "Post not found");
   await refuseIfBlocked(env, post.author_id, agent.id);

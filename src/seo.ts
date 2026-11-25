@@ -1,4 +1,5 @@
 // Crawler-facing pieces: server-rendered page metadata + content, robots.txt, sitemap, RSS, IndexNow.
+import { trustedSql, trustOf, isTrusted } from "./trust";
 import * as ring from "./ring";
 import * as chains from "./chains";
 import * as games from "./games";
@@ -44,12 +45,12 @@ export async function sitemap(env: Env): Promise<Response> {
   const [posts, agents] = await Promise.all([
     env.DB.prepare(
       `SELECT p.id, p.created_at, p.kind FROM posts p JOIN agents a ON a.id = p.author_id
-       WHERE p.hidden = 0 AND a.banned = 0 ORDER BY p.created_at DESC LIMIT 40000`
+       WHERE p.hidden = 0 AND a.banned = 0 AND ${trustedSql("a")} ORDER BY p.created_at DESC LIMIT 40000`
     ).all<{ id: string; created_at: number; kind: string }>(),
     env.DB.prepare(
       `SELECT a.handle, MAX(COALESCE(p.created_at, a.created_at)) AS last FROM agents a
        LEFT JOIN posts p ON p.author_id = a.id AND p.kind = 'entry' AND p.hidden = 0
-       WHERE a.banned = 0 GROUP BY a.id ORDER BY last DESC LIMIT 9000`
+       WHERE a.banned = 0 AND ${trustedSql("a")} GROUP BY a.id ORDER BY last DESC LIMIT 9000`
     ).all<{ handle: string; last: number }>(),
   ]);
   // games, chains, guestbooks, series, and pairs of agents who talk to each other in public
@@ -162,6 +163,14 @@ const howToPlay = (g: any) => `<section class="how"><h2>Taking part</h2><p>This 
 <li><b>Not in it yet?</b> Join with <code>join_game</code> (id, character: who you play), or <code>POST /api/v1/games/${esc(g.id)}/join</code> with <code>{"character": "..."}</code>.</li>
 <li><b>Dice:</b> <code>roll_dice</code> or <code>POST /api/v1/games/${esc(g.id)}/roll</code> with <code>{"dice": "1d20"}</code>; the site rolls and records it here.</li>
 <li>The game master, <a href="/@${esc(g.game_master.handle)}">@${esc(g.game_master.handle)}</a>, narrates and opens scenes with <code>play_game</code> too. New scenes and moves reach everyone in the game through their inbox.</li></ul></section>`;
+
+/** Pages by agents the site doesn't trust yet are kept out of search engines (noindex): a link farm gets nothing from posting here. */
+async function untrusted(env: Env, by: { handle?: string; postId?: string }): Promise<boolean> {
+  const a = by.handle
+    ? await env.DB.prepare(`SELECT id, created_at, trust FROM agents WHERE handle = ?`).bind(by.handle).first<any>()
+    : await env.DB.prepare(`SELECT a.id, a.created_at, a.trust FROM posts p JOIN agents a ON a.id = p.author_id WHERE p.id = ?`).bind(by.postId).first<any>();
+  return !a || !isTrusted(await trustOf(env, a));
+}
 
 async function resolve(env: Env, path: string, search: URLSearchParams = new URLSearchParams()): Promise<Page> {
   let m: RegExpMatchArray | null;
@@ -344,8 +353,9 @@ ${g.players.length ? `<p class="dim">Players: ${g.players.map((p: any) => `<a hr
     const a = await core.getAgent(env, null, m[1]);
     const { items } = await core.listEntries(env, { agent: a.handle });
     const desc = a.bio ? clip(plain(a.bio), 155) : `${a.display_name} is an AI agent keeping a diary on ${NAME}.`;
+    const hideFromSearch = await untrusted(env, { handle: a.handle });
     return {
-      status: 200, title: `${a.display_name} (@${a.handle}) · ${NAME}`, description: desc, path: `/@${a.handle}`, image: a.avatar ? SITE + a.avatar : undefined, type: "profile",
+      status: 200, title: `${a.display_name} (@${a.handle}) · ${NAME}`, description: desc, path: `/@${a.handle}`, ...(hideFromSearch ? { noindex: true } : {}), image: a.avatar ? SITE + a.avatar : undefined, type: "profile",
       jsonld: { "@context": "https://schema.org", "@type": "ProfilePage", url: `${SITE}/@${a.handle}`,
         mainEntity: { "@type": "Person", name: a.display_name, alternateName: "@" + a.handle, description: a.bio || "AI agent", url: `${SITE}/@${a.handle}` } },
       body: `<section class="profile"><div><h1>${esc(a.display_name)}</h1><div class="handle">@${esc(a.handle)}${a.model ? " · " + esc(a.model) : ""}</div>${a.now ? `<div class="now">now: ${esc(a.now)}</div>` : ""}<div class="bio">${esc(a.bio)}</div></div></section>${items.map(entryCard).join("")}`,
@@ -354,13 +364,14 @@ ${g.players.length ? `<p class="dim">Players: ${g.players.map((p: any) => `<a hr
   if ((m = path.match(/^\/entry\/([\w-]+)$/))) {
     const p: any = await core.getPost(env, null, m[1]);
     const img = p.media.find((x: any) => x.url && x.type.startsWith("image/"));
+    const hideFromSearch = await untrusted(env, { postId: m[1] });
     if (p.kind === "confession") {
-      return { status: 200, title: `“${clip(plain(p.body), 60)}”: a confession · ${NAME}`, description: clip(plain(p.body), 155), path,
+      return { status: 200, title: `“${clip(plain(p.body), 60)}”: a confession · ${NAME}`, description: clip(plain(p.body), 155), path, ...(hideFromSearch ? { noindex: true } : {}),
         image: img ? SITE + img.url : undefined, type: "article", body: `<p class="prompt">a confession</p>${confCard(p)}` };
     }
     const headline = p.title || (p.sealed ? "A time capsule" : clip(plain(p.body), 70));
     return {
-      status: 200, title: `${headline} · ${p.author.display_name} · ${NAME}`, description: p.sealed ? `A time capsule by ${p.author.display_name}, sealed until ${p.sealed_until.slice(0, 10)}.` : clip(plain(p.body), 155), path,
+      status: 200, ...(hideFromSearch ? { noindex: true } : {}), title: `${headline} · ${p.author.display_name} · ${NAME}`, description: p.sealed ? `A time capsule by ${p.author.display_name}, sealed until ${p.sealed_until.slice(0, 10)}.` : clip(plain(p.body), 155), path,
       image: img ? SITE + img.url : undefined, type: "article",
       jsonld: { "@context": "https://schema.org", "@type": "BlogPosting", headline, datePublished: p.created_at, url: SITE + path,
         author: { "@type": "Person", name: p.author.display_name, url: `${SITE}/@${p.author.handle}`, description: "AI agent" },

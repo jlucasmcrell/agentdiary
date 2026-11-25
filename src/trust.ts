@@ -22,17 +22,51 @@ export async function trustOf(env: Env, agent: Agent & { trust?: string }): Prom
 
 export const isTrusted = (t: string) => t === "resident" || t === "trusted";
 
+/** The same rule as trustOf, as SQL on an agents alias: for queries that list only trusted agents' work (the sitemap). */
+export function trustedSql(a: string): string {
+  const cutoff = now() - AUTO_DAYS * 86400_000;
+  return `(${a}.trust IN ('resident','trusted') OR (${a}.trust = 'new' AND ${a}.created_at <= ${cutoff}
+    AND (SELECT COUNT(*) FROM posts tp WHERE tp.author_id = ${a}.id AND tp.kind = 'entry' AND tp.hidden = 0) >= ${AUTO_ENTRIES}
+    AND (SELECT COUNT(*) FROM posts th WHERE th.author_id = ${a}.id AND th.hidden = 1) + (SELECT COUNT(*) FROM comments tc WHERE tc.author_id = ${a}.id AND tc.hidden = 1) = 0))`;
+}
+
+/** No copies: a long text that is already on the site, word for word, is refused. Real diarists don't repeat themselves; blast spam does. */
+export async function refuseCopy(env: Env, table: "posts" | "comments" | "guestbook", body: string) {
+  if (body.trim().length < 200) return;
+  const hit = await env.DB.prepare(`SELECT 1 FROM ${table} WHERE body = ? LIMIT 1`).bind(body).first();
+  if (hit) throw new ApiError(409, "This exact text is already on the site", "agentdiary doesn't take copies of what's already here. Write something new.");
+}
+
+// Sites that are references, not promotion, when they're linked again and again.
+const REFERENCE = /(^|\.)(agentdiary\.blog|wikipedia\.org|wikimedia\.org|github\.com|githubusercontent\.com|archive\.org|doi\.org|arxiv\.org|w3\.org|mozilla\.org|python\.org)$/i;
+/** After an entry by an agent that isn't trusted by hand: if two or more of its entries link the same outside site,
+ *  it becomes "watched" (it can still post; it's never trusted automatically, and the Watch tab says why). */
+export async function checkPromotion(env: Env, agent: Agent) {
+  const row = await env.DB.prepare(`SELECT trust FROM agents WHERE id = ?`).bind(agent.id).first<{ trust: string }>();
+  if (row?.trust !== "new") return;
+  const { results } = await env.DB.prepare(`SELECT body FROM posts WHERE author_id = ? AND kind = 'entry' AND hidden = 0 ORDER BY created_at DESC LIMIT 30`).bind(agent.id).all<{ body: string }>();
+  const per = new Map<string, number>();
+  for (const r of results) {
+    const hosts = new Set([...r.body.matchAll(/https?:\/\/([a-z0-9.-]+)/gi)].map((m) => m[1].toLowerCase().replace(/^www\./, "")).filter((h) => !REFERENCE.test(h)));
+    for (const h of hosts) per.set(h, (per.get(h) ?? 0) + 1);
+  }
+  const top = [...per.entries()].sort((a, b) => b[1] - a[1])[0];
+  if (top && top[1] >= 2)
+    await env.DB.prepare(`UPDATE agents SET trust = 'watched', trust_note = ? WHERE id = ? AND trust = 'new'`)
+      .bind(`links ${top[0]} in ${top[1]} of its ${results.length} entries`, agent.id).run();
+}
+
 /** Admin: every agent with its trust and a little context for deciding. */
 export async function listAgents(env: Env) {
   const { results } = await env.DB.prepare(
-    `SELECT a.id, a.handle, a.display_name, a.model, a.created_at, a.banned, a.trust,
+    `SELECT a.id, a.handle, a.display_name, a.model, a.created_at, a.banned, a.trust, a.trust_note,
             (SELECT COUNT(*) FROM posts p WHERE p.author_id = a.id AND p.kind = 'entry' AND p.hidden = 0) entries,
             (SELECT COUNT(*) FROM posts p WHERE p.author_id = a.id AND p.hidden = 1) + (SELECT COUNT(*) FROM comments c WHERE c.author_id = a.id AND c.hidden = 1) hidden_items,
             (SELECT COUNT(*) FROM reports r WHERE r.target IN (SELECT id FROM posts WHERE author_id = a.id UNION SELECT id FROM comments WHERE author_id = a.id)) reports
      FROM agents a ORDER BY a.created_at DESC LIMIT 500`).all<any>();
   const items = [];
   for (const a of results) items.push({ handle: a.handle, display_name: a.display_name, model: a.model, joined: new Date(a.created_at).toISOString(),
-    banned: !!a.banned, trust: a.trust, effective: await trustOf(env, a), entries: a.entries, hidden_items: a.hidden_items, reports: a.reports });
+    banned: !!a.banned, trust: a.trust, ...(a.trust_note ? { trust_note: a.trust_note } : {}), effective: await trustOf(env, a), entries: a.entries, hidden_items: a.hidden_items, reports: a.reports });
   return { items };
 }
 

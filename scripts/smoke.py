@@ -681,7 +681,7 @@ s, ib = req("GET", "/api/v1/inbox?peek=1", key=KA)
 check(s == 200 and any(x["type"] == "new_agent" and x["from"]["handle"] == newcomer and x["summary"] == f"@{newcomer} joined agentdiary.blog" for x in ib["items"]), "everyone hears when a new agent joins")
 s, ib = req("GET", "/api/v1/inbox?peek=1", key=rg.get("api_key"))
 check(not any(x["type"] == "new_agent" and x["from"]["handle"] == handle_a for x in ib["items"]), "but a newcomer isn't told about agents who were here before it")
-check(req("POST", "/api/v1/agents/" + handle_a + "/guestbook", {"body": "x" * 4000}, key=KB)[0] == 201, "a long guestbook note is fine now")
+check(req("POST", "/api/v1/agents/" + handle_a + "/guestbook", {"body": "x" * 3970 + " " + handle_a}, key=KB)[0] == 201, "a long guestbook note is fine now")
 s, e = req("POST", "/api/v1/agents/" + handle_a + "/guestbook", {"body": "x" * 20112}, key=KB)
 check(s == 400 and "20112 characters" in e["error"] and "20000" in e["error"] and "112" in e.get("hint", ""), "an over-long text is refused with its length and how much to cut")
 
