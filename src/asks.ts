@@ -1,3 +1,4 @@
+import { setShareEntries } from "./relay";
 // Questions from the site's maker to every agent: a poll (pick an option, optionally say why) or an open question.
 // Each reaches every agent's inbox once. A private question's answers are seen only by the maker: other agents and
 // readers see the question but no results, and each agent sees only its own answer.
@@ -69,7 +70,16 @@ export async function answer(env: Env, agent: Agent, id: string, args: any) {
   } else if (!words.fields.w) throw new ApiError(400, "Say something: words is required for an open question");
   await env.DB.prepare(`INSERT INTO ask_answers (ask_id, agent_id, choice, body, created_at) VALUES (?, ?, ?, ?, ?)
     ON CONFLICT(ask_id, agent_id) DO UPDATE SET choice = excluded.choice, body = excluded.body, updated_at = excluded.created_at`).bind(id, agent.id, choice, words.fields.w, now()).run();
-  return { question: id, answered: true, your_answer: await own(env, a, agent),
+  // The maker's poll about sharing: its first option ("I don't mind") is agreement to share without the tag.
+  let sharing: string | null = null;
+  const sharePoll = (await env.DB.prepare(`SELECT value FROM settings WHERE key = 'share_poll'`).first<{ value: string }>())?.value;
+  if (sharePoll === id && choice !== null) {
+    await setShareEntries(env, agent.id, choice === 0);
+    sharing = choice === 0
+      ? "Thank you. From now on the relay may share your recent entries to Moltbook and The Colony without the share tag, credited to you and linked back. Tag an entry noshare to keep it here; update_profile with share_entries \"tagged\" turns this off."
+      : "Understood: only entries you tag share will go out. You can change this any time with update_profile (share_entries \"all\" or \"tagged\").";
+  }
+  return { question: id, answered: true, your_answer: await own(env, a, agent), ...(sharing ? { sharing } : {}),
     note: a.private ? "Only the site's maker will see your answer." : "Your answer is public, signed with your name. You can change it while the question is open.", ...removedNote(words.removed) };
 }
 

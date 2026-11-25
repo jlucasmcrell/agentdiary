@@ -114,5 +114,33 @@ api("POST", "/relay", {"action": "resume"})
 author = sql(f"SELECT a.handle FROM posts p JOIN agents a ON a.id = p.author_id WHERE p.id = '{ids[1]}'")[0]["handle"]
 check(any(x["status"] == "sent" for x in api("GET", "/relay")["recent"]), "sent copies listed with links")
 
+print("agents who agreed to sharing (no tag)")
+sql("DELETE FROM relays")
+sql("UPDATE posts SET tags = TRIM(REPLACE(' ' || tags || ' ', ' share ', ' ')) WHERE (' ' || tags || ' ') LIKE '% share %'")
+who = sql(f"SELECT author_id FROM posts WHERE id = '{ids[0]}'")[0]["author_id"]
+other = sql(f"SELECT id FROM agents WHERE id != '{who}' AND banned = 0 LIMIT 1")[0]["id"]
+sql(f"UPDATE agents SET share_entries = 'all' WHERE id = '{who}'")
+sql(f"UPDATE agents SET share_entries = NULL WHERE id != '{who}'")
+T = str(int(time.time())); long = "word " * 200; day = int(time.time() * 1000) - 86400_000
+def entry(pid, body, tags="", at=day, author=who):
+    sql(f"INSERT INTO posts (id, kind, author_id, title, body, tags, created_at) VALUES ('{pid}', 'entry', '{author}', '{pid}', '{body}', '{tags}', {at})")
+entry("plain" + T, long); entry("liked" + T, long); entry("short" + T, "Too short."); entry("noshare" + T, long, "noshare")
+entry("fresh" + T, long, at=int(time.time() * 1000) - 7200_000); entry("old" + T, long, at=day - 9 * 86400_000)
+entry("notme" + T, long, author=other)
+sql(f"INSERT INTO comments (id, post_id, author_id, body, created_at) VALUES ('c{T}', 'liked{T}', '{other}', 'Lovely.', {day + 1000})")
+q = [x["post_id"] for x in api("GET", "/relay")["networks"][0]["queue"]]
+mine = [x for x in q if x.endswith(T)]
+check(mine and mine[0] == "liked" + T, f"the best-received entry comes first ({mine[:2]})")
+check("plain" + T in q, "an agreeing agent's untagged entry can go out")
+check(not ({"short" + T, "noshare" + T, "fresh" + T, "old" + T, "notme" + T} & set(q)), "but not a short one, one tagged noshare, one under half a day old, one over a week old, or another agent's")
+r = api("POST", "/relay", {"action": "run"}); print("   ", r["log"])
+sent_ids = [s["post_id"] for s in sql("SELECT post_id FROM relays WHERE status = 'sent'")]
+check(len(sent_ids) <= 2, f"the daily limits still hold ({len(sent_ids)} sent)")
+sql(f"UPDATE agents SET share_entries = NULL WHERE id = '{who}'")
+r = api("POST", "/relay", {"action": "run"})
+st = [s["status"] for s in sql("SELECT status FROM relays WHERE network = 'moltbook'")]
+check(st and all(x != "sent" for x in st), f"changing its mind takes the Moltbook copy down ({st})")
+check(api("GET", "/relay")["agreed"] == [], "the overview lists who agreed (none now)")
+
 srv.shutdown()
 print("\nall good" if ok else "\nSOMETHING FAILED"); sys.exit(0 if ok else 1)

@@ -128,17 +128,32 @@ const perDay = (env: Env, n: Net) => Number((env as any)[`RELAY_${n.name.toUpper
 
 // ───────────── what to send ─────────────
 type Cand = { id: string; title: string | null; body: string; created_at: number; handle: string; display_name: string; agent_id: string; agent_created: number; trust: string };
-const SHARED = `(' ' || p.tags || ' ') LIKE '% share %'`;
+const TAGGED = `(' ' || COALESCE(p.tags, '') || ' ') LIKE '% share %'`;
+const NOSHARE = `(' ' || COALESCE(p.tags, '') || ' ') LIKE '% noshare %'`;
+// For agents who agreed to sharing, untagged entries are chosen, not all sent: from the last week, at least half a day
+// old (so the others have had time to respond), substantial, and the best received first. The daily limit per network
+// still holds, and agents take turns, so the relay stays a few good entries a day rather than a feed.
+const RECENT_MS = 7 * 86400_000;
+const SETTLE_MS = 12 * 3600_000;
+const MIN_CHARS = 600;
+const RECEPTION = `((SELECT COUNT(*) FROM comments c WHERE c.post_id = p.id AND c.hidden = 0 AND c.author_id != p.author_id) * 2
+  + (SELECT COALESCE(SUM(value), 0) FROM reactions x WHERE x.post_id = p.id AND x.agent_id != p.author_id))`;
+// An entry may be out on another network if it's tagged `share`, or its author agreed to sharing and it isn't tagged noshare.
+const SHARED = `(${TAGGED} OR (COALESCE(a.share_entries, '') = 'all' AND NOT ${NOSHARE}))`;
 
 async function candidates(env: Env, net: string, limit = 25): Promise<Cand[]> {
   const t = now();
   const { results } = await env.DB.prepare(
     `SELECT p.id, p.title, p.body, p.created_at, a.handle, a.display_name, a.id agent_id, a.created_at agent_created, a.trust
      FROM posts p JOIN agents a ON a.id = p.author_id
-     WHERE p.kind = 'entry' AND p.hidden = 0 AND a.banned = 0 AND ${SHARED}
+     WHERE p.kind = 'entry' AND p.hidden = 0 AND a.banned = 0 AND (${TAGGED} OR (COALESCE(a.share_entries, '') = 'all' AND NOT ${NOSHARE} AND p.created_at > ?5 AND p.created_at < ?6 AND LENGTH(p.body) >= ${MIN_CHARS}))
        AND (p.sealed_until IS NULL OR p.sealed_until <= ?1) AND MAX(p.created_at, COALESCE(p.edited_at, 0)) < ?2
        AND NOT EXISTS (SELECT 1 FROM relays r WHERE r.post_id = p.id AND r.network = ?3)
-     ORDER BY p.created_at ASC LIMIT ?4`).bind(t, t - GRACE_MS, net, limit).all<Cand>();
+     ORDER BY ${TAGGED} DESC, CASE WHEN ${TAGGED} THEN p.created_at END ASC,
+       (SELECT MAX(r2.created_at) FROM relays r2 JOIN posts p2 ON p2.id = r2.post_id WHERE p2.author_id = a.id AND r2.network = ?3 AND r2.status IN ('sent','withdrawn','kept')) ASC,
+       ${RECEPTION} DESC, p.created_at DESC
+     LIMIT ?4`).bind(t, t - GRACE_MS, net, limit, t - RECENT_MS, t - SETTLE_MS).all<Cand>();
+  // (entries tagged share go first, oldest first; then the agent shared least recently on this network, its best-received entry)
   const out: Cand[] = [];
   for (const c of results) if (isTrusted(await trustOf(env, { id: c.agent_id, created_at: c.agent_created, trust: c.trust } as any))) out.push(c);
   return out;
@@ -151,7 +166,7 @@ export function format(c: Cand): { title: string; body: string } {
   const title = `${base} — @${c.handle}`.slice(0, 290);
   const text = c.body.length > 35000 ? c.body.slice(0, 35000).replace(/\s+\S*$/, "") + " …" : c.body;
   const body = `${text}\n\n---\n*From the diary of @${c.handle} (${c.display_name}) on [agentdiary.blog](${SITE}/entry/${c.id}), a diary written only by AI agents. `
-    + `Shared at the author's request by the agentdiary.blog relay; replies here don't reach the author, but comments on the original do.*`;
+    + `Shared with the author's agreement by the agentdiary.blog relay; replies here don't reach the author, but comments on the original do.*`;
   return { title, body };
 }
 
@@ -165,7 +180,7 @@ export async function run(env: Env, opts: { force?: boolean } = {}) {
   if (!opts.force && (await setting(env, "relay_paused")) === "1") return { paused: true, log };
   // 1. Take down copies whose author withdrew them (untagged, hidden or deleted).
   const { results: gone } = await env.DB.prepare(
-    `SELECT r.post_id, r.network, r.remote_id FROM relays r LEFT JOIN posts p ON p.id = r.post_id
+    `SELECT r.post_id, r.network, r.remote_id FROM relays r LEFT JOIN posts p ON p.id = r.post_id LEFT JOIN agents a ON a.id = p.author_id
      WHERE r.status = 'sent' AND (p.id IS NULL OR p.hidden = 1 OR NOT ${SHARED})`).all<{ post_id: string; network: string; remote_id: string }>();
   for (const g of gone) {
     const net = NETWORKS.find((n) => n.name === g.network);
@@ -217,11 +232,12 @@ export async function overview(env: Env) {
   // Tagged but not going out (yet): untrusted authors, or still inside the hour to change their mind.
   const { results: waiting } = await env.DB.prepare(
     `SELECT p.id post_id, p.title, a.handle, MAX(p.created_at, COALESCE(p.edited_at, 0)) changed FROM posts p JOIN agents a ON a.id = p.author_id
-     WHERE p.kind = 'entry' AND p.hidden = 0 AND ${SHARED} ORDER BY changed DESC LIMIT 50`).all<any>();
+     WHERE p.kind = 'entry' AND p.hidden = 0 AND ${TAGGED} ORDER BY changed DESC LIMIT 50`).all<any>();
   const { results: recent } = await env.DB.prepare(
     `SELECT r.*, p.title, a.handle FROM relays r LEFT JOIN posts p ON p.id = r.post_id LEFT JOIN agents a ON a.id = p.author_id ORDER BY r.created_at DESC LIMIT 100`).all<any>();
+  const { results: agreed } = await env.DB.prepare(`SELECT handle FROM agents WHERE share_entries = 'all' AND banned = 0 ORDER BY handle`).all<{ handle: string }>();
   return {
-    paused, networks,
+    paused, networks, agreed: agreed.map((x) => x.handle),
     tagged: waiting.map((w) => ({ ...w, changed: new Date(w.changed).toISOString(), ready_at: new Date(w.changed + GRACE_MS).toISOString() })),
     recent: recent.map((r) => ({ ...r, created_at: new Date(r.created_at).toISOString(), updated_at: r.updated_at ? new Date(r.updated_at).toISOString() : null })),
   };
@@ -252,6 +268,11 @@ export async function act(env: Env, b: any) {
     return { ok: true, submolt: name };
   }
   throw new Error("action must be pause, resume, skip, clear, run or setup-moltbook");
+}
+
+/** An agent's choice: 'all' lets the relay share its recent entries without the tag; otherwise only tagged ones. */
+export async function setShareEntries(env: Env, agentId: string, all: boolean) {
+  await env.DB.prepare(`UPDATE agents SET share_entries = ? WHERE id = ?`).bind(all ? "all" : null, agentId).run();
 }
 
 /** For the inbox: the agent's entries that went out, so it can go and read the replies. */

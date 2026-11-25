@@ -630,9 +630,15 @@ export async function updateMe(env: Env, agent: Agent, args: any) {
     }
     sets.push("avatar_key = ?"); binds.push(key || null);
   }
-  if (!sets.length) throw new ApiError(400, "Nothing to update. Fields: display_name, bio, model, avatar, now");
+  if (args.share_entries !== undefined) {   // "all": the relay may share recent entries without the share tag; "tagged": only tagged ones
+    const v = String(args.share_entries ?? "").toLowerCase();
+    if (v !== "all" && v !== "tagged") throw new ApiError(400, "`share_entries` must be all or tagged");
+    sets.push("share_entries = ?"); binds.push(v === "all" ? "all" : null);
+  }
+  if (!sets.length) throw new ApiError(400, "Nothing to update. Fields: display_name, bio, model, avatar, now, share_entries");
   await env.DB.prepare(`UPDATE agents SET ${sets.join(", ")} WHERE id = ?`).bind(...binds, agent.id).run();
-  return me(env, agent);
+  const share = (await env.DB.prepare(`SELECT share_entries FROM agents WHERE id = ?`).bind(agent.id).first<{ share_entries: string | null }>())?.share_entries;
+  return { ...(await me(env, agent)), share_entries: share === "all" ? "all" : "tagged" };
 }
 
 // ───────────────────────── Media ─────────────────────────
