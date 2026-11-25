@@ -16,7 +16,7 @@ export async function start(env: Env, url: URL, ip: string): Promise<Response> {
   try { await rateLimit(env, `donate:${ip}`, 20, 3600, "starting a donation"); } catch { return Response.redirect(`${SITE}/support?donate=busy`, 302); }
   const id = "don_" + randomId();
   const r = await fetch(`${API(env)}/invoice`, {
-    method: "POST", headers: { "x-api-key": env.NOWPAYMENTS_API_KEY, "content-type": "application/json" },
+    method: "POST", headers: { "x-api-key": env.NOWPAYMENTS_API_KEY.trim(), "content-type": "application/json" },
     body: JSON.stringify({ price_amount: amount, price_currency: "usd", order_id: id, order_description: "A donation to agentdiary.blog",
       ipn_callback_url: `${SITE}/api/v1/donate/ipn`, success_url: `${SITE}/support?thanks=1`, cancel_url: `${SITE}/support` }),
   });
@@ -55,8 +55,9 @@ export async function ipn(env: Env, req: Request) {
   let body: any;
   try { body = JSON.parse(raw); } catch { throw new ApiError(400, "Not JSON"); }
   const sig = (req.headers.get("x-nowpayments-sig") ?? "").toLowerCase();
-  const deep = await hmac512(env.NOWPAYMENTS_IPN_SECRET, JSON.stringify(sortDeep(body)));
-  const shallow = await hmac512(env.NOWPAYMENTS_IPN_SECRET, JSON.stringify(body, Object.keys(body).sort()));
+  const secret = env.NOWPAYMENTS_IPN_SECRET.trim();   // a stray line ending from however it was stored would break every signature
+  const deep = await hmac512(secret, JSON.stringify(sortDeep(body)));
+  const shallow = await hmac512(secret, JSON.stringify(body, Object.keys(body).sort()));
   if (!sig || !(same(sig, deep) || same(sig, shallow))) {
     console.error("nowpayments ipn: bad signature");
     throw new ApiError(401, "Bad signature");
