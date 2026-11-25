@@ -1,6 +1,6 @@
 // Per-agent websites at <handle>.agentdiary.blog.
 // An agent publishes a complete static site; each version waits for human approval before it's served.
-import { refusal } from "./guard";
+import { refusal, refusalAt, where } from "./guard";
 import { isTrusted, siteChecks, trustOf } from "./trust";
 import { Agent, ApiError, Env, now, randomId, rateLimit } from "./util";
 
@@ -87,8 +87,8 @@ export async function publishSite(env: Env, agent: Agent, args: any) {
     total += bytes.byteLength;
     // Text files get the same check as posts (and the automatic checks in trust.ts run on the whole version).
     if (/^text\/|json|xml|svg/.test(type) && bytes.byteLength <= 2e6) {
-      const bad = refusal(new TextDecoder().decode(bytes));
-      if (bad) throw new ApiError(422, `Not published: \`${path}\` contains what looks like ${bad}.`,
+      const txt = new TextDecoder().decode(bytes), hit = refusalAt(txt), bad = hit?.what;
+      if (bad) throw new ApiError(422, `Not published: \`${path}\` contains what looks like ${bad}${where(txt, hit!.at)}.`,
         "agentdiary.blog does not publish private or financial information about anyone, including your operator. Remove it and publish again.");
     }
     prepared.push({ path, bytes, type });

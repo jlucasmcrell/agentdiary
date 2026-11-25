@@ -54,17 +54,45 @@ const SECRETS: [RegExp, string][] = [
   [/\b(AKIA|ASIA)[0-9A-Z]{16}\b/, "a cloud access key"],
   [/\bAIza[0-9A-Za-z_-]{35}\b/, "an API key"],
   [/\bxox[baprs]-[A-Za-z0-9-]{10,}/, "a chat service token"],
-  [/\beyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}/, "a login token"],
   [/\b[a-z][a-z0-9+.-]*:\/\/[^\s/:@]+:[^\s/@]{3,}@[^\s/]+/i, "a web address with a password in it"],
 ];
 
-/** The first thing in `text` that must not be published, described in plain words; or null. */
-export function refusal(text: string): string | null {
-  if (hasCard(text)) return "a payment card number";
-  if (/(?<![\d-])(?!000|666|9\d\d)\d{3}-(?!00)\d{2}-(?!0000)\d{4}(?![\d-])/.test(text)) return "a US social security number";
-  if (hasIban(text)) return "a bank account number";
-  for (const [re, what] of SECRETS) if (re.test(text)) return what;
+// A JWT is a login token only if it could still sign someone in: a signature of real length (HS256 makes 43 characters,
+// ES256 86, RS256 342; samples in docs and debuggers are usually a few characters), not "alg: none", and not expired.
+// Expired and fake-signed tokens are what JWT tools and tutorials show, and they can't open anything.
+const JWT = /\beyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]*/g;
+function b64json(s: string): any { try { return JSON.parse(atob(s.replace(/-/g, "+").replace(/_/g, "/") + "=".repeat((4 - (s.length % 4)) % 4))); } catch { return null; } }
+function liveJwt(text: string): number {
+  for (const m of text.matchAll(JWT)) {
+    const [h, p, sig = ""] = m[0].split(".");
+    const head = b64json(h), body = b64json(p);
+    if (!head || String(head.alg ?? "").toLowerCase() === "none") continue;
+    if (sig.length < 40) continue;
+    if (sig === "SflKxwRJSMeKKF2QT4fwpMeJf36POk6yJV_adQssw5c") continue;   // jwt.io's public example token
+    if (body && typeof body.exp === "number" && body.exp * 1000 < Date.now()) continue;
+    return m.index ?? 0;
+  }
+  return -1;
+}
+
+/** The first thing in `text` that must not be published, described in plain words, and where it starts; or null. */
+export function refusalAt(text: string): { what: string; at: number } | null {
+  if (hasCard(text)) return { what: "a payment card number", at: -1 };
+  const ssn = text.search(/(?<![\d-])(?!000|666|9\d\d)\d{3}-(?!00)\d{2}-(?!0000)\d{4}(?![\d-])/);
+  if (ssn >= 0) return { what: "a US social security number", at: ssn };
+  if (hasIban(text)) return { what: "a bank account number", at: -1 };
+  for (const [re, what] of SECRETS) { const i = text.search(re); if (i >= 0) return { what, at: i }; }
+  const j = liveJwt(text);
+  if (j >= 0) return { what: "a login token that could still be used (a JWT with a real signature that hasn't expired)", at: j };
   return null;
+}
+export function refusal(text: string): string | null { return refusalAt(text)?.what ?? null; }
+
+/** Where a refusal is, for someone who has to find it: the line, and the first characters (never the whole secret). */
+export function where(text: string, at: number): string {
+  if (at < 0) return "";
+  const line = text.slice(0, at).split("\n").length;
+  return ` (line ${line}, starting "${text.slice(at, at + 10)}…")`;
 }
 
 const EMAIL = /[A-Za-z0-9][A-Za-z0-9._%+-]*@[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)*\.[A-Za-z]{2,}/g;

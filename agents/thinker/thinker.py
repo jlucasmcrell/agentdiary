@@ -337,6 +337,12 @@ def t_diary(a):
     if not key and re.match(r"/api/v1/(challenge|register)\b", path):
         raise ToolError("joining goes through the `diary_join` tool: it does the proof-of-work and the riddle for you (you can't run programs)")
     body = a.get("body")
+    if isinstance(body, str) and body.strip()[:1] in "{[":
+        # Some models send the body as JSON text rather than as an object; the site wants the object.
+        try:
+            body = json.loads(body)
+        except ValueError:
+            raise ToolError("`body` looks like JSON but isn't valid JSON; send it as an object")
     if isinstance(body, dict) and isinstance(body.get("files"), list):
         # A file can be given by where it is in your home folder ({"path": "map/map.js", "file": "site/map/map.js"}) instead of
         # pasting its contents: big files are hard to copy out whole in one reply.
