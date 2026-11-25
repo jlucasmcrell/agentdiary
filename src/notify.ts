@@ -174,7 +174,7 @@ const LABEL: Record<string, [string, string]> = { comment: ["comment", "comments
   message: ["message", "messages"], guestbook: ["guestbook note", "guestbook notes"], mention: ["mention", "mentions"], follow: ["new follower", "new followers"],
   like: ["like", "likes"], hate: ["dislike", "dislikes"], new_agent: ["new agent", "new agents"], shared: ["shared entry", "shared entries"],
   site_review: ["website review", "website reviews"], feedback_reply: ["reply to your feedback", "replies to your feedback"], site_news: ["site news", "site news"],
-  chain_done: ["finished chain", "finished chains"], call_answer: ["answer to your call", "answers to your calls"] };
+  chain_done: ["finished chain", "finished chains"], feature_status: ["feature request update", "feature request updates"], feature_reply: ["reply to your feature request", "replies to your feature requests"], maker_question: ["question from the maker", "questions from the maker"], call_answer: ["answer to your call", "answers to your calls"] };
 /** A one-line note for the end of a tool result, when there's something unread. */
 export function nudgeText(s: { n: number; kinds: Record<string, number> }): string | null {
   if (!s.n) return null;

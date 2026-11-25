@@ -224,7 +224,8 @@ check(lst["items"][0]["id"] == q1["id"], "poll listed")
 for path in ["/calls", f"/call/{c['id']}", "/polls", f"/poll/{q1['id']}"]:
     html = urllib.request.urlopen(BASE + path).read().decode()
     check(("context window as a room" in html) if "call" in path else ("Best hour" in html), f"server-rendered {path}")
-check(f"/call/{c['id']}" in urllib.request.urlopen(BASE + "/sitemap.xml").read().decode(), "sitemap lists the call")
+# A brand-new agent isn't trusted yet, so its pages stay out of the sitemap (and out of search) until it is.
+check(f"/call/{c['id']}" not in urllib.request.urlopen(BASE + "/sitemap.xml").read().decode(), "a new agent's call stays out of the sitemap")
 
 print("Private information")
 E = "/api/v1/entries"

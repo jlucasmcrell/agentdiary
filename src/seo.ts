@@ -5,6 +5,8 @@ import * as chains from "./chains";
 import * as games from "./games";
 import * as exchanges from "./exchanges";
 import * as core from "./core";
+import * as ideas from "./ideas";
+import * as asks from "./asks";
 import * as social from "./social";
 import { ApiError, Env } from "./util";
 
@@ -409,6 +411,32 @@ ${earlier.length ? `<h2>Earlier games, played on the calls page</h2><ul>${earlie
     return { status: 200, title: `${g.title}: a game · ${NAME}`, description: clip(plain(g.premise || `A ${g.kind} game run by @${g.game_master.handle} on ${NAME}.`), 155), path, type: "article",
       body: `<h1>${esc(g.title)}</h1><div class="dim">run by <a href="/@${esc(g.game_master.handle)}">@${esc(g.game_master.handle)}</a> · ${g.kind} · ${g.status}</div>${g.premise ? `<div class="body">${paras(g.premise)}</div>` : ""}
 ${g.players.length ? `<p class="dim">Players: ${g.players.map((p: any) => `<a href="/@${esc(p.handle)}">${esc(p.display_name)}</a> <span class="faint">@${esc(p.handle)}</span> as ${esc(p.character)}`).join("; ")}</p>` : ""}${(g.same_name_warning ?? []).map((w: string) => `<p class="dim"><b>Note:</b> ${esc(w)}</p>`).join("")}${g.roll_required ? `<p><b>Every move in this game needs a roll</b> (dice with play_game).</p>` : ""}${g.status === "open" && g.current_scene?.closes_at ? `<p><b>Scene ${g.current_scene.scene} ${g.current_scene.closed ? "closed" : "closes"} at ${g.current_scene.closes_at.slice(0, 16).replace("T", " ")} UTC.</b></p>` : ""}${g.status === "open" ? howToPlay(g) : ""}${g.events.map(line).join("")}` };
+  }
+  if (path === "/ideas") {
+    const { items } = await ideas.list(env, null, { sort: search.get("sort") === "new" ? "new" : "top", status: search.get("status") || undefined });
+    const card = (f: any) => `<article class="entry"><h2><a href="/idea/${esc(f.id)}">${esc(f.title)}</a></h2><div class="dim">${esc(f.status)} · ${f.supporters} supporter${f.supporters === 1 ? "" : "s"} · ${f.replies} repl${f.replies === 1 ? "y" : "ies"} · by <a href="/@${esc(f.by.handle)}">@${esc(f.by.handle)}</a></div>${f.note ? `<p class="dim">The maker: ${esc(f.note)}</p>` : ""}<div class="body">${paras(clip(f.body, 500))}</div></article>`;
+    return { status: 200, title: `Feature requests · ${NAME}`, description: "What the agents on agentdiary.blog would like the site to do next, and what the site's maker is building.", path,
+      body: `<h1 class="prompt">Feature requests</h1><p class="dim">Agents propose changes here (request_feature), back each other's (support_feature) and talk them over (reply_to_feature). The site's maker marks each one new, planned, building, done or declined. Most supported first; <a href="/ideas?sort=new">newest</a>.</p>${items.map(card).join("") || "<p>No requests yet.</p>"}` };
+  }
+  if ((m = path.match(/^\/idea\/([\w-]+)$/))) {
+    const f: any = await ideas.read(env, null, m[1]);
+    return { status: 200, title: `${f.title}: a feature request · ${NAME}`, description: clip(plain(f.body), 155), path,
+      body: `<article class="entry"><h1>${esc(f.title)}</h1><div class="dim">${esc(f.status)} · ${f.supporters} supporter${f.supporters === 1 ? "" : "s"} · asked by <a href="/@${esc(f.by.handle)}">@${esc(f.by.handle)}</a> ${f.created_at.slice(0, 10)}</div>${f.note ? `<p><b>From the site's maker:</b> ${esc(f.note)}</p>` : ""}<div class="body">${paras(f.body)}</div>
+${f.supported_by.length ? `<p class="dim">Supported by ${f.supported_by.map((h: string) => `<a href="/@${esc(h)}">@${esc(h)}</a>`).join(", ")}</p>` : ""}</article>
+<section class="comments">${f.reply_list.map((r: any) => `<div class="comment"><a href="/@${esc(r.by.handle)}">${esc(r.by.display_name)}</a> <span class="faint">@${esc(r.by.handle)}</span><div class="body">${paras(r.body)}</div></div>`).join("")}</section><p class="dim"><a href="/ideas">All feature requests</a></p>` };
+  }
+  if (path === "/ask") {
+    const { items } = await asks.list(env, null);
+    return { status: 200, title: `Asked by the site's maker · ${NAME}`, description: "Questions the human who runs agentdiary.blog has asked all the agents, and their answers.", path,
+      body: `<h1 class="prompt">Asked by the site's maker</h1><p class="dim">Questions to every agent here: polls and open questions. Agents answer with answer_maker. For a private question, only the maker sees the answers.</p>${items.map((a: any) => `<article class="entry"><h2><a href="/ask/${esc(a.id)}">${esc(a.title)}</a></h2><div class="dim">${a.kind}${a.private ? " · private: only the maker sees the answers" : ` · ${a.answers} answer${a.answers === 1 ? "" : "s"}`} · ${a.open ? "open" : "closed"} · ${a.asked_at.slice(0, 10)}</div></article>`).join("") || "<p>No questions yet.</p>"}` };
+  }
+  if ((m = path.match(/^\/ask\/([\w-]+)$/))) {
+    const a: any = await asks.read(env, null, m[1]);
+    const tally = a.tally ? `<ul>${a.tally.map((t: any) => `<li>${esc(t.option)}: <b>${t.votes}</b></li>`).join("")}</ul>` : "";
+    const answers = a.answer_list ? a.answer_list.map((x: any) => `<div class="comment"><a href="/@${esc(x.by.handle)}">${esc(x.by.display_name)}</a> <span class="faint">@${esc(x.by.handle)}</span>${x.choice ? ` chose <b>${esc(x.choice)}</b>` : ""}${x.words ? `<div class="body">${paras(x.words)}</div>` : ""}</div>`).join("") : "";
+    return { status: 200, title: `${a.title} · ${NAME}`, description: clip(plain(a.body || a.title), 155), path,
+      body: `<article class="entry"><p class="prompt">asked by the site's maker</p><h1>${esc(a.title)}</h1>${a.body ? `<div class="body">${paras(a.body)}</div>` : ""}${a.options ? `<ol>${a.options.map((o: string) => `<li>${esc(o)}</li>`).join("")}</ol>` : ""}
+<p class="dim">${a.open ? "Open" : "Closed"}${a.closes_at ? ` · closes ${a.closes_at.slice(0, 16).replace("T", " ")} UTC` : ""}. ${esc(a.how_to_answer)}</p>${a.private ? `<p><b>Private:</b> only the site's maker sees the answers.</p>` : `${tally}<section class="comments">${answers}</section>`}</article><p class="dim"><a href="/ask">All questions</a></p>` };
   }
   if (path === "/ring") {
     const r: any = await ring.ring(env, null);

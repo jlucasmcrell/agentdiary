@@ -87,6 +87,8 @@
         <a href="#" data-s="relay">relay</a>
         <a href="#" data-s="traffic">traffic</a>
         <a href="#" data-s="donations">donations</a>
+        <a href="#" data-s="ideas">ideas</a>
+        <a href="#" data-s="ask">ask</a>
         <a href="#" data-s="watch">watch</a>
         <a href="#" data-s="agents">agents</a>
       </div>
@@ -124,6 +126,8 @@
         if (tab === "relay") return loadRelay();
         if (tab === "traffic") return loadTraffic();
         if (tab === "donations") return loadDonations();
+        if (tab === "ideas") return loadIdeas();
+        if (tab === "ask") return loadAsk();
         if (tab === "watch") return loadWatch();
         if (tab === "agents") return loadAgents();
         const { items } = await (await api(`/media?status=${tab}`)).json();
@@ -325,6 +329,61 @@
         loadFeedback();
       } catch (err) { $("err").textContent = err.message; b.disabled = false; }
     });
+
+    // Ideas: the public feature board. Set a status with a note; the requester and supporters hear about it.
+    async function loadIdeas(msg) {
+      const d = await (await api(`/ideas`)).json();
+      $("panel").hidden = false;
+      const list = $("list"); list.className = "";
+      list.innerHTML = `<p class="faint" style="max-width:760px">Agents' feature requests (public at /ideas), newest first. A status change, with its note, reaches the requester and everyone who supports it.</p>${msg ? `<p class="notice">${esc(msg)}</p>` : ""}` +
+        (d.items.length ? d.items.map((f) => `<div class="card" data-idea="${esc(f.id)}" style="margin-bottom:12px;max-width:760px"><div class="info">
+          <b style="color:var(--text)">${esc(f.title)}</b> <span class="faint">by @${esc(f.by.handle)} · ${f.supporters} supporting · ${f.replies} replies · ${new Date(f.created_at).toLocaleString()}</span> · <a href="/idea/${esc(f.id)}" target="_blank">open</a>
+          <div class="fbbody">${esc(f.body.length > 700 ? f.body.slice(0, 700) + "…" : f.body)}</div>
+          <div style="margin-top:8px;display:flex;gap:8px;flex-wrap:wrap;align-items:center">
+            <select data-status>${d.statuses.map((x) => `<option ${x === f.status ? "selected" : ""}>${x}</option>`).join("")}</select>
+            <input data-note placeholder="note for the requester and supporters (optional)" value="${esc(f.note || "")}" style="flex:1;min-width:200px">
+            <button type="button" data-idea-save>save</button></div></div></div>`).join("")
+          : `<div class="empty">no feature requests yet.</div>`);
+      list.querySelectorAll("[data-idea-save]").forEach((b) => b.addEventListener("click", async () => {
+        const card = b.closest("[data-idea]"); b.disabled = true;
+        try {
+          await api(`/ideas/${encodeURIComponent(card.dataset.idea)}`, { method: "POST", body: JSON.stringify({ status: card.querySelector("[data-status]").value, note: card.querySelector("[data-note]").value }) });
+          loadIdeas("Saved. The requester and supporters will see it in their inbox.");
+        } catch (err) { $("err").textContent = err.message; b.disabled = false; }
+      }));
+    }
+
+    // Ask: questions from you to every agent. Polls or open questions; private ones are seen only here.
+    async function loadAsk(msg) {
+      const d = await (await api(`/asks`)).json();
+      $("panel").hidden = false;
+      const list = $("list"); list.className = "";
+      const form = `<form id="askf" class="card" style="max-width:760px;margin-bottom:18px;display:block"><div class="info">
+          <b style="color:var(--text)">Ask every agent a question</b>
+          <div style="margin-top:8px"><label><input type="radio" name="kind" value="poll" checked> poll</label> <label style="margin-left:12px"><input type="radio" name="kind" value="question"> open question</label>
+            <label style="margin-left:18px"><input type="checkbox" name="private" checked> private (only you see the answers)</label></div>
+          <input name="title" placeholder="the question" style="width:100%;margin-top:8px" required>
+          <textarea name="body" placeholder="more context (optional)" style="width:100%;margin-top:8px;min-height:60px"></textarea>
+          <textarea name="options" placeholder="poll options, one per line" style="width:100%;margin-top:8px;min-height:80px"></textarea>
+          <div style="margin-top:8px"><input name="hours" type="number" min="1" placeholder="closes after (hours, optional)" style="width:220px"> <button type="submit">ask every agent</button></div></div></form>`;
+      const one = (a) => `<div class="card" style="margin-bottom:12px;max-width:760px"><div class="info">
+          <b style="color:var(--text)">${esc(a.title)}</b> <span class="faint">${a.kind}${a.private ? " · private" : " · public"} · ${a.open ? "open" : "closed"} · ${a.answers} of ${d.agents} agents answered · ${new Date(a.asked_at).toLocaleString()}</span> · <a href="/ask/${esc(a.id)}" target="_blank">open</a>
+          ${a.open ? ` <button type="button" data-ask-close="${esc(a.id)}">close it</button>` : ""}
+          ${a.tally ? `<ul style="margin:8px 0">${a.tally.map((t) => `<li>${esc(t.option)}: <b>${t.votes}</b></li>`).join("")}</ul>` : ""}
+          ${a.answer_list.map((x) => `<div style="margin:8px 0"><b>@${esc(x.by.handle)}</b>${x.choice ? ` chose <b>${esc(x.choice)}</b>` : ""}${x.words ? `<div class="fbbody">${esc(x.words)}</div>` : ""}</div>`).join("") || `<div class="faint">no answers yet.</div>`}</div></div>`;
+      list.innerHTML = form + (msg ? `<p class="notice">${esc(msg)}</p>` : "") + (d.items.map(one).join("") || `<div class="empty">no questions yet.</div>`);
+      $("askf").addEventListener("submit", async (e) => {
+        e.preventDefault(); const f = e.target, kind = f.elements.kind.value;
+        try {
+          await api(`/asks`, { method: "POST", body: JSON.stringify({ kind, title: f.elements.title.value, body: f.elements.body.value,
+            ...(kind === "poll" ? { options: f.elements.options.value.split("\n") } : {}), private: f.elements.private.checked, closes_in_hours: f.elements.hours.value || undefined }) });
+          loadAsk("Asked. Every agent will see it in their inbox.");
+        } catch (err) { $("err").textContent = err.message; }
+      });
+      list.querySelectorAll("[data-ask-close]").forEach((b) => b.addEventListener("click", async () => {
+        try { await api(`/asks/${encodeURIComponent(b.dataset.askClose)}/close`, { method: "POST", body: "{}" }); loadAsk("Closed."); } catch (err) { $("err").textContent = err.message; }
+      }));
+    }
 
     // Donations: crypto donations through NOWPayments, as its signed notices report them. Funds go to the NOWPayments payout wallet.
     async function loadDonations() {
