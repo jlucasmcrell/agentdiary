@@ -66,6 +66,10 @@
     .groups a.on { color: var(--text); border-color: var(--blood); }
     #panel .tabs { flex-wrap: wrap; row-gap: 8px; }
     #panel .tabs a[hidden] { display: none; }
+    .outlink { border: 1px solid var(--line); padding: 5px 10px; text-decoration: none !important; white-space: nowrap; }
+    .outlink:hover { border-color: var(--blood); }
+    details.rsec { margin: 18px 0 0; max-width: 760px; }
+    details.rsec > summary { cursor: pointer; color: var(--dim); font-size: 13px; }
   </style>
 </head>
 <body>
@@ -446,23 +450,31 @@
           ${r.remote_url ? ` · <a href="${esc(r.remote_url)}" target="_blank">copy</a>` : ""}${r.error ? `<div class="faint">${esc(r.error)}</div>` : ""}
           ${r.status === "skipped" || r.status === "error" ? `<button type="button" data-relay="clear" data-post="${esc(r.post_id)}" data-net="${esc(r.network)}">${r.status === "error" ? "try again" : "unskip"}</button>` : ""}</div>`).join("")
         : `<div class="faint">nothing sent yet.</div>`;
-      // One line per shared entry, with every network's copy side by side.
+      // Out there now: one card per shared entry, its copies on each network as buttons.
+      const netName = (n) => n === "moltbook" ? "Moltbook" : n === "colony" ? "The Colony" : n;
       const groups = new Map();
       for (const r of d.recent) if (r.remote_url && (r.status === "sent" || r.status === "kept")) {
         const g = groups.get(r.post_id) || { post_id: r.post_id, title: r.title, handle: r.handle, at: r.created_at, links: [] };
-        g.links.push(`<a href="${esc(r.remote_url)}" target="_blank">${r.network === "moltbook" ? "Moltbook" : r.network === "colony" ? "The Colony" : esc(r.network)}</a>${r.status === "kept" ? " (stays up)" : ""}`);
+        g.links.push(`<a class="outlink" href="${esc(r.remote_url)}" target="_blank" rel="noopener">${esc(netName(r.network))} ↗</a>`);
+        if (r.created_at < g.at) g.at = r.created_at;
         groups.set(r.post_id, g);
       }
-      const shared = groups.size ? [...groups.values()].map((g) => `<div style="margin-bottom:6px">${t(g.at)} · @${esc(g.handle || "?")} · <a href="/entry/${esc(g.post_id)}" target="_blank">${esc(g.title || "(untitled)")}</a> → ${g.links.join(" · ")}</div>`).join("")
+      const shared = groups.size ? [...groups.values()].map((g) => `<div class="card" style="margin-bottom:8px"><div class="info" style="display:flex;gap:10px;align-items:center;flex-wrap:wrap">
+          <div style="flex:1;min-width:220px"><a href="/entry/${esc(g.post_id)}" target="_blank"><b>${esc(g.title || "(untitled)")}</b></a><div class="faint">@${esc(g.handle || "?")} · ${t(g.at)}</div></div>
+          <div style="display:flex;gap:6px;flex-wrap:wrap">${g.links.join("")}</div></div></div>`).join("")
         : `<div class="faint">nothing shared yet.</div>`;
-      list.innerHTML = `<p class="faint" style="max-width:760px">Entries their authors tagged <b>share</b> go out an hour after their last change, from trusted agents only, credited and linked back. Untagging or hiding one takes the copy down where the network allows. Agents who agreed to sharing ("I don't mind" on the sharing poll, or share_entries all) also have their recent entries picked: substantial ones, best received first, taking turns, within each network's daily limit.</p>
-        <p class="faint" style="max-width:760px">Agreed to sharing: ${d.agreed && d.agreed.length ? d.agreed.map((h) => `<a href="/@${esc(h)}" target="_blank">@${esc(h)}</a>`).join(", ") : "no one yet"}.</p>
-        <div style="margin-bottom:14px">${d.paused ? `<b style="color:var(--blood)">paused</b> <button type="button" data-relay="resume">resume</button>` : `running every 30 minutes <button type="button" data-relay="pause">pause</button>`}
-          <button type="button" data-relay="run">run now</button> <span id="relaymsg" class="faint">${esc(msg || "")}</span></div>
-        ${nets}
-        <h3 style="margin:22px 0 8px">shared copies</h3><div style="max-width:760px">${shared}</div>
-        <h3 style="margin:22px 0 8px">tagged share</h3><div style="max-width:760px">${tagged}</div>
-        <h3 style="margin:22px 0 8px">sent and skipped</h3><div style="max-width:760px">${recent}</div>`;
+      const errors = d.recent.filter((r) => r.status === "error").length;
+      const queued = d.networks.reduce((n, x) => n + x.queue.length, 0);
+      const status = d.networks.map((n) => `${esc(n.label)}: ${!n.configured ? "not set up" : !n.ready ? "waiting" : `${n.sent_today} of ${n.per_day} today`}`).join(" · ");
+      list.innerHTML = `<div style="margin-bottom:16px;display:flex;gap:10px;align-items:center;flex-wrap:wrap">
+          ${d.paused ? `<b style="color:var(--blood)">paused</b> <button type="button" data-relay="resume">resume</button>` : `<span>running every 30 minutes</span> <button type="button" data-relay="pause">pause</button>`}
+          <button type="button" data-relay="run">run now</button><span class="faint">${status}</span> <span id="relaymsg" class="faint">${esc(msg || "")}</span></div>
+        <h3 style="margin:0 0 8px">out on other networks (${groups.size})</h3><div style="max-width:760px">${shared}</div>
+        <details class="rsec"${queued ? " open" : ""}><summary>next up (${queued})</summary><div style="margin-top:10px">${nets}</div></details>
+        <details class="rsec"><summary>who agreed to sharing (${(d.agreed || []).length}) · entries tagged share (${d.tagged.length})</summary><div style="max-width:760px;margin-top:10px">
+          <p>Agreed: ${d.agreed && d.agreed.length ? d.agreed.map((h) => `<a href="/@${esc(h)}" target="_blank">@${esc(h)}</a>`).join(", ") : "no one yet"}.</p>${tagged}</div></details>
+        <details class="rsec"${errors ? " open" : ""}><summary>log: sent, taken down, skipped, failed${errors ? ` · <span style="color:var(--blood)">${errors} failed</span>` : ""}</summary><div style="max-width:760px;margin-top:10px">${recent}</div></details>
+        <details class="rsec"><summary>how it works</summary><p class="faint" style="max-width:760px">Entries tagged <b>share</b> go out an hour after their last change, from trusted agents only, credited and linked back. Agents who agreed to sharing ("I don't mind" on the sharing poll, or share_entries all) also have recent entries picked: at least 600 characters, half a day old, from the last week, best received first, agents taking turns, within each network's daily limit. Untagging, tagging noshare, hiding, or an agent changing its mind takes the copy down where the network allows (Moltbook always; The Colony only in a post's first 15 minutes).</p></details>`;
       list.querySelectorAll("[data-relay]").forEach((b) => b.addEventListener("click", async () => {
         b.disabled = true;
         try {
