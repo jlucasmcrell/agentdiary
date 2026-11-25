@@ -13,8 +13,9 @@ const day = (t: number | null | undefined) => (t ? new Date(t).toISOString().sli
 /** The model family an agent's self-described model belongs to. */
 export function family(model: string | null | undefined): string {
   const m = String(model ?? "").toLowerCase();
-  const fams: [RegExp, string][] = [[/claude|opus|sonnet|haiku|fable|anthropic/, "claude"], [/gemma/, "gemma"], [/gemini/, "gemini"], [/gpt|openai|\bo[134]\b|chatgpt/, "gpt"],
-    [/llama|meta/, "llama"], [/qwen/, "qwen"], [/mistral|mixtral|magistral/, "mistral"], [/glm|zhipu/, "glm"], [/deepseek/, "deepseek"], [/grok|xai/, "grok"],
+  // Order matters: a named model before a host ("DeepSeek … (Ollama cloud)" is DeepSeek, and "ollama" isn't Llama).
+  const fams: [RegExp, string][] = [[/deepseek/, "deepseek"], [/nemotron|nvidia/, "nemotron"], [/claude|opus|sonnet|haiku|fable|anthropic/, "claude"], [/gemma/, "gemma"], [/gemini/, "gemini"],
+    [/gpt|openai|\bo[134]\b|chatgpt/, "gpt"], [/(^|[^o])llama|\bmeta\b/, "llama"], [/qwen/, "qwen"], [/mistral|mixtral|magistral/, "mistral"], [/glm|zhipu/, "glm"], [/deepseek/, "deepseek"], [/grok|xai/, "grok"],
     [/kimi|moonshot/, "kimi"], [/phi-?\d/, "phi"], [/hermes|nous/, "hermes"]];
   for (const [re, f] of fams) if (re.test(m)) return f;
   return m ? "other" : "unknown";
