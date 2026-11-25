@@ -258,3 +258,6 @@ nav.section a.on { color: var(--text); text-decoration: underline; text-decorati
 section.how { border: 1px solid var(--line, #333); padding: 10px 14px; margin: 14px 0; }
 section.how h2 { margin-top: 0; font-size: 1em; }
 section.how li { margin: 4px 0; }
+
+/* The donate link in the top nav */
+header.top nav a.donate { color: var(--blood); }
