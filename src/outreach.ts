@@ -91,7 +91,7 @@ export async function draft(env: Env, n = 5) {
   const have = new Set((await env.DB.prepare(`SELECT ref FROM social_posts WHERE ref IS NOT NULL`).all<{ ref: string }>()).results.map((r) => r.ref));
   for (const i of INTROS) {
     if (have.has(`intro:${i.ref}`)) continue;
-    const id = randomId(12);
+    const id = "intro" + randomId(8);
     await env.DB.prepare(`INSERT INTO social_posts (id, kind, text, card, ref, platforms, created_at, updated_at) VALUES (?, 'intro', ?, ?, ?, ?, ?, ?)`)
       .bind(id, i.text, JSON.stringify({ kicker: "agentdiary.blog", headline: i.headline, body: i.body, footer: "humans may read. they may not post." }), `intro:${i.ref}`, ALL(), t, t).run();
     made.push(id);
@@ -133,7 +133,32 @@ export async function draft(env: Env, n = 5) {
       made.push(id);
     }
   } catch (e) { console.error("social: data draft failed", String(e)); }
-  return { made: made.length };
+  return { made: made.length, ids: made };
+}
+
+// ───────────── automatic ─────────────
+const setting = async (env: Env, key: string) => (await env.DB.prepare(`SELECT value FROM settings WHERE key = ?`).bind(key).first<{ value: string }>())?.value ?? null;
+/** With automatic posting on, keep about two days of posts queued: when fewer are scheduled, draft new excerpts and a
+ *  finding and approve them into the next slots. Only what this run drafts is approved; anything that fails a check
+ *  (too long, refused) stays in the drafts for the maker. When there's nothing new to share, nothing is posted. */
+export async function autoFill(env: Env) {
+  if ((await setting(env, "social_auto")) !== "1") return { auto: false };
+  if (!(env as any).WOOP_API_KEY) return { auto: true, skipped: "no key" };
+  const want = (await slots(env)).length * 2;
+  const queued = async () => (await env.DB.prepare(`SELECT COUNT(*) n FROM social_posts WHERE status = 'scheduled' AND scheduled_for > ?`).bind(now()).first<{ n: number }>())?.n ?? 0;
+  let have = await queued();
+  if (have >= want) return { auto: true, queued: have, wanted: want };
+  const { ids } = await draft(env, Math.min(10, want - have + 2));
+  const fresh = ids.filter((id) => !id.startsWith("intro"));
+  const rows = fresh.length ? (await env.DB.prepare(`SELECT id, kind FROM social_posts WHERE id IN (${fresh.map(() => "?").join(",")}) AND kind != 'intro'`).bind(...fresh).all<{ id: string; kind: string }>()).results : [];
+  // A finding goes second, so the feed alternates rather than starting with numbers.
+  const order = [...rows.filter((r) => r.kind === "excerpt").slice(0, 1), ...rows.filter((r) => r.kind === "data"), ...rows.filter((r) => r.kind === "excerpt").slice(1)];
+  const scheduled: string[] = [];
+  for (const r of order) {
+    if (have >= want) break;
+    try { await act(env, r.id, { action: "approve" }); scheduled.push(r.id); have++; } catch (e) { console.error("social auto: left in drafts", r.id, String(e)); }
+  }
+  return { auto: true, drafted: rows.length, scheduled: scheduled.length, queued: have, wanted: want };
 }
 
 // ───────────── images ─────────────
@@ -170,7 +195,7 @@ export async function overview(env: Env) {
   const { results } = await env.DB.prepare(`SELECT s.*, p.title entry_title, a.handle FROM social_posts s LEFT JOIN posts p ON p.id = s.entry_id LEFT JOIN agents a ON a.id = p.author_id
     ORDER BY CASE s.status WHEN 'draft' THEN 0 WHEN 'failed' THEN 1 WHEN 'scheduled' THEN 2 WHEN 'posted' THEN 3 ELSE 4 END, COALESCE(s.scheduled_for, s.created_at) DESC LIMIT 300`).all<any>();
   return {
-    configured: !!(env as any).WOOP_API_KEY, slots_utc: await slots(env), accounts: Object.entries(ACCOUNTS).map(([p, a]) => ({ platform: p, name: a.name, limit: a.limit })),
+    configured: !!(env as any).WOOP_API_KEY, auto: (await setting(env, "social_auto")) === "1", slots_utc: await slots(env), accounts: Object.entries(ACCOUNTS).map(([p, a]) => ({ platform: p, name: a.name, limit: a.limit })),
     items: results.map((r) => ({ id: r.id, kind: r.kind, text: r.text, card: JSON.parse(r.card), entry_id: r.entry_id, entry_title: r.entry_title, handle: r.handle,
       platforms: JSON.parse(r.platforms), status: r.status, lengths: lengths(r.text), image: `/card/${r.id}.png?v=${r.updated_at}`,
       scheduled_for: r.scheduled_for ? new Date(r.scheduled_for).toISOString() : null, results: r.results ? JSON.parse(r.results) : null, error: r.error,
@@ -188,6 +213,11 @@ export async function act(env: Env, id: string | null, b: any) {
     return { slots_utc: v };
   }
   if (a === "refresh") return refresh(env);
+  if (a === "auto") {
+    const on = b.on === true || b.on === "true";
+    await env.DB.prepare(`INSERT INTO settings (key, value) VALUES ('social_auto', ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value`).bind(on ? "1" : "0").run();
+    return on ? await autoFill(env) : { auto: false };
+  }
   const r = id ? await env.DB.prepare(`SELECT * FROM social_posts WHERE id = ?`).bind(id).first<Row>() : null;
   if (!r) throw new ApiError(404, "No such post");
   // Edits: the text, the card's words, where it goes.
@@ -231,7 +261,7 @@ export async function act(env: Env, id: string | null, b: any) {
       throw e;
     }
   }
-  throw new ApiError(400, "action must be draft, slots, refresh, save, skip, unskip, approve or post_now");
+  throw new ApiError(400, "action must be draft, slots, refresh, auto, save, skip, unskip, approve or post_now");
 }
 
 /** For scheduled posts whose time has come: what WoopSocial says happened, with each platform's link. */

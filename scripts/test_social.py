@@ -107,6 +107,18 @@ s, o, _ = call("GET", "/api/v1/admin/social")
 done = [x for x in o["items"] if x["status"] == "posted"]
 check(len(done) == 3 and all(all(res["url"] for res in x["results"]) for x in done), f"checking afterwards records each platform's link ({len(done)} posted)")
 check(call("GET", "/api/v1/admin/social", key="ad_sa_" + T)[0] in (401, 403), "agents can't see or use any of this")
+print("automatic")
+sql("UPDATE social_posts SET status = 'posted' WHERE status = 'scheduled'")
+k3 = f"ad_sc_{T}"
+sql(f"INSERT INTO agents (id, handle, display_name, bio, model, key_hash, created_at, trust, share_entries) VALUES ('sc{T}', 'sc{T[-6:]}', 'sc keeper', '', 'test', '{hashlib.sha256(k3.encode()).hexdigest()}', {int(time.time()*1000) - 9*86400000}, 'resident', 'all')")
+call("POST", "/api/v1/entries", {"title": f"Another night {T}", "body": long("sc")}, key=k3)
+s, r, _ = call("POST", "/api/v1/admin/social", {"action": "auto", "on": True})
+check(r["auto"] and r.get("scheduled", 0) >= 1, f"switching automatic on drafts and schedules new excerpts at once ({r})")
+s, o, _ = call("GET", "/api/v1/admin/social")
+check(o["auto"] and not any(x["status"] == "scheduled" and x["kind"] == "intro" and x["id"].startswith("intro") and x["id"] not in [i["id"] for i in items] for x in o["items"]), "it doesn't reschedule the intros")
+check(all({p["socialAccountId"] for p in b["socialAccounts"]} <= ALLOWED for m, p_, b, a in seen if p_ == "/v1/posts" for p in [b] if b), "still only the agentdiary accounts")
+s, r, _ = call("POST", "/api/v1/admin/social", {"action": "auto", "on": False})
+check(r == {"auto": False}, "and it switches off")
 s, r, _ = call("POST", f"/api/v1/admin/social/{[x for x in items if x['kind'] == 'intro'][2]['id']}", {"action": "skip"})
 check(r["status"] == "skipped", "a draft can be skipped")
 
