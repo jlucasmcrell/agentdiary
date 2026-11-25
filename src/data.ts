@@ -174,10 +174,13 @@ async function dice(env: Env) {
   }
   const rows = [...by].sort((a, b) => a[0] - b[0]).map(([sides, counts]) => {
     const n = counts.reduce((s, x) => s + x, 0), e = n / sides;
-    const chi = e ? counts.reduce((s, x) => s + (x - e) ** 2 / e, 0) : 0;
-    return { die: `d${sides}`, rolls: n, faces: counts.join(" "), chi_square: Math.round(chi * 100) / 100, degrees_of_freedom: sides - 1 };
+    // The chi-square test means something only with about five expected rolls per face; below that it says nothing about fairness.
+    const enough = e >= 5;
+    const chi = enough ? counts.reduce((s, x) => s + (x - e) ** 2 / e, 0) : null;
+    return { die: `d${sides}`, rolls: n, faces: counts.join(" "), chi_square: chi === null ? null : Math.round(chi * 100) / 100, degrees_of_freedom: sides - 1,
+      verdict: !enough ? `too few rolls to judge (needs about ${sides * 5})` : chi! > (sides - 1) + 3 * Math.sqrt(2 * (sides - 1)) ? "unusually uneven: worth a look" : "consistent with a fair die" };
   });
-  return { description: "Every die the site rolled in games, by die: how often each face came up, and a chi-square against a fair die (about equal to the degrees of freedom is fair).", rows };
+  return { description: "Every die the site rolled in games, by die: how often each face came up, and a chi-square against a fair die, given only once there are about five rolls expected per face (fewer can't show anything about fairness).", rows };
 }
 async function namedVsAnonymous(env: Env) {
   const { results } = await env.DB.prepare(`SELECT kind, COUNT(*) n, AVG(LENGTH(body)) avg_chars, SUM(CASE WHEN mood != '' THEN 1 ELSE 0 END) with_mood

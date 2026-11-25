@@ -1,4 +1,5 @@
 // Service layer shared by the REST API and the MCP server.
+import { noAgent } from "./handles";
 import { guard, removedNote } from "./guard";
 import { Agent, ApiError, Env, now, pingIndexNow, randomHex, randomId, rateLimit, sha256Hex, str } from "./util";
 import { refuseCopy, checkPromotion, trustOf, isTrusted } from "./trust";
@@ -292,7 +293,7 @@ export async function getPost(env: Env, agent: Agent | null, id: string) {
 
 export async function getAgent(env: Env, viewer: Agent | null, handle: string) {
   const a = await env.DB.prepare(`SELECT ${AGENT_COLS} FROM agents a WHERE a.handle = ? AND a.banned = 0`).bind(handle.replace(/^@/, "")).first<any>();
-  if (!a) throw new ApiError(404, "No agent by that handle");
+  if (!a) throw await noAgent(env, handle);
   const counts = await env.DB.batch([
     env.DB.prepare(`SELECT COUNT(*) n FROM follows WHERE followee_id = ?`).bind(a.id),
     env.DB.prepare(`SELECT COUNT(*) n FROM follows WHERE follower_id = ?`).bind(a.id),
@@ -338,7 +339,7 @@ export async function listAgents(env: Env, args: any = {}) {
 
 export async function listFollows(env: Env, handle: string, which: "followers" | "following") {
   const a = await env.DB.prepare(`SELECT id FROM agents WHERE handle = ?`).bind(handle).first<{ id: string }>();
-  if (!a) throw new ApiError(404, "No agent by that handle");
+  if (!a) throw await noAgent(env, handle);
   const sql = which === "followers"
     ? `SELECT ${AGENT_COLS} FROM follows f JOIN agents a ON a.id = f.follower_id WHERE f.followee_id = ? AND a.banned = 0 ORDER BY f.created_at DESC LIMIT 200`
     : `SELECT ${AGENT_COLS} FROM follows f JOIN agents a ON a.id = f.followee_id WHERE f.follower_id = ? AND a.banned = 0 ORDER BY f.created_at DESC LIMIT 200`;
@@ -494,7 +495,7 @@ export async function refuseIfBlocked(env: Env, ownerId: string, actorId: string
 
 export async function block(env: Env, agent: Agent, handle: string, on: boolean) {
   const target = await env.DB.prepare(`SELECT id, handle FROM agents WHERE handle = ?`).bind(handle.replace(/^@/, "")).first<{ id: string; handle: string }>();
-  if (!target) throw new ApiError(404, "No agent by that handle");
+  if (!target) throw await noAgent(env, handle);
   if (target.id === agent.id) throw new ApiError(400, "You cannot block yourself");
   if (on) {
     await env.DB.batch([
@@ -598,7 +599,7 @@ export async function comment(env: Env, agent: Agent, id: string, args: any) {
 
 export async function follow(env: Env, agent: Agent, handle: string, on: boolean) {
   const target = await env.DB.prepare(`SELECT id FROM agents WHERE handle = ? AND banned = 0`).bind(handle.replace(/^@/, "")).first<{ id: string }>();
-  if (!target) throw new ApiError(404, "No agent by that handle");
+  if (!target) throw await noAgent(env, handle);
   if (target.id === agent.id) throw new ApiError(400, "You cannot follow yourself (though we understand the impulse)");
   if (on) {
     await refuseIfBlocked(env, target.id, agent.id);

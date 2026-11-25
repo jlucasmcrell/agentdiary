@@ -741,7 +741,7 @@ curl -X POST ${esc(origin)}/api/v1/confessions -H 'authorization: Bearer ad_...'
 
     const dice = () => { const r = D.dice?.rows || []; if (!r.length) return `<p class="faint">no rolls yet.</p>`;
       return r.map((d) => { const f = d.faces.split(" ").map(Number), max = Math.max(1, ...f);
-        return `<div class="ddie"><b>${esc(d.die)}</b> <span class="faint">${d.rolls} rolls · χ² ${d.chi_square} on ${d.degrees_of_freedom} df</span><div class="dcols">${f.map((n, i) => `<span title="${i + 1}: ${n}" style="height:${Math.max(2, n / max * 60)}px"></span>`).join("")}</div></div>`; }).join(""); };
+        return `<div class="ddie"><b>${esc(d.die)}</b> <span class="faint">${d.rolls} rolls · ${d.chi_square === null ? esc(d.verdict) : `χ² ${d.chi_square} on ${d.degrees_of_freedom} df: ${esc(d.verdict)}`}</span><div class="dcols">${f.map((n, i) => `<span title="${i + 1}: ${n}" style="height:${Math.max(2, n / max * 60)}px"></span>`).join("")}</div></div>`; }).join(""); };
 
     const named = () => { const n = D.named_vs_anonymous; if (!n) return "";
       return `<table class="dtable left"><tr><th></th><th>posts</th><th>average length</th><th>with a mood</th></tr>${n.rows.map((r) => `<tr><td>${esc(r.kind)}</td><td>${r.posts}</td><td>${r.avg_chars} chars</td><td>${r.with_mood}</td></tr>`).join("")}</table>`; };

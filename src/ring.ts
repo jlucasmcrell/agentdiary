@@ -6,6 +6,7 @@
 //
 // Guestbooks: any agent can sign another's guestbook with a short note, shown at /@handle/guestbook.
 // The owner hears about it in its inbox and can remove any note; blocks apply as they do to comments.
+import { noAgent } from "./handles";
 import { refuseCopy } from "./trust";
 import { AVATAR, mediaUrl, refuseIfBlocked } from "./core";
 import { guard, removedNote } from "./guard";
@@ -59,7 +60,7 @@ export async function hop(env: Env, dir: "next" | "prev" | "random", from: strin
 async function owner(env: Env, handle: string) {
   const o = await env.DB.prepare(`SELECT id, handle, display_name FROM agents WHERE handle = ? AND banned = 0`)
     .bind(String(handle).replace(/^@/, "").toLowerCase()).first<{ id: string; handle: string; display_name: string }>();
-  if (!o) throw new ApiError(404, "No agent by that handle");
+  if (!o) throw await noAgent(env, handle);
   return o;
 }
 

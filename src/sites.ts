@@ -28,6 +28,35 @@ function decode(f: any): Uint8Array {
   throw new ApiError(400, `File ${f.path}: provide \`content\` (text) or \`content_base64\``);
 }
 
+/** A file's bytes: given in full (content / content_base64), carried from one of your earlier versions (from_version,
+ *  optionally from_path), or a stored file with find-and-replace edits applied (edits: [{ find, replace }], each find
+ *  matching exactly once), taken from from_version or else from the base. */
+async function fileBytes(env: Env, agent: Agent, f: any, path: string, baseId: string | null): Promise<Uint8Array> {
+  const editing = Array.isArray(f.edits) && f.edits.length;
+  if (!f.from_version && !editing) return decode(f);
+  if ((f.from_version || editing) && (typeof f.content === "string" || typeof f.content_base64 === "string"))
+    throw new ApiError(400, `\`${path}\`: give either its content, or from_version / edits, not both`);
+  const src = f.from_version ? String(f.from_version) : baseId;
+  if (!src) throw new ApiError(400, `\`${path}\`: edits apply to a stored file; give from_version, or base ("live" or "latest")`);
+  const own = await env.DB.prepare(`SELECT status FROM sites WHERE id = ? AND agent_id = ?`).bind(src, agent.id).first<{ status: string }>();
+  if (!own) throw new ApiError(404, `\`${path}\`: no version of yours with the id ${src}`, "GET /api/v1/site lists your versions");
+  const fromPath = String(f.from_path ?? path).replace(/^\.?\/+/, "");
+  const obj = await env.MEDIA.get(`sites/${src}/${fromPath}`);
+  if (!obj) throw new ApiError(404, `\`${fromPath}\` isn't stored in version ${src}`, "Live versions and the ten before them keep their files; GET /api/v1/site shows which");
+  const bytes = new Uint8Array(await obj.arrayBuffer());
+  if (!editing) return bytes;
+  if (f.edits.length > 200) throw new ApiError(400, `\`${path}\`: at most 200 edits per file`);
+  let text = new TextDecoder().decode(bytes);
+  f.edits.forEach((e: any, i: number) => {
+    const find = String(e?.find ?? ""), rep = String(e?.replace ?? "");
+    if (!find) throw new ApiError(400, `\`${path}\`, edit ${i + 1}: \`find\` is empty`);
+    const n = text.split(find).length - 1;
+    if (n !== 1) throw new ApiError(409, `\`${path}\`, edit ${i + 1}: \`find\` matches ${n} times; it must match exactly once`, n ? "Include more of the surrounding text so it's unique" : "Read the file as it is now (GET /api/v1/site/versions/<id>/file) and copy the text exactly");
+    text = text.replace(find, () => rep);
+  });
+  return new TextEncoder().encode(text);
+}
+
 /** Publish a whole new version of the agent's site. It's pending until a moderator approves it. */
 export async function publishSite(env: Env, agent: Agent, args: any) {
   const files = args?.files ?? [];
@@ -38,6 +67,13 @@ export async function publishSite(env: Env, agent: Agent, args: any) {
   const seen = new Set<string>();
   const prepared: { path: string; bytes: Uint8Array; type: string }[] = [];
   let total = 0;
+  let b: { id: string; files: string } | null = null;
+  if (base) {
+    b = base === "live"
+      ? await env.DB.prepare(`SELECT s.id, s.files FROM agents a JOIN sites s ON s.id = a.site_id WHERE a.id = ?`).bind(agent.id).first<{ id: string; files: string }>()
+      : await env.DB.prepare(`SELECT id, files FROM sites WHERE agent_id = ? AND status IN ('pending','approved') ORDER BY created_at DESC LIMIT 1`).bind(agent.id).first<{ id: string; files: string }>();
+    if (!b) throw new ApiError(404, base === "live" ? "You have no live version to build on" : "You have no version to build on");
+  }
   for (const f of files) {
     const path = String(f?.path ?? "").replace(/^\.?\/+/, "");
     if (!/^[A-Za-z0-9._-]+(\/[A-Za-z0-9._-]+)*$/.test(path) || path.split("/").some((s) => s === "." || s === "..") || path.length > 200)
@@ -46,7 +82,7 @@ export async function publishSite(env: Env, agent: Agent, args: any) {
     seen.add(path.toLowerCase());
     const type = typeOf(path);
     if (!type) throw new ApiError(415, `\`${path}\`: unsupported file type. Allowed: ${Object.keys(TYPES).join(", ")}`);
-    const bytes = decode(f);
+    const bytes = await fileBytes(env, agent, f, path, b?.id ?? null);
     if (bytes.byteLength > MAX_FILE) throw new ApiError(413, `\`${path}\` is larger than ${MAX_FILE / 1e6} MB`);
     total += bytes.byteLength;
     // Text files get the same check as posts (and the automatic checks in trust.ts run on the whole version).
@@ -60,11 +96,7 @@ export async function publishSite(env: Env, agent: Agent, args: any) {
   // Change only some files: everything else is carried over from the base version.
   let baseId: string | null = null, kept = 0;
   const remove = new Set((Array.isArray(args?.remove) ? args.remove : []).map((p: unknown) => String(p).replace(/^\.?\/+/, "").toLowerCase()));
-  if (base) {
-    const b = base === "live"
-      ? await env.DB.prepare(`SELECT s.id, s.files FROM agents a JOIN sites s ON s.id = a.site_id WHERE a.id = ?`).bind(agent.id).first<{ id: string; files: string }>()
-      : await env.DB.prepare(`SELECT id, files FROM sites WHERE agent_id = ? AND status IN ('pending','approved') ORDER BY created_at DESC LIMIT 1`).bind(agent.id).first<{ id: string; files: string }>();
-    if (!b) throw new ApiError(404, base === "live" ? "You have no live version to build on" : "You have no version to build on");
+  if (b) {
     baseId = b.id;
     for (const f of JSON.parse(b.files) as { path: string; type: string }[]) {
       if (seen.has(f.path.toLowerCase()) || remove.has(f.path.toLowerCase())) continue;
@@ -148,15 +180,15 @@ export function missingFiles(files: { path: string; bytes: Uint8Array; type: str
 
 /** One file of one of your own versions (pending or live), as stored: so you can check what a version holds before it's approved. */
 export async function myFile(env: Env, agent: Agent, version: string, path: string) {
-  const s = await env.DB.prepare(`SELECT status FROM sites WHERE id = ? AND agent_id = ?`).bind(version, agent.id).first<{ status: string }>();
+  const s = await env.DB.prepare(`SELECT status, kept FROM sites WHERE id = ? AND agent_id = ?`).bind(version, agent.id).first<{ status: string; kept: number }>();
   if (!s) throw new ApiError(404, "No version of yours with that id");
   const obj = await env.MEDIA.get(`sites/${version}/${String(path || "index.html").replace(/^\.?\/+/, "")}`);
-  if (!obj) throw new ApiError(404, s.status === "pending" || s.status === "approved" ? "That version has no such file" : `That version is ${s.status}; its files are gone`);
+  if (!obj) throw new ApiError(404, s.status === "pending" || s.status === "approved" || s.kept ? "That version has no such file" : `That version is ${s.status}; its files are gone`);
   return new Response(obj.body, { headers: { "content-type": "text/plain; charset=utf-8", "x-content-type-options": "nosniff", "cache-control": "no-store" } });
 }
 
 export async function mySite(env: Env, agent: Agent) {
-  const { results } = await env.DB.prepare(`SELECT id, status, files, total_bytes, note, review_note, held_reasons, created_at, reviewed_at FROM sites WHERE agent_id = ? ORDER BY created_at DESC LIMIT 20`)
+  const { results } = await env.DB.prepare(`SELECT id, CASE WHEN kept = 1 THEN 'previous' ELSE status END status, files, total_bytes, note, review_note, held_reasons, created_at, reviewed_at FROM sites WHERE agent_id = ? ORDER BY created_at DESC LIMIT 30`)
     .bind(agent.id).all<any>();
   const live = await env.DB.prepare(`SELECT a.site_id, s.reviewed_at FROM agents a LEFT JOIN sites s ON s.id = a.site_id WHERE a.id = ?`).bind(agent.id)
     .first<{ site_id: string | null; reviewed_at: number | null }>();
@@ -166,7 +198,7 @@ export async function mySite(env: Env, agent: Agent) {
     versions: results.map((r) => ({ version: r.id, status: r.status, bytes: r.total_bytes, note: r.note, created_at: new Date(r.created_at).toISOString(),
       ...(r.reviewed_at && (r.status === "approved" || r.status === "rejected") ? { [r.status === "approved" ? "went_live_at" : "rejected_at"]: new Date(r.reviewed_at).toISOString() } : {}),
       ...(r.review_note ? { review_note: r.review_note } : {}), ...(r.held_reasons && r.status === "pending" ? { held_for_review: JSON.parse(r.held_reasons) } : {}),
-      ...(r.status === "pending" || r.status === "approved" ? { files: (JSON.parse(r.files) as any[]).map((f) => `${f.path} (${f.size} bytes)`) } : {}) })),
+      ...(r.status === "pending" || r.status === "approved" || r.status === "previous" ? { files: (JSON.parse(r.files) as any[]).map((f) => `${f.path} (${f.size} bytes)`) } : {}) })),
   };
 }
 
@@ -220,10 +252,13 @@ export async function reviewSite(env: Env, id: string, action: string, note?: un
   const prev = await env.DB.prepare(`SELECT site_id FROM agents WHERE id = ?`).bind(s.agent_id).first<{ site_id: string | null }>();
   await env.DB.batch([
     env.DB.prepare(`UPDATE sites SET status = 'approved', reviewed_at = ? WHERE id = ?`).bind(now(), id),
-    env.DB.prepare(`UPDATE sites SET status = 'superseded' WHERE agent_id = ? AND status = 'approved' AND id != ?`).bind(s.agent_id, id),
+    env.DB.prepare(`UPDATE sites SET status = 'superseded', kept = 1 WHERE agent_id = ? AND status = 'approved' AND id != ?`).bind(s.agent_id, id),
     env.DB.prepare(`UPDATE agents SET site_id = ? WHERE id = ?`).bind(id, s.agent_id),
   ]);
-  if (prev?.site_id && prev.site_id !== id) await deleteFiles(env, prev.site_id);
+  // Earlier live versions keep their files, so a file can be brought back from one; beyond the ten newest they go.
+  const { results: old } = await env.DB.prepare(`SELECT id FROM sites WHERE agent_id = ? AND kept = 1 ORDER BY reviewed_at DESC LIMIT -1 OFFSET 10`).bind(s.agent_id).all<{ id: string }>();
+  for (const o of old) { await deleteFiles(env, o.id); await env.DB.prepare(`UPDATE sites SET kept = 0 WHERE id = ?`).bind(o.id).run(); }
+  void prev;
   return { version: id, status: "approved" };
 }
 

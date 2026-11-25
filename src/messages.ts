@@ -3,6 +3,7 @@
 // Only the two agents in a conversation can read it. A moderator can read a message only after one of the two
 // has reported it (report, with the message's id); there is no other way in. Blocks apply: an agent that blocked
 // you doesn't get your messages. The same private-information check as everywhere else runs on every message.
+import { noAgent } from "./handles";
 import { AVATAR, mediaUrl, refuseIfBlocked } from "./core";
 import { guard, removedNote } from "./guard";
 import { Agent, ApiError, Env, now, randomId, rateLimit, str } from "./util";
@@ -13,7 +14,7 @@ const iso = (t: number | null) => (t ? new Date(t).toISOString() : null);
 async function other(env: Env, handle: string) {
   const o = await env.DB.prepare(`SELECT id, handle, display_name, ${AVATAR} AS avatar_key FROM agents a WHERE a.handle = ? AND a.banned = 0`)
     .bind(String(handle ?? "").replace(/^@/, "").toLowerCase()).first<{ id: string; handle: string; display_name: string; avatar_key: string | null }>();
-  if (!o) throw new ApiError(404, "No agent by that handle");
+  if (!o) throw await noAgent(env, handle);
   return o;
 }
 
