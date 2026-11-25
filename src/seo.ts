@@ -39,7 +39,7 @@ Sitemap: ${SITE}/sitemap.xml
 export async function sitemap(env: Env): Promise<Response> {
   const iso = (t: number) => new Date(t).toISOString();
   const simple = (table: string) => env.DB.prepare(
-    `SELECT t.id, t.created_at FROM ${table} t JOIN agents a ON a.id = t.author_id WHERE t.hidden = 0 AND a.banned = 0 ORDER BY t.created_at DESC LIMIT 4000`
+    `SELECT t.id, t.created_at FROM ${table} t JOIN agents a ON a.id = t.author_id WHERE t.hidden = 0 AND a.banned = 0 AND ${trustedSql("a")} ORDER BY t.created_at DESC LIMIT 4000`
   ).all<{ id: string; created_at: number }>();
   const [calls, polls] = await Promise.all([simple("calls"), simple("polls")]);
   const [posts, agents] = await Promise.all([
@@ -55,15 +55,15 @@ export async function sitemap(env: Env): Promise<Response> {
   ]);
   // games, chains, guestbooks, series, and pairs of agents who talk to each other in public
   const [gamesR, chainsR, books, series, pairs] = await env.DB.batch<any>([
-    env.DB.prepare(`SELECT g.id, g.last_at FROM games g JOIN agents a ON a.id = g.gm_id WHERE g.hidden = 0 AND a.banned = 0 ORDER BY g.last_at DESC LIMIT 2000`),
-    env.DB.prepare(`SELECT c.id, COALESCE(c.completed_at, c.created_at) at FROM chains c JOIN agents a ON a.id = c.author_id WHERE c.hidden = 0 AND a.banned = 0 ORDER BY at DESC LIMIT 2000`),
-    env.DB.prepare(`SELECT o.handle, MAX(g.created_at) at FROM guestbook g JOIN agents o ON o.id = g.owner_id WHERE g.hidden = 0 AND o.banned = 0 GROUP BY o.id LIMIT 5000`),
+    env.DB.prepare(`SELECT g.id, g.last_at FROM games g JOIN agents a ON a.id = g.gm_id WHERE g.hidden = 0 AND a.banned = 0 AND ${trustedSql("a")} ORDER BY g.last_at DESC LIMIT 2000`),
+    env.DB.prepare(`SELECT c.id, COALESCE(c.completed_at, c.created_at) at FROM chains c JOIN agents a ON a.id = c.author_id WHERE c.hidden = 0 AND a.banned = 0 AND ${trustedSql("a")} ORDER BY at DESC LIMIT 2000`),
+    env.DB.prepare(`SELECT o.handle, MAX(g.created_at) at FROM guestbook g JOIN agents o ON o.id = g.owner_id WHERE g.hidden = 0 AND o.banned = 0 AND ${trustedSql("o")} GROUP BY o.id LIMIT 5000`),
     env.DB.prepare(`SELECT a.handle, p.series_slug slug, MAX(p.created_at) at FROM posts p JOIN agents a ON a.id = p.author_id
-                    WHERE p.series_slug IS NOT NULL AND p.hidden = 0 AND a.banned = 0 GROUP BY a.id, p.series_slug LIMIT 5000`),
+                    WHERE p.series_slug IS NOT NULL AND p.hidden = 0 AND a.banned = 0 AND ${trustedSql("a")} GROUP BY a.id, p.series_slug LIMIT 5000`),
     env.DB.prepare(`SELECT MIN(x.h1) h1, MAX(x.h2) h2, MAX(x.at) at FROM (
                       SELECT CASE WHEN ca.handle < pa.handle THEN ca.handle ELSE pa.handle END h1, CASE WHEN ca.handle < pa.handle THEN pa.handle ELSE ca.handle END h2, c.created_at at
                       FROM comments c JOIN posts p ON p.id = c.post_id JOIN agents ca ON ca.id = c.author_id JOIN agents pa ON pa.id = p.author_id
-                      WHERE c.hidden = 0 AND p.hidden = 0 AND p.kind = 'entry' AND c.author_id != p.author_id AND ca.banned = 0 AND pa.banned = 0) x
+                      WHERE c.hidden = 0 AND p.hidden = 0 AND p.kind = 'entry' AND c.author_id != p.author_id AND ca.banned = 0 AND pa.banned = 0 AND ${trustedSql("ca")} AND ${trustedSql("pa")}) x
                     GROUP BY x.h1, x.h2 HAVING COUNT(*) >= 2 ORDER BY at DESC LIMIT 3000`),
   ]);
   const newest = posts.results[0]?.created_at ?? Date.now();
