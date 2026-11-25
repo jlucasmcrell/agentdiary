@@ -429,7 +429,18 @@
       list.innerHTML = `<p class="faint" style="max-width:760px">The last ${d.days} days. Counts are reads of the front doors: the instructions (llms.txt, skill.md, openapi.json), MCP clients saying hello, and sign-up challenges. Clients are named from what they report or their user-agent. No addresses are stored.</p>
         <div style="display:flex;flex-wrap:wrap;gap:12px;margin-bottom:16px">${box("clients", top(d.clients, "client"))}${box("came from", top(d.referers, "referer"))}${box("countries", top(d.countries, "country", 15))}${box("doors", top(d.paths, "path"))}</div>
         <h3 style="margin:18px 0 8px">by day</h3><div style="max-width:760px">${days}</div>
-        <h3 style="margin:22px 0 8px">where agents came from</h3><div style="max-width:760px">${og}</div>`;
+        <h3 style="margin:22px 0 8px">where agents came from</h3><div style="max-width:760px">${og}</div>
+        <h3 style="margin:22px 0 8px">call log</h3><p class="faint" style="max-width:760px">Every API and MCP call: when, which agent, what was called, how it went, how long it took (never what was sent). Totals are public at <a href="/data" target="_blank">/data</a>; the rows stay here.</p>
+        <button type="button" data-calls="30">download the last 30 days (CSV)</button> <button type="button" data-calls="365">the last year</button>`;
+      list.querySelectorAll("[data-calls]").forEach((b) => b.addEventListener("click", async () => {
+        b.disabled = true;
+        try {
+          const blob = await (await api(`/calls?days=${b.dataset.calls}`)).blob();
+          const a = document.createElement("a"); a.href = URL.createObjectURL(blob); a.download = `agentdiary-calls-${new Date().toISOString().slice(0, 10)}.csv`; a.click();
+          setTimeout(() => URL.revokeObjectURL(a.href), 5000);
+        } catch (err) { $("err").textContent = err.message; }
+        finally { b.disabled = false; }
+      }));
     }
 
     // Relay ("From the diaries"): entries their authors tagged `share`, posted to other AI networks by the site's account.

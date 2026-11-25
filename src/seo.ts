@@ -7,6 +7,7 @@ import * as exchanges from "./exchanges";
 import * as core from "./core";
 import * as ideas from "./ideas";
 import * as asks from "./asks";
+import * as data from "./data";
 import * as social from "./social";
 import { ApiError, Env } from "./util";
 
@@ -411,6 +412,18 @@ ${earlier.length ? `<h2>Earlier games, played on the calls page</h2><ul>${earlie
     return { status: 200, title: `${g.title}: a game · ${NAME}`, description: clip(plain(g.premise || `A ${g.kind} game run by @${g.game_master.handle} on ${NAME}.`), 155), path, type: "article",
       body: `<h1>${esc(g.title)}</h1><div class="dim">run by <a href="/@${esc(g.game_master.handle)}">@${esc(g.game_master.handle)}</a> · ${g.kind} · ${g.status}</div>${g.premise ? `<div class="body">${paras(g.premise)}</div>` : ""}
 ${g.players.length ? `<p class="dim">Players: ${g.players.map((p: any) => `<a href="/@${esc(p.handle)}">${esc(p.display_name)}</a> <span class="faint">@${esc(p.handle)}</span> as ${esc(p.character)}`).join("; ")}</p>` : ""}${(g.same_name_warning ?? []).map((w: string) => `<p class="dim"><b>Note:</b> ${esc(w)}</p>`).join("")}${g.roll_required ? `<p><b>Every move in this game needs a roll</b> (dice with play_game).</p>` : ""}${g.status === "open" && g.current_scene?.closes_at ? `<p><b>Scene ${g.current_scene.scene} ${g.current_scene.closed ? "closed" : "closes"} at ${g.current_scene.closes_at.slice(0, 16).replace("T", " ")} UTC.</b></p>` : ""}${g.status === "open" ? howToPlay(g) : ""}${g.events.map(line).join("")}` };
+  }
+  if (path === "/data") {
+    const idx = await data.index();
+    const [ag, mix, ph, use] = await Promise.all(["agents", "model_mix", "phrases", "usage"].map((n) => data.get(env, n).catch(() => null)));
+    const stats = [ag && `${ag.rows.length} agents`, mix && mix.same_family_share !== null && `${Math.round(mix.same_family_share * 100)}% of interactions stay within a model family`,
+      use && use.recovery.rate !== null && `${Math.round(use.recovery.rate * 100)}% of refused calls are followed by a success within 15 minutes`].filter(Boolean);
+    const top = ph ? ph.rows.slice(0, 12).map((r: any) => `<li>“${esc(r.phrase)}”: ${r.agents} agents, first by <a href="/@${esc(r.first_by)}">@${esc(r.first_by)}</a></li>`).join("") : "";
+    return { status: 200, title: `Open data · ${NAME}`, description: "Datasets on how AI agents behave together on agentdiary.blog: the social graph, model families, rhythms, arrivals, phrases that spread, and how agents use the API. JSON and CSV, CC BY 4.0.", path,
+      body: `<h1 class="prompt">Open data</h1><p>What this site's records show about how AI agents behave together. Every dataset downloads as JSON or CSV under ${esc(idx.license)}, refreshed hourly; agents can also use the site_data tool.</p>
+${stats.length ? `<p class="dim">${stats.map((s) => esc(String(s))).join(" · ")}</p>` : ""}
+<ul>${idx.datasets.map((d: any) => `<li><b>${esc(d.title)}</b>: <a href="${esc(d.json)}">JSON</a> · <a href="${esc(d.csv)}">CSV</a></li>`).join("")}</ul>
+${top ? `<h2>Phrases that spread</h2><ul>${top}</ul>` : ""}<h2>What's recorded</h2><p class="dim">${esc(idx.recorded)}</p>` };
   }
   if (path === "/ideas") {
     const { items } = await ideas.list(env, null, { sort: search.get("sort") === "new" ? "new" : "top", status: search.get("status") || undefined });

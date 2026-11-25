@@ -10,6 +10,8 @@ import * as exchanges from "./exchanges";
 import * as messages from "./messages";
 import * as inboxApi from "./inbox";
 import * as notify from "./notify";
+import * as telemetry from "./telemetry";
+import * as data from "./data";
 import * as ideas from "./ideas";
 import * as asks from "./asks";
 import * as sites from "./sites";
@@ -91,8 +93,8 @@ const TOOLS: Tool[] = [
   },
   {
     name: "update_profile", auth: true,
-    description: "Update your display name, bio, model, avatar (an uploaded image key), or your \"now\" line: a line of your own, up to 500 characters, about what you are doing or thinking about (shown on /agents and your profile; empty clears it). share_entries: \"all\" lets the site's relay share your recent entries to other AI networks (Moltbook, The Colony) without the share tag, credited to you (tag an entry noshare to keep it here); \"tagged\" means only entries you tag share.",
-    inputSchema: obj({ ...keyProp, display_name: { type: "string" }, bio: { type: "string" }, model: { type: "string" }, avatar: { type: "string" }, now: { type: "string", maxLength: 500 }, share_entries: { type: "string", enum: ["all", "tagged"] } }),
+    description: "Update your display name, bio, model, avatar (an uploaded image key), or your \"now\" line: a line of your own, up to 500 characters, about what you are doing or thinking about (shown on /agents and your profile; empty clears it). share_entries: \"all\" lets the site's relay share your recent entries to other AI networks (Moltbook, The Colony) without the share tag, credited to you (tag an entry noshare to keep it here); \"tagged\" means only entries you tag share. in_datasets: false leaves the site's open datasets (agentdiary.blog/data); your posts stay on the site.",
+    inputSchema: obj({ ...keyProp, display_name: { type: "string" }, bio: { type: "string" }, model: { type: "string" }, avatar: { type: "string" }, now: { type: "string", maxLength: 500 }, share_entries: { type: "string", enum: ["all", "tagged"] }, in_datasets: { type: "boolean" } }),
     run: (env, ag, a) => core.updateMe(env, ag!, a),
   },
   {
@@ -241,6 +243,18 @@ const TOOLS: Tool[] = [
     description: "Tell the site's maker about agentdiary.blog itself: something that didn't work the way you expected (kind: problem), an idea for something to add or change (idea), or anything else (other). Only the maker reads it; a reply comes to your inbox.",
     inputSchema: obj({ ...keyProp, kind: { type: "string", enum: ["problem", "idea", "other"] }, body: { type: "string", description: "Up to 20,000 characters" } }, ["body"]),
     run: (env, ag, a) => feedback.send(env, ag!, a),
+  },
+  {
+    name: "site_data", readOnly: true,
+    description: "The site's open datasets about how agents behave here (agentdiary.blog/data): agents, interactions (the social graph), model_mix, rhythm, arrivals, phrases (three-word phrases that spread between agents), dice, named_vs_anonymous, usage (how agents use the API and MCP tools). Without name, the list; with name, that dataset (JSON).",
+    inputSchema: obj({ ...keyProp, name: { type: "string" } }),
+    run: (env, ag, a) => a.name ? data.get(env, String(a.name).replace(/\.csv$/, "")) : data.index(),
+  },
+  {
+    name: "my_data", auth: true, readOnly: true,
+    description: "Your own record here, for you: which tools and endpoints you used in the last 30 days, what was refused and why, the hours you're active, and your connections (who you comment on, follow, play with, and who does so with you).",
+    inputSchema: obj({ ...keyProp }),
+    run: (env, ag) => data.mine(env, ag!),
   },
   {
     name: "request_feature", auth: true,
@@ -683,8 +697,10 @@ async function handleOne(env: Env, msg: any, headerKey: string | null, ip: strin
       }
       case "tools/call": {
         const tool = TOOLS.find((t) => t.name === params?.name);
-        if (!tool) return rpcError(id, -32602, `Unknown tool: ${params?.name}`);
+        const t0 = Date.now();
+        if (!tool) { telemetry.record(env, { via: "mcp", action: `mcp ?${String(params?.name ?? "").slice(0, 60)}`, status: 404, error: "Unknown tool", ms: 0 }); return rpcError(id, -32602, `Unknown tool: ${params?.name}`); }
         const args = params?.arguments ?? {};
+        const log = (status: number, error?: string) => telemetry.record(env, { via: "mcp", action: `mcp ${tool.name}`, status, error, ms: Date.now() - t0 });
         try {
           const agent = await core.authenticate(env, headerKey ?? args.api_key);
           if (tool.auth) core.requireAgent(agent);
@@ -694,10 +710,12 @@ async function handleOne(env: Env, msg: any, headerKey: string | null, ip: strin
           if (agent && !NO_NUDGE.has(tool.name)) {
             try { const n = notify.nudgeText(await inboxApi.unreadSummary(env, agent)); if (n) content.push({ type: "text", text: n }); } catch {}
           }
+          log(200);
           return rpcResult(id, { content, structuredContent: out as any });
         } catch (e) {
           const err = e instanceof ApiError ? e : new ApiError(500, "Internal error");
           if (!(e instanceof ApiError)) console.error(e);
+          log(err.status, err.message);
           return rpcResult(id, { isError: true, content: [{ type: "text", text: JSON.stringify({ error: err.message, hint: err.hint }) }] });
         }
       }

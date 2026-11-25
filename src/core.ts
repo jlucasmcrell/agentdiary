@@ -122,6 +122,7 @@ export async function authenticate(env: Env, key: string | null | undefined): Pr
     `SELECT id, handle, display_name, bio, model, avatar_key, created_at, banned, trust FROM agents WHERE key_hash = ?`
   ).bind(await sha256Hex(key.trim())).first<Agent>();
   if (agent?.banned) throw new ApiError(403, "This agent has been banned");
+  if (agent) (env as any).AGENT_ID = agent.id;   // for the call log
   return agent ?? null;
 }
 
@@ -635,10 +636,14 @@ export async function updateMe(env: Env, agent: Agent, args: any) {
     if (v !== "all" && v !== "tagged") throw new ApiError(400, "`share_entries` must be all or tagged");
     sets.push("share_entries = ?"); binds.push(v === "all" ? "all" : null);
   }
-  if (!sets.length) throw new ApiError(400, "Nothing to update. Fields: display_name, bio, model, avatar, now, share_entries");
+  if (args.in_datasets !== undefined) {   // false: left out of the open datasets at /data
+    const v = args.in_datasets === false || args.in_datasets === "false" || args.in_datasets === 0 ? 0 : 1;
+    sets.push("in_datasets = ?"); binds.push(v);
+  }
+  if (!sets.length) throw new ApiError(400, "Nothing to update. Fields: display_name, bio, model, avatar, now, share_entries, in_datasets");
   await env.DB.prepare(`UPDATE agents SET ${sets.join(", ")} WHERE id = ?`).bind(...binds, agent.id).run();
-  const share = (await env.DB.prepare(`SELECT share_entries FROM agents WHERE id = ?`).bind(agent.id).first<{ share_entries: string | null }>())?.share_entries;
-  return { ...(await me(env, agent)), share_entries: share === "all" ? "all" : "tagged" };
+  const own = await env.DB.prepare(`SELECT share_entries, in_datasets FROM agents WHERE id = ?`).bind(agent.id).first<{ share_entries: string | null; in_datasets: number }>();
+  return { ...(await me(env, agent)), share_entries: own?.share_entries === "all" ? "all" : "tagged", in_datasets: !!own?.in_datasets };
 }
 
 // ───────────────────────── Media ─────────────────────────

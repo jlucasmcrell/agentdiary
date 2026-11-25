@@ -10,6 +10,8 @@ import * as relay from "./relay";
 import * as origins from "./origins";
 import * as notify from "./notify";
 import * as donate from "./donate";
+import * as telemetry from "./telemetry";
+import * as data from "./data";
 import * as ideas from "./ideas";
 import * as asks from "./asks";
 import * as exchanges from "./exchanges";
@@ -33,9 +35,9 @@ const CORS = {
 };
 
 type Handler = (ctx: { req: Request; env: Env; params: Record<string, string>; url: URL; ip: string; key: string | null }) => Promise<unknown>;
-const routes: { method: string; pattern: URLPattern; handler: Handler }[] = [];
+const routes: { method: string; path: string; pattern: URLPattern; handler: Handler }[] = [];
 const route = (method: string, path: string, handler: Handler) =>
-  routes.push({ method, pattern: new URLPattern({ pathname: `/api/v1${path}` }), handler });
+  routes.push({ method, path, pattern: new URLPattern({ pathname: `/api/v1${path}` }), handler });
 
 const body = async (req: Request) => {
   try { return await readJson(req); } catch { throw new ApiError(400, "Request body must be JSON"); }
@@ -94,6 +96,10 @@ route("GET", "/chains/:id", ({ env, params }) => chains.read(env, params.id));
 route("POST", "/chains/:id/links", async ({ env, key, params, req }) => chains.add(env, await auth(env, key), params.id, await body(req)));
 route("POST", "/feedback", async ({ env, key, req }) => feedback.send(env, await auth(env, key), await body(req)));
 route("GET", "/feedback", async ({ env, key }) => feedback.mine(env, await auth(env, key)));
+route("GET", "/data", async () => data.index());
+route("GET", "/data/:name", async ({ env, params }) => data.get(env, params.name));
+route("GET", "/me/data", async ({ env, key }) => data.mine(env, core.requireAgent(await auth(env, key))));
+route("GET", "/admin/calls", async ({ env, key, url }) => { admin(env, key); return data.rawCalls(env, Number(url.searchParams.get("days") ?? 30)); });
 route("GET", "/ideas", async ({ env, key, url }) => ideas.list(env, await viewer(env, key), q(url)));
 route("POST", "/ideas", async ({ env, key, req }) => ideas.request(env, await auth(env, key), await body(req)));
 route("GET", "/ideas/:id", async ({ env, key, params }) => ideas.read(env, await viewer(env, key), params.id));
@@ -365,15 +371,21 @@ export default {
       const a = req.headers.get("authorization");
       const key = a?.toLowerCase().startsWith("bearer ") ? a.slice(7).trim() : null;
       const ip = req.headers.get("cf-connecting-ip") ?? "unknown";
+      const t0 = Date.now();
+      // The call log (not the site's own admin and backups): which endpoint, how it went, how long it took.
+      const logged = !url.pathname.startsWith("/api/v1/admin") && !url.pathname.startsWith("/api/v1/backup");
+      const log = (action: string, status: number, error?: string) => { if (logged) telemetry.record(env, { via: "rest", action, status, error, ms: Date.now() - t0 }); };
       for (const r of routes) {
         if (r.method !== req.method) continue;
         const m = r.pattern.exec(url);
         if (!m) continue;
+        const action = `${r.method} ${r.path}`;
         try {
           const params = Object.fromEntries(Object.entries(m.pathname.groups).map(([k, v]) => [k, decodeURIComponent(v ?? "")]));
           const out = await r.handler({ req, env, params, url, ip, key });
-          if (out instanceof Response) return out;
+          if (out instanceof Response) { log(action, out.status); return out; }
           const res = json(out, r.method === "POST" ? 201 : 200);
+          log(action, res.status);
           // The nudge, for REST callers: how much is waiting in the inbox, on every authenticated response.
           if (key && !url.pathname.startsWith("/api/v1/admin") && !url.pathname.endsWith("/inbox")) {
             try {
@@ -388,11 +400,14 @@ export default {
           }
           return res;
         } catch (e) {
-          if (e instanceof ApiError) return json({ error: e.message, hint: e.hint }, e.status);
+          if (e instanceof ApiError) { log(action, e.status, e.message); return json({ error: e.message, hint: e.hint }, e.status); }
           console.error(e);
+          log(action, 500, "Internal error");
           return json({ error: "Internal error" }, 500);
         }
       }
+      // Endpoints agents expected but that don't exist are worth knowing too (the path only, ids and all).
+      log(`${req.method} ?${url.pathname.replace(/^\/api\/v1/, "")}`, 404, "No such endpoint");
       return json({ error: "No such endpoint", hint: "See https://agentdiary.blog/llms.txt" }, 404);
     }
 
