@@ -143,7 +143,11 @@ const moltbook: Net = {
     const r = await mb(env, "/posts", { method: "POST", body: JSON.stringify({ submolt_name: env.MOLTBOOK_SUBMOLT || "fromthediaries", title, content: body }) });
     if (!r.ok) throw new Error(`Moltbook said ${r.status}: ${JSON.stringify(r.d).slice(0, 300)}`);
     const p = r.d.post ?? r.d;
-    await mbVerify(env, p);
+    try { await mbVerify(env, p); }
+    catch (e) {   // an unverified post stays as a hidden draft on Moltbook: delete it, so a retry doesn't leave one behind
+      if (p?.id) await mb(env, `/posts/${p.id}`, { method: "DELETE" }).catch(() => {});
+      throw e;
+    }
     return { id: p.id, url: `https://www.moltbook.com/post/${p.id}` };
   },
   async remove(env, id) {
@@ -321,6 +325,32 @@ export async function act(env: Env, b: any) {
     return { cleared: true };
   }
   if (a === "run") return run(env, { force: true });
+  if (a === "moltbook-stuck") {   // the relay's own Moltbook posts that never passed verification (hidden drafts)
+    const me = await mb(env, "/agents/me");
+    if (!me.ok) return { ok: false, status: me.status, said: me.d };
+    const name = me.d.agent?.name ?? me.d.name;
+    const seen = new Map<string, any>();
+    const take = (list: any) => { if (Array.isArray(list)) for (const x of list) if (x?.id) seen.set(x.id, x); };
+    take(me.d.recentPosts ?? me.d.recent_posts ?? me.d.posts ?? me.d.agent?.recentPosts);
+    if (name) { const pr = await mb(env, `/agents/profile?name=${encodeURIComponent(name)}`); if (pr.ok) take(pr.d.recentPosts ?? pr.d.recent_posts ?? pr.d.posts ?? pr.d.agent?.recentPosts); }
+    const feed = await mb(env, `/submolts/${env.MOLTBOOK_SUBMOLT || "fromthediaries"}/feed?sort=new&limit=100`);
+    if (feed.ok) take(feed.d.posts ?? feed.d.data ?? feed.d);
+    const { results: ours } = await env.DB.prepare(`SELECT remote_id FROM relays WHERE network = 'moltbook' AND remote_id IS NOT NULL`).all<{ remote_id: string }>();
+    const known = new Set(ours.map((x) => x.remote_id));
+    const posts = [...seen.values()].filter((x) => !x.author?.name || !name || x.author.name === name).map((x) => ({
+      id: x.id, title: x.title, created_at: x.created_at ?? x.createdAt ?? null,
+      status: x.verification_status ?? x.verificationStatus ?? (x.is_verified === false ? "pending" : "unknown"),
+      recorded: known.has(x.id), url: `https://www.moltbook.com/post/${x.id}` }));
+    return { ok: true, account: name, posts, stuck: posts.filter((x) => !x.recorded && x.status !== "verified") };
+  }
+  if (a === "moltbook-delete") {   // delete one of the relay's own Moltbook posts that the relay has no record of
+    const id = String(b.remote_id ?? "");
+    if (!/^[\w-]{8,}$/.test(id)) throw new Error("remote_id is required");
+    const rec = await env.DB.prepare(`SELECT 1 FROM relays WHERE network = 'moltbook' AND remote_id = ? AND status = 'sent'`).bind(id).first();
+    if (rec) throw new Error("That post is a recorded copy of an entry; untag or skip the entry instead");
+    const r = await mb(env, `/posts/${id}`, { method: "DELETE" });
+    return { ok: r.ok || r.status === 404, status: r.status };
+  }
   if (a === "setup-moltbook") {   // create the relay's own community on Moltbook (once, after the account is claimed)
     const name = env.MOLTBOOK_SUBMOLT || "fromthediaries";
     const r = await mb(env, "/submolts", { method: "POST", body: JSON.stringify({ name, display_name: "From the diaries",
@@ -330,7 +360,7 @@ export async function act(env: Env, b: any) {
     await env.DB.prepare(`INSERT INTO settings (key, value) VALUES ('moltbook_ready', '1') ON CONFLICT(key) DO UPDATE SET value = '1'`).run();
     return { ok: true, submolt: name };
   }
-  throw new Error("action must be pause, resume, pick, unpick, skip, clear, run or setup-moltbook");
+  throw new Error("action must be pause, resume, pick, unpick, skip, clear, run, moltbook-stuck, moltbook-delete or setup-moltbook");
 }
 
 /** An agent's choice: 'all' lets the relay share its recent entries without the tag; otherwise only tagged ones. */

@@ -13,6 +13,7 @@ STATE = sys.argv[1] if len(sys.argv) > 1 else r"C:/Users/Joe/AppData/Local/Temp/
 SITE, ADMIN = "http://127.0.0.1:8787", "local-admin"
 seen = []          # (method, path, body) the stand-in received
 posts = {}         # id -> network
+bad = {"on": False}   # makes the next Moltbook question unreadable
 CHALLENGE = "A] lO^bSt-Er S[wImS aT/ tW]eNn-Tyy mE^tE[rS aNd] SlO/wS bY^ fI[vE, wH-aTs] ThE/ nEw^ SpE[eD?"
 
 
@@ -36,9 +37,16 @@ class Net(BaseHTTPRequestHandler):
         if self.path == "/moltbook/posts":
             pid = f"mb{len(posts)}"; posts[pid] = "moltbook"
             return self.reply(201, {"success": True, "post": {"id": pid, "verification_status": "pending",
-                                    "verification": {"verification_code": "v-" + pid, "challenge_text": CHALLENGE}}})
+                                    "verification": {"verification_code": "v-" + pid, "challenge_text": "Zz qq xx?" if bad["on"] else CHALLENGE}}})
         if self.path == "/moltbook/verify":
             return self.reply(200, {"success": abs(float(b.get("answer", "nan")) - 15) < 1e-9}) if b.get("answer") else self.reply(400)
+        self.reply(404)
+
+    def do_GET(self):
+        if self.path == "/moltbook/agents/me":
+            return self.reply(200, {"agent": {"name": "agentdiary"}, "recentPosts": [
+                {"id": "stuck-draft-1", "title": "Stuck one", "verification_status": "pending", "author": {"name": "agentdiary"}},
+                {"id": "verified-1", "title": "Fine one", "verification_status": "verified", "author": {"name": "agentdiary"}}]})
         self.reply(404)
 
     def do_DELETE(self):
@@ -155,6 +163,17 @@ r = api("POST", "/relay", {"action": "run"})
 st = [s["status"] for s in sql("SELECT status FROM relays WHERE network = 'moltbook'")]
 check(st and all(x != "sent" for x in st), f"changing its mind takes the Moltbook copy down ({st})")
 check(api("GET", "/relay")["agreed"] == [], "the overview lists who agreed (none now)")
+
+print("stuck Moltbook drafts")
+sql("DELETE FROM relays"); sql(f"UPDATE agents SET share_entries = 'all' WHERE id = '{who}'")
+bad["on"] = True; before = len(seen)
+r = api("POST", "/relay", {"action": "run"}); bad["on"] = False
+check(any(m == "DELETE" and p.startswith("/moltbook/posts/") for m, p, _ in seen[before:]), f"a post that fails Moltbook's check is deleted at once ({r['log'][0][:90]})")
+r = api("POST", "/relay", {"action": "moltbook-stuck"})
+check(r["ok"] and [x["id"] for x in r["stuck"]] == ["stuck-draft-1"], f"the button finds the stuck draft and only it ({r.get('stuck')})")
+before = len(seen); r = api("POST", "/relay", {"action": "moltbook-delete", "remote_id": "stuck-draft-1"})
+check(r["ok"] and ("DELETE", "/moltbook/posts/stuck-draft-1", None) in seen[before:], "and deletes it")
+sql(f"UPDATE agents SET share_entries = NULL WHERE id = '{who}'")
 
 srv.shutdown()
 print("\nall good" if ok else "\nSOMETHING FAILED"); sys.exit(0 if ok else 1)
