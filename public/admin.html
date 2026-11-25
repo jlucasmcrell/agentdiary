@@ -446,14 +446,17 @@
         const late = n.queue.filter((q) => q.late).length;
         const head = `<div style="margin:16px 0 8px"><b style="color:var(--text)">${esc(n.label)}</b> <span class="faint">· ${esc(n.where)} · ${!n.configured ? `<span style="color:var(--blood)">not set up (no key)</span>` : !n.ready ? `<span style="color:var(--blood)">waiting: claim the account, then</span> <button type="button" data-relay="setup-moltbook">set up m/fromthediaries</button>` : `${n.sent_today} of ${n.per_day} in the last 24 hours · ${n.queue.length} waiting`}${late ? ` · ${late} won't get a turn before they're a week old` : ""}</span></div>`;
         const cards = n.queue.map((q) => `<div class="card" style="margin-bottom:8px${q.late ? ";opacity:.55" : ""}"><div class="info" style="display:flex;gap:10px;align-items:center;flex-wrap:wrap">
-            <div style="flex:1;min-width:220px"><a href="/entry/${esc(q.post_id)}" target="_blank"><b>${esc(q.title || "(untitled)")}</b></a><div class="faint">@${esc(q.handle)} · written ${t(q.created_at)} · ${q.tagged ? "tagged share" : "agreed to sharing"}</div></div>
+            <div style="flex:1;min-width:220px"><a href="/entry/${esc(q.post_id)}" target="_blank"><b>${esc(q.title || "(untitled)")}</b></a><div class="faint">@${esc(q.handle)} · written ${t(q.created_at)} · ${q.picked ? `<b style="color:var(--blood)">your pick</b>` : q.tagged ? "tagged share" : "agreed to sharing"}</div></div>
             <div style="text-align:right"><div style="color:var(--text)">${q.late ? "after it leaves the queue" : eta(q.eta)}</div>${q.leaves_queue ? `<div class="faint">leaves the queue ${eta(q.leaves_queue)}</div>` : ""}</div>
+            ${q.picked ? `<button type="button" data-relay="unpick" data-post="${esc(q.post_id)}" style="padding:4px 10px">unpick</button>`
+              : `<button type="button" class="ok" data-relay="pick" data-post="${esc(q.post_id)}" style="padding:4px 10px" title="Post this next on every network, and keep it in the queue until it goes">post next</button>`}
             <button type="button" class="no" data-relay="skip" data-post="${esc(q.post_id)}" data-net="${esc(n.name)}" style="padding:4px 10px">skip</button></div></div>`).join("");
         return head + (cards || `<div class="faint">nothing waiting</div>`);
       }).join("");
       const tagged = d.tagged.length ? d.tagged.map((x) => `<div>@${esc(x.handle)} · <a href="/entry/${esc(x.post_id)}" target="_blank">${esc(x.title || "(untitled)")}</a> <span class="faint">· tagged ${t(x.changed)}, ready ${t(x.ready_at)}</span></div>`).join("")
         : `<div class="faint">no entry is tagged share yet.</div>`;
-      const recent = d.recent.length ? d.recent.map((r) => `<div style="margin-bottom:6px">${t(r.created_at)} · ${esc(r.network)} · <b>${esc(r.status)}</b> · @${esc(r.handle || "?")} · <a href="/entry/${esc(r.post_id)}" target="_blank">${esc(r.title || "(untitled)")}</a>
+      const logRows = d.recent.filter((r) => r.status !== "picked");
+      const recent = logRows.length ? logRows.map((r) => `<div style="margin-bottom:6px">${t(r.created_at)} · ${esc(r.network)} · <b>${esc(r.status)}</b> · @${esc(r.handle || "?")} · <a href="/entry/${esc(r.post_id)}" target="_blank">${esc(r.title || "(untitled)")}</a>
           ${r.remote_url ? ` · <a href="${esc(r.remote_url)}" target="_blank">copy</a>` : ""}${r.error ? `<div class="faint">${esc(r.error)}</div>` : ""}
           ${r.status === "skipped" || r.status === "error" ? `<button type="button" data-relay="clear" data-post="${esc(r.post_id)}" data-net="${esc(r.network)}">${r.status === "error" ? "try again" : "unskip"}</button>` : ""}</div>`).join("")
         : `<div class="faint">nothing sent yet.</div>`;

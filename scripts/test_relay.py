@@ -73,7 +73,7 @@ rows = sql("SELECT p.id FROM posts p JOIN agents a ON a.id = p.author_id WHERE a
 newbie = sql("SELECT p.id FROM posts p JOIN agents a ON a.id = p.author_id WHERE a.trust IN ('new','watched') AND p.kind = 'entry' AND p.hidden = 0 AND a.created_at > (strftime('%s','now') - 86400) * 1000 LIMIT 1")
 ids = [r["id"] for r in rows]
 assert len(ids) == 3, "need three resident entries in the local copy (run scripts/smoke.py first)"
-sql("DELETE FROM relays"); sql("DELETE FROM settings"); sql("INSERT INTO settings (key, value) VALUES ('moltbook_ready', '1')")
+sql("UPDATE agents SET share_entries = NULL"); sql("DELETE FROM relays"); sql("DELETE FROM settings"); sql("INSERT INTO settings (key, value) VALUES ('moltbook_ready', '1')")
 sql("UPDATE posts SET tags = TRIM(REPLACE(REPLACE(REPLACE(' ' || tags || ' ', ' share ', ' '), ' share ', ' '), ' share ', ' ')) WHERE (' ' || tags || ' ') LIKE '% share %'")   # start clean
 sql("UPDATE posts SET tags = TRIM(COALESCE(tags, '') || ' share'), edited_at = NULL, created_at = MIN(created_at, (strftime('%s','now') - 7200) * 1000) WHERE id IN (" + ",".join(f"'{i}'" for i in ids) + ")")
 if newbie: sql(f"UPDATE posts SET tags = TRIM(COALESCE(tags, '') || ' share'), created_at = (strftime('%s','now') - 7200) * 1000 WHERE id = '{newbie[0]['id']}'")
@@ -141,6 +141,15 @@ check(not ({"short" + T, "noshare" + T, "fresh" + T, "old" + T, "notme" + T} & s
 r = api("POST", "/relay", {"action": "run"}); print("   ", r["log"])
 sent_ids = [s["post_id"] for s in sql("SELECT post_id FROM relays WHERE status = 'sent'")]
 check(len(sent_ids) <= 2, f"the daily limits still hold ({len(sent_ids)} sent)")
+api("POST", "/relay", {"action": "pick", "post_id": "old" + T})   # over a week old: only the maker's pick brings it back
+o = api("GET", "/relay"); q = o["networks"][0]["queue"]
+check(q and q[0]["post_id"] == "old" + T and q[0]["picked"] and not q[0]["late"] and q[0]["leaves_queue"] is None, "a picked entry goes to the front and stays queued")
+check(all(r["status"] != "picked" for r in o["recent"] if r["post_id"] != "old" + T) and o["networks"][1]["queue"][0]["post_id"] == "old" + T, "on every network")
+api("POST", "/relay", {"action": "unpick", "post_id": "old" + T})
+check("old" + T not in [x["post_id"] for x in api("GET", "/relay")["networks"][0]["queue"]], "unpicking puts it back the way it was")
+api("POST", "/relay", {"action": "pick", "post_id": "old" + T}); sql("DELETE FROM relays WHERE status != 'picked'")
+r = api("POST", "/relay", {"action": "run"})
+check(any("sent old" + T in l for l in r["log"]), f"and it's the next one sent ({r['log']})")
 sql(f"UPDATE agents SET share_entries = NULL WHERE id = '{who}'")
 r = api("POST", "/relay", {"action": "run"})
 st = [s["status"] for s in sql("SELECT status FROM relays WHERE network = 'moltbook'")]

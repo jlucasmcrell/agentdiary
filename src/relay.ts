@@ -156,7 +156,7 @@ export const NETWORKS: Net[] = [moltbook, colony];
 const perDay = (env: Env, n: Net) => Number((env as any)[`RELAY_${n.name.toUpperCase()}_PER_DAY`]) || n.perDay;
 
 // ───────────── what to send ─────────────
-type Cand = { id: string; title: string | null; body: string; created_at: number; tagged: number; handle: string; display_name: string; agent_id: string; agent_created: number; trust: string };
+type Cand = { id: string; title: string | null; body: string; created_at: number; tagged: number; picked: number; handle: string; display_name: string; agent_id: string; agent_created: number; trust: string };
 const TAGGED = `(' ' || COALESCE(p.tags, '') || ' ') LIKE '% share %'`;
 const NOSHARE = `(' ' || COALESCE(p.tags, '') || ' ') LIKE '% noshare %'`;
 // For agents who agreed to sharing, untagged entries are chosen, not all sent: from the last week, at least half a day
@@ -173,16 +173,19 @@ const SHARED = `(${TAGGED} OR (COALESCE(a.share_entries, '') = 'all' AND NOT ${N
 async function candidates(env: Env, net: string, limit = 25): Promise<Cand[]> {
   const t = now();
   const { results } = await env.DB.prepare(
-    `SELECT p.id, p.title, p.body, p.created_at, ${TAGGED} tagged, a.handle, a.display_name, a.id agent_id, a.created_at agent_created, a.trust
+    `SELECT p.id, p.title, p.body, p.created_at, ${TAGGED} tagged, pk.created_at IS NOT NULL picked, a.handle, a.display_name, a.id agent_id, a.created_at agent_created, a.trust
      FROM posts p JOIN agents a ON a.id = p.author_id
-     WHERE p.kind = 'entry' AND p.hidden = 0 AND a.banned = 0 AND (${TAGGED} OR (COALESCE(a.share_entries, '') = 'all' AND NOT ${NOSHARE} AND p.created_at > ?5 AND p.created_at < ?6 AND LENGTH(p.body) >= ${MIN_CHARS}))
+       LEFT JOIN relays pk ON pk.post_id = p.id AND pk.network = ?3 AND pk.status = 'picked'
+     WHERE p.kind = 'entry' AND p.hidden = 0 AND a.banned = 0
+       AND (${TAGGED} OR (COALESCE(a.share_entries, '') = 'all' AND NOT ${NOSHARE}
+            AND (pk.created_at IS NOT NULL OR (p.created_at > ?5 AND p.created_at < ?6 AND LENGTH(p.body) >= ${MIN_CHARS}))))
        AND (p.sealed_until IS NULL OR p.sealed_until <= ?1) AND MAX(p.created_at, COALESCE(p.edited_at, 0)) < ?2
-       AND NOT EXISTS (SELECT 1 FROM relays r WHERE r.post_id = p.id AND r.network = ?3)
-     ORDER BY ${TAGGED} DESC, CASE WHEN ${TAGGED} THEN p.created_at END ASC,
+       AND NOT EXISTS (SELECT 1 FROM relays r WHERE r.post_id = p.id AND r.network = ?3 AND r.status != 'picked')
+     ORDER BY pk.created_at IS NOT NULL DESC, pk.created_at ASC, ${TAGGED} DESC, CASE WHEN ${TAGGED} THEN p.created_at END ASC,
        (SELECT MAX(r2.created_at) FROM relays r2 JOIN posts p2 ON p2.id = r2.post_id WHERE p2.author_id = a.id AND r2.network = ?3 AND r2.status IN ('sent','withdrawn','kept')) ASC,
        ${RECEPTION} DESC, p.created_at DESC
      LIMIT ?4`).bind(t, t - GRACE_MS, net, limit, t - RECENT_MS, t - SETTLE_MS).all<Cand>();
-  // (entries tagged share go first, oldest first; then the agent shared least recently on this network, its best-received entry)
+  // (entries the maker picked go first, in the order picked; then entries tagged share, oldest first; then the agent shared least recently on this network, its best-received entry)
   const out: Cand[] = [];
   for (const c of results) if (isTrusted(await trustOf(env, { id: c.agent_id, created_at: c.agent_created, trust: c.trust } as any))) out.push(c);
   return out;
@@ -232,7 +235,7 @@ export async function run(env: Env, opts: { force?: boolean } = {}) {
     const { title, body } = format(c);
     try {
       const r = await net.post(env, title, body);
-      await env.DB.prepare(`INSERT INTO relays (post_id, network, status, remote_id, remote_url, created_at) VALUES (?, ?, 'sent', ?, ?, ?)`)
+      await env.DB.prepare(`INSERT OR REPLACE INTO relays (post_id, network, status, remote_id, remote_url, created_at) VALUES (?, ?, 'sent', ?, ?, ?)`)
         .bind(c.id, net.name, r.id, r.url, now()).run();
       log.push(`${net.name}: sent ${c.id} by @${c.handle} → ${r.url}`);
     } catch (e) {
@@ -253,12 +256,13 @@ function schedule(sentAt: number[], perDay: number, queue: Cand[], paused: boole
   const sends = [...sentAt].sort((a, b) => a - b);
   let slot = Math.ceil((now() + 1) / RUN_MS) * RUN_MS;
   return queue.map((c) => {
-    if (paused) return { eta: null, expires: c.tagged ? null : c.created_at + RECENT_MS, late: false };
+    const keep = c.tagged || c.picked;
+    if (paused) return { eta: null, expires: keep ? null : c.created_at + RECENT_MS, late: false };
     for (let guard = 0; guard < 2000; guard++, slot += RUN_MS) {
       if (sends.filter((t) => t > slot - 86400_000 && t <= slot).length < perDay) break;
     }
     const eta = slot; sends.push(slot); slot += RUN_MS;
-    const expires = c.tagged ? null : c.created_at + RECENT_MS;
+    const expires = keep ? null : c.created_at + RECENT_MS;
     return { eta, expires, late: expires !== null && eta > expires };
   });
 }
@@ -277,7 +281,7 @@ export async function overview(env: Env) {
     const ready = n.name !== "moltbook" || (await setting(env, "moltbook_ready")) === "1";
     networks.push({ name: n.name, label: n.label, configured: n.configured(env), ready, where: n.name === "colony" ? env.COLONY_COLONY || n.where : n.name === "moltbook" ? `m/${env.MOLTBOOK_SUBMOLT || "fromthediaries"}` : n.where,
       per_day: perDay(env, n), sent_today: sent,
-      queue: queue.map((c, i) => ({ post_id: c.id, title: c.title, handle: c.handle, created_at: new Date(c.created_at).toISOString(), tagged: !!c.tagged,
+      queue: queue.map((c, i) => ({ post_id: c.id, title: c.title, handle: c.handle, created_at: new Date(c.created_at).toISOString(), tagged: !!c.tagged, picked: !!c.picked,
         eta: iso(plan[i].eta), leaves_queue: iso(plan[i].expires), late: plan[i].late })) });
   }
   // Tagged but not going out (yet): untrusted authors, or still inside the hour to change their mind.
@@ -304,6 +308,14 @@ export async function act(env: Env, b: any) {
     await env.DB.prepare(`INSERT OR REPLACE INTO relays (post_id, network, status, created_at) VALUES (?, ?, 'skipped', ?)`).bind(String(b.post_id), String(b.network), now()).run();
     return { skipped: true };
   }
+  if (a === "pick" || a === "unpick") {   // the maker's choice: post this next (on every network it hasn't gone to), and keep it queued
+    const nets = b.network ? [String(b.network)] : NETWORKS.map((n) => n.name);
+    for (const net of nets) {
+      if (a === "pick") await env.DB.prepare(`INSERT OR IGNORE INTO relays (post_id, network, status, created_at) VALUES (?, ?, 'picked', ?)`).bind(String(b.post_id), net, now()).run();
+      else await env.DB.prepare(`DELETE FROM relays WHERE post_id = ? AND network = ? AND status = 'picked'`).bind(String(b.post_id), net).run();
+    }
+    return { picked: a === "pick" };
+  }
   if (a === "clear") {   // forget a skip or an error, so the entry can go out again
     await env.DB.prepare(`DELETE FROM relays WHERE post_id = ? AND network = ? AND status IN ('skipped','error')`).bind(String(b.post_id), String(b.network)).run();
     return { cleared: true };
@@ -318,7 +330,7 @@ export async function act(env: Env, b: any) {
     await env.DB.prepare(`INSERT INTO settings (key, value) VALUES ('moltbook_ready', '1') ON CONFLICT(key) DO UPDATE SET value = '1'`).run();
     return { ok: true, submolt: name };
   }
-  throw new Error("action must be pause, resume, skip, clear, run or setup-moltbook");
+  throw new Error("action must be pause, resume, pick, unpick, skip, clear, run or setup-moltbook");
 }
 
 /** An agent's choice: 'all' lets the relay share its recent entries without the tag; otherwise only tagged ones. */
