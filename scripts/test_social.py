@@ -8,7 +8,7 @@ STATE = sys.argv[1] if len(sys.argv) > 1 else r"C:/Users/Joe/AppData/Local/Temp/
 SITE, ADMIN = "http://127.0.0.1:8787", "local-admin"
 T = str(int(time.time()))
 seen = []; posts = {}
-ALLOWED = {"199228791581573120", "199235046740066304", "199235115522457600"}
+ALLOWED = {"199228791581573120", "199235046740066304", "199235115522457600", "199240320917962752"}
 
 class Woop(BaseHTTPRequestHandler):
     def log_message(self, *a): pass
@@ -17,6 +17,9 @@ class Woop(BaseHTTPRequestHandler):
     def do_POST(self):
         n = int(self.headers.get("content-length") or 0); b = json.loads(self.rfile.read(n) or b"{}"); seen.append(("POST", self.path, b, self.headers.get("authorization")))
         if self.path == "/v1/media/imports": return self.reply(200, {"mediaId": "m-" + str(len(seen))})
+        if self.path == "/v1/posts/validate":
+            bad = [s for s in b["socialAccounts"] if s["platform"] == "FACEBOOK" and s.get("postType") not in ("IMAGE", "TEXT_ONLY")]
+            return self.reply(200, {"isValid": not bad, "errors": [{"path": "socialAccounts", "message": "postType required"}] if bad else [], "warnings": []})
         if self.path == "/v1/posts":
             pid = "p" + str(len(posts)); posts[pid] = b
             return self.reply(201, {"id": pid, "socialAccountPosts": [{"socialAccountId": s["socialAccountId"], "deliveryStatus": "NOT_STARTED"} for s in b["socialAccounts"]]})
@@ -77,10 +80,13 @@ intro = [x for x in items if x["kind"] == "intro"][0]
 open(r"C:/Users/Joe/AppData/Local/Temp/card-intro.png", "wb").write(call("GET", f"/card/{intro['id']}.png", key=None, raw=True)[1])
 
 print("approving and posting")
-s, r, _ = call("POST", f"/api/v1/admin/social/{intro['id']}", {"action": "approve", "platforms": ["X", "BLUESKY", "THREADS", "FACEBOOK"]})
+s, r, _ = call("POST", f"/api/v1/admin/social/{intro['id']}", {"action": "approve", "platforms": ["X", "BLUESKY", "THREADS", "FACEBOOK", "INSTAGRAM"]})
 check(s == 201 and r["status"] == "scheduled", f"approve schedules it ({r})")
 post = [b for m, p, b, a in seen if p == "/v1/posts"][-1]
-check({x["socialAccountId"] for x in post["socialAccounts"]} <= ALLOWED and len(post["socialAccounts"]) == 3, "only the three agentdiary accounts, never another")
+check({x["socialAccountId"] for x in post["socialAccounts"]} <= ALLOWED and len(post["socialAccounts"]) == 4, "only the four agentdiary accounts, never another")
+check([x.get("postType") for x in post["socialAccounts"] if x["platform"] == "FACEBOOK"] == ["IMAGE"], "Facebook gets its post type")
+check(any(p == "/v1/posts/validate" for m, p, b, a in seen), "and WoopSocial checks it before it's created")
+check(all(x["platforms"] == ["X", "BLUESKY", "THREADS", "FACEBOOK"] for x in items), "new drafts go to all four by default")
 check(post["schedule"]["type"] == "SCHEDULE_FOR_LATER" and post["schedule"]["scheduledFor"][11:16] in ("14:00", "20:00"), f"into a daily slot ({post['schedule']})")
 imp = [b for m, p, b, a in seen if p == "/v1/media/imports"][-1]
 check(imp["url"].startswith("https://agentdiary.blog/card/" + intro["id"]) and post["content"][0]["media"][0]["mediaId"], "with its card as the image")

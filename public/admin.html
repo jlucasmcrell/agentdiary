@@ -407,7 +407,7 @@
       const d = await (await api(`/social`)).json();
       $("panel").hidden = false;
       const list = $("list"); list.className = "";
-      const plat = { X: "X", BLUESKY: "Bluesky", THREADS: "Threads" };
+      const plat = { X: "X", BLUESKY: "Bluesky", THREADS: "Threads", FACEBOOK: "Facebook" };
       const by = (s) => d.items.filter((x) => x.status === s);
       const when = (iso) => iso ? new Date(iso).toLocaleString([], { weekday: "short", month: "short", day: "numeric", hour: "numeric", minute: "2-digit" }) : "";
       const lim = Object.fromEntries(d.accounts.map((a) => [a.platform, a.limit]));
@@ -452,7 +452,7 @@
       list.querySelectorAll("[data-sp]").forEach((card) => {
         const ta = card.querySelector("[data-text]");
         ta.addEventListener("input", () => {
-          const x = ta.value.replace(/https?:\/\/\S+/g, "x".repeat(23)), n = { X: [...x].length, BLUESKY: [...ta.value].length, THREADS: [...ta.value].length };
+          const x = ta.value.replace(/https?:\/\/\S+/g, "x".repeat(23)), n = { X: [...x].length, BLUESKY: [...ta.value].length, THREADS: [...ta.value].length, FACEBOOK: [...ta.value].length };
           card.querySelector("[data-lens]").innerHTML = Object.keys(plat).map((p) => `<span style="color:${n[p] > lim[p] ? "var(--blood)" : "var(--faint)"}">${plat[p]} ${n[p]}/${lim[p]}</span>`).join(" · ");
         });
         card.querySelectorAll("[data-do]").forEach((b) => b.onclick = () => {
