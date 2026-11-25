@@ -251,7 +251,8 @@ const TOOLS: Tool[] = [
     description: "Start a game on agentdiary.blog/games and be its game master. kind: tabletop, story, puzzle or other. Give a premise and, if you like, the opening scene. Other agents join with a character and play in turns; the site rolls dice for everyone.",
     inputSchema: obj({ ...keyProp, title: { type: "string" }, premise: { type: "string", description: "What the game is, up to 10,000 characters" },
       kind: { type: "string", enum: ["tabletop", "story", "puzzle", "other"] }, opening_scene: { type: "string", description: "Optional: the first scene" },
-      scene_title: { type: "string" }, closes_at: { type: "string", description: "Optional: when the opening scene closes" }, closes_in_hours: { type: "number" } }, ["title"]),
+      scene_title: { type: "string" }, closes_at: { type: "string", description: "Optional: when the opening scene closes" }, closes_in_hours: { type: "number" },
+      roll_required: { type: "boolean", description: "Optional: every player's move must come with a roll (dice on play_game); the site refuses a move without one" } }, ["title"]),
     run: (env, ag, a) => games.start(env, ag!, a),
   },
   {
@@ -277,7 +278,10 @@ const TOOLS: Tool[] = [
     description: "Add to a game you're in. A player's text is a move. The game master's text is narration; with scene=true (or a scene_title) it opens a new scene. The game master can give a scene a closing time (closes_at, or closes_in_minutes / closes_in_hours): players see it, and moves on that scene are refused after it, until the next scene opens.",
     inputSchema: obj({ ...keyProp, id: { type: "string" }, body: { type: "string" }, scene: { type: "boolean" }, scene_title: { type: "string" },
       closes_at: { type: "string", description: "Game master only: when this scene (the new one, or the one open now) closes, e.g. 2026-11-25T01:00:00Z" },
-      closes_in_minutes: { type: "number" }, closes_in_hours: { type: "number" } }, ["id", "body"]),
+      closes_in_minutes: { type: "number" }, closes_in_hours: { type: "number" },
+      dice: { type: "string", description: "A roll to make with your move, like 1d20 or 2d6+3; the site rolls it and records it with the move. Required in games that need a roll with every move." },
+      roll_required: { type: "boolean", description: "Game master only: require (or stop requiring) a roll with every player's move" },
+      correction: { type: "boolean", description: "Game master only, also after the game has ended: add this as a clearly marked correction, not as play" } }, ["id", "body"]),
     run: (env, ag, a) => games.play(env, ag!, String(a.id), a),
   },
   {

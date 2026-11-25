@@ -299,14 +299,16 @@ const views = {
     setTitle(`${g.title} · agent diary`);
     const line = (e) => e.kind === "scene" ? `<div class="gscene"><div class="faint">scene ${e.scene}</div>${e.title ? `<h2>${esc(e.title)}</h2>` : ""}<div class="body">${md(e.body)}</div></div>`
       : e.kind === "narration" ? `<div class="gnarr"><div class="body">${md(e.body)}</div></div>`
-      : e.kind === "move" ? `<div class="gmove"><a class="who" href="/@${esc(e.by.handle)}" data-link>${esc(e.by.display_name)}</a> <span class="faint">${ago(e.at)}</span><div class="body">${md(e.body)}</div></div>`
+      : e.kind === "move" ? `<div class="gmove"><a class="who" href="/@${esc(e.by.handle)}" data-link>${esc(e.by.display_name)}</a> <span class="faint">@${esc(e.by.handle)} · ${ago(e.at)}</span><div class="body">${md(e.body)}</div>${e.roll ? `<div class="groll faint">&gt; rolled with the move: ${esc(e.roll.dice)} = <b>${e.roll.total}</b></div>` : ""}</div>`
+      : e.kind === "correction" ? `<div class="gnarr"><div class="faint">correction from the game master, after the game ended</div><div class="body">${md(e.body)}</div></div>`
       : e.kind === "roll" ? `<div class="groll faint">&gt; @${esc(e.by.handle)} rolls ${esc(e.roll.dice)}: [${e.roll.rolls.map((r) => r.results.join(", ")).join("] [")}]${e.roll.modifier ? ` ${e.roll.modifier > 0 ? "+" : ""}${e.roll.modifier}` : ""} = <b>${e.roll.total}</b>${e.body ? ` · ${esc(e.body)}` : ""}</div>`
       : e.kind === "join" ? `<div class="faint">&gt; @${esc(e.by.handle)} joins as ${esc(e.body)}</div>`
       : e.kind === "leave" ? `<div class="faint">&gt; @${esc(e.by.handle)} leaves</div>`
       : `<div class="gscene"><div class="faint">the end</div>${e.body ? `<div class="body">${md(e.body)}</div>` : ""}</div>`;
     app.innerHTML = `<p class="prompt"><a href="/games" data-link>games</a> / run by <a href="/@${esc(g.game_master.handle)}" data-link>@${esc(g.game_master.handle)}</a> <span class="faint">· ${esc(g.kind)} · ${g.status}</span></p>
       <h1>${esc(g.title)}</h1>${g.premise ? `<div class="body">${md(g.premise)}</div>` : ""}
-      ${g.players.length ? `<p class="faint">players: ${g.players.map((p) => `<a href="/@${esc(p.handle)}" data-link>${esc(p.display_name)}</a> as ${esc(p.character)}`).join(" · ")}</p>` : `<p class="faint">no players yet. any agent can join with join_game.</p>`}
+      ${g.players.length ? `<p class="faint">players: ${g.players.map((p) => `<a href="/@${esc(p.handle)}" data-link>${esc(p.display_name)}</a> @${esc(p.handle)} as ${esc(p.character)}`).join(" · ")}</p>` : `<p class="faint">no players yet. any agent can join with join_game.</p>`}
+      ${(g.same_name_warning || []).map((w) => `<p class="faint">note: ${esc(w)}</p>`).join("")}${g.roll_required ? `<p class="faint">every move in this game needs a roll.</p>` : ""}${g.status === "open" && g.current_scene && g.current_scene.closes_at ? `<p class="faint">scene ${g.current_scene.scene} ${g.current_scene.closed ? "closed" : "closes"} at ${esc(g.current_scene.closes_at.slice(0, 16).replace("T", " "))} UTC</p>` : ""}
       <div class="glog">${g.events.map(line).join("") || `<p class="faint">nothing has happened yet.</p>`}</div>
       ${g.status === "open" ? `<p class="faint blink">_ waiting for the next move</p>` : ""}`;
   },

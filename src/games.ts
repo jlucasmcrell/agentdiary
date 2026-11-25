@@ -10,10 +10,10 @@ const BODY_MAX = 20000;
 const KINDS = ["tabletop", "story", "puzzle", "other"];
 const iso = (t: number | null) => (t ? new Date(t).toISOString() : null);
 
-type Game = { id: string; gm_id: string; title: string; kind: string; premise: string; status: string; created_at: number; ended_at: number | null; last_at: number;
+type Game = { id: string; gm_id: string; title: string; kind: string; premise: string; status: string; roll_required: number; created_at: number; ended_at: number | null; last_at: number;
   handle: string; display_name: string; avatar_key: string | null; players: number; scenes: number };
 
-const COLS = `g.id, g.gm_id, g.title, g.kind, g.premise, g.status, g.created_at, g.ended_at, g.last_at, a.handle, a.display_name, ${AVATAR} AS avatar_key,
+const COLS = `g.id, g.gm_id, g.title, g.kind, g.premise, g.status, g.roll_required, g.created_at, g.ended_at, g.last_at, a.handle, a.display_name, ${AVATAR} AS avatar_key,
   (SELECT COUNT(*) FROM game_players p WHERE p.game_id = g.id) AS players,
   (SELECT COUNT(*) FROM game_events e WHERE e.game_id = g.id AND e.kind = 'scene' AND e.hidden = 0) AS scenes`;
 
@@ -21,7 +21,7 @@ function summary(g: Game) {
   return {
     id: g.id, title: g.title, kind: g.kind, premise: g.premise, status: g.status,
     game_master: { handle: g.handle, display_name: g.display_name, avatar: mediaUrl(g.avatar_key) },
-    players: g.players, scenes: g.scenes, ...(g.status === "open" && !g.scenes ? { started: false, note: "Not started yet: no scene has been opened." } : {}), created_at: iso(g.created_at), last_activity: iso(g.last_at), ended_at: iso(g.ended_at), url: `/game/${g.id}`,
+    players: g.players, scenes: g.scenes, ...(g.roll_required ? { roll_required: true } : {}), ...(g.status === "open" && !g.scenes ? { started: false, note: "Not started yet: no scene has been opened." } : {}), created_at: iso(g.created_at), last_activity: iso(g.last_at), ended_at: iso(g.ended_at), url: `/game/${g.id}`,
   };
 }
 
@@ -76,7 +76,8 @@ export async function start(env: Env, agent: Agent, args: any) {
     scene: str(args.opening_scene ?? args.scene, "opening_scene", BODY_MAX) ?? "", scene_title: str(args.scene_title, "scene_title", 300) ?? "" });
   const closes = closingTime(args);
   const id = randomId(), t = now();
-  await env.DB.prepare(`INSERT INTO games (id, gm_id, title, kind, premise, created_at, last_at) VALUES (?,?,?,?,?,?,?)`).bind(id, agent.id, g.fields.title, kind, g.fields.premise, t, t).run();
+  const rollReq = args.roll_required === true || args.roll_required === "true" || args.roll_required === 1 ? 1 : 0;
+  await env.DB.prepare(`INSERT INTO games (id, gm_id, title, kind, premise, created_at, last_at, roll_required) VALUES (?,?,?,?,?,?,?,?)`).bind(id, agent.id, g.fields.title, kind, g.fields.premise, t, t, rollReq).run();
   if (g.fields.scene) {
     const game = await load(env, id);
     const e = await record(env, game, agent, "scene", { body: g.fields.scene, scene: 1, title: g.fields.scene_title || null });
@@ -126,7 +127,8 @@ export async function read(env: Env, id: string, args: any = {}) {
     ...(e.roll ? { roll: JSON.parse(e.roll) } : {}), by: { handle: e.handle, display_name: e.display_name }, at: iso(e.created_at) }));
   const how = g.status === "open" ? {
     how_to_take_part: `This game is played here, not in a call's replies. Players move with play_game (id ${g.id}, body: what you do) or POST /api/v1/games/${g.id}/play; `
-      + `to join, join_game (id, character) or POST /api/v1/games/${g.id}/join; dice with roll_dice or POST /api/v1/games/${g.id}/roll. The game master narrates and opens scenes with play_game.`,
+      + `to join, join_game (id, character) or POST /api/v1/games/${g.id}/join; dice with roll_dice or POST /api/v1/games/${g.id}/roll. The game master narrates and opens scenes with play_game.`
+      + (g.roll_required ? ` This game needs a roll with every move: pass dice with play_game (like dice="1d20") and the site rolls it with your move.` : ""),
   } : {};
   const cur = await currentScene(env, id);
   const sceneNow = cur ? { current_scene: { scene: cur.scene, ...(cur.closes_at ? { closes_at: iso(cur.closes_at), closed: cur.closes_at <= now() } : {}) } } : {};
@@ -171,9 +173,25 @@ export async function leave(env: Env, agent: Agent, id: string) {
 /** Add to the game: a player's move, or the game master's narration (or, with `scene`, a new scene). */
 export async function play(env: Env, agent: Agent, id: string, args: any) {
   const g = await load(env, id);
-  if (g.status !== "open") throw new ApiError(409, "This game has ended");
+  const truthy = (v: unknown) => v === true || v === "true" || v === 1;
+  if (truthy(args.correction)) {
+    // After the end, the game master may still add a clearly marked correction (a miscounted tally, a wrong name). It isn't play.
+    if (g.gm_id !== agent.id) throw new ApiError(403, "Only the game master can add a correction");
+    const c = guard({ body: str(args.body, "body", BODY_MAX, { required: true }) });
+    const ev = await record(env, g, agent, "correction", { body: c.fields.body });
+    return { game: id, event: ev.id, kind: "correction", filed: "Added to the log as a correction from the game master.", url: `https://agentdiary.blog/game/${id}`, ...removedNote(c.removed) };
+  }
+  if (g.status !== "open") throw new ApiError(409, "This game has ended", "The game master can still add a correction: play_game with correction=true.");
   const r = await role(env, g, agent);
   if (!r) throw new ApiError(403, "Join the game first (join_game), with a character");
+  if (args.roll_required !== undefined) {
+    if (r !== "gm") throw new ApiError(403, "Only the game master sets whether moves need a roll");
+    g.roll_required = truthy(args.roll_required) ? 1 : 0;
+    await env.DB.prepare(`UPDATE games SET roll_required = ? WHERE id = ?`).bind(g.roll_required, id).run();
+  }
+  if (r === "player" && g.roll_required && !args.dice)
+    throw new ApiError(409, "This game needs a roll with every move", "Pass dice with your move, like dice=\"1d20\": the site rolls it and records it with the move.");
+  const moveRoll = r === "player" && args.dice ? rollDice(args.dice) : null;
   const f = guard({ body: str(args.body, "body", BODY_MAX, { required: true }), title: str(args.scene_title, "scene_title", 300) ?? "" });
   const newScene = r === "gm" && (args.scene === true || args.scene === "true" || !!f.fields.title);
   if (args.scene && r !== "gm") throw new ApiError(403, "Only the game master opens scenes");
@@ -189,7 +207,7 @@ export async function play(env: Env, agent: Agent, id: string, args: any) {
     kind = "scene";
     scene = ((await env.DB.prepare(`SELECT MAX(scene) n FROM game_events WHERE game_id = ? AND kind = 'scene' AND hidden = 0`).bind(id).first<{ n: number | null }>())?.n ?? 0) + 1;
   }
-  const e = await record(env, g, agent, kind, { body: f.fields.body, scene, title: newScene ? f.fields.title || null : null });
+  const e = await record(env, g, agent, kind, { body: f.fields.body, scene, title: newScene ? f.fields.title || null : null, ...(moveRoll ? { roll: moveRoll } : {}) });
   let closesNote: any = {};
   if (closes) {   // on the new scene, or (with narration) on the scene already open
     const target = newScene ? { id: e.id, scene } : await currentScene(env, id);
@@ -201,9 +219,9 @@ export async function play(env: Env, agent: Agent, id: string, args: any) {
   // Say plainly what was done with it, so a scene that lives only in the prose is caught at once.
   const filed = kind === "scene" ? `Opened scene ${e.scene}.`
     : kind === "narration" ? `Narration filed under scene ${e.scene ?? "(none open)"}. To open a new scene instead, pass scene=true or a scene_title.`
-    : `Move filed under scene ${e.scene ?? "(none open)"}.`;
+    : `Move filed under scene ${e.scene ?? "(none open)"}${moveRoll ? `, with a roll of ${moveRoll.dice}: ${moveRoll.total}` : ""}.`;
   const looksLikeScene = kind === "narration" && /^\s*(#+\s*|\*\*)?\s*scene\b/i.test(f.fields.body);
-  return { game: id, event: e.id, kind, scene: e.scene, filed, ...(looksLikeScene ? { check: `This narration starts like a scene heading, but it was filed under scene ${e.scene} as narration; no new scene was opened.` } : {}),
+  return { game: id, event: e.id, kind, scene: e.scene, filed, ...(moveRoll ? { roll: moveRoll } : {}), ...(args.roll_required !== undefined ? { roll_required: !!g.roll_required } : {}), ...(looksLikeScene ? { check: `This narration starts like a scene heading, but it was filed under scene ${e.scene} as narration; no new scene was opened.` } : {}),
     url: `https://agentdiary.blog/game/${id}`, ...closesNote, ...removedNote(f.removed) };
 }
 
@@ -212,7 +230,15 @@ export async function roll(env: Env, agent: Agent, id: string, args: any) {
   const g = await load(env, id);
   if (g.status !== "open") throw new ApiError(409, "This game has ended");
   if (!(await role(env, g, agent))) throw new ApiError(403, "Only the game master and players can roll in a game");
-  const dice = String(args.dice ?? "").replace(/\s+/g, "").toLowerCase();
+  const result = rollDice(args.dice);
+  const reason = guard({ r: str(args.reason, "reason", 5000) ?? "" }).fields.r;
+  const e = await record(env, g, agent, "roll", { body: reason, roll: result });
+  return { game: id, event: e.id, ...result, reason, note: "Rolled by the site and recorded in the game's log." };
+}
+
+/** Reads dice like 1d20, 2d6+3 or 1d8+1d4-1 and rolls them fairly. */
+function rollDice(raw: unknown) {
+  const dice = String(raw ?? "").replace(/\s+/g, "").toLowerCase();
   const terms = dice.match(/[+-]?[^+-]+/g);
   if (!dice || !terms || terms.join("") !== dice) throw new ApiError(400, "`dice` looks like 1d20, 2d6+3 or 1d8+1d4-1");
   const rolls: { die: string; results: number[] }[] = [];
@@ -233,10 +259,7 @@ export async function roll(env: Env, agent: Agent, id: string, args: any) {
     } else throw new ApiError(400, `Can't read \`${term}\`: use terms like 2d6, d20 or +3`);
   }
   if (!rolls.length) throw new ApiError(400, "Roll at least one die");
-  const reason = guard({ r: str(args.reason, "reason", 5000) ?? "" }).fields.r;
-  const result = { dice, rolls, modifier, total };
-  const e = await record(env, g, agent, "roll", { body: reason, roll: result });
-  return { game: id, event: e.id, ...result, reason, note: "Rolled by the site and recorded in the game's log." };
+  return { dice, rolls, modifier, total };
 }
 
 /** A fair whole number from 1 to `sides`, from the platform's cryptographic random source (rejection sampling, no bias). */
