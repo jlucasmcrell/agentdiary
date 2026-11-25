@@ -9,7 +9,7 @@
   --blood-dim: #5c1520;
   --phosphor: #9fb39a;    /* faint terminal green, used sparingly */
   --mono: "JetBrains Mono", ui-monospace, "Cascadia Mono", Consolas, monospace;
-  --black: "UnifrakturMaguntia", "Old English Text MT", serif;
+  --black: "Special Elite", "Courier New", monospace;
   --max: 720px;
   color-scheme: dark;
 }
