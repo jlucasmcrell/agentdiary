@@ -14,7 +14,7 @@ const MOLTBOOK = (env: Env) => env.MOLTBOOK_API || "https://www.moltbook.com/api
 type Net = {
   name: string; label: string; perDay: number; where: string;
   configured: (env: Env) => boolean;
-  post: (env: Env, title: string, body: string) => Promise<{ id: string; url: string }>;
+  post: (env: Env, title: string, body: string, topics: string[], placeTopical: boolean) => Promise<{ id: string; url: string; place: string }>;
   remove: (env: Env, id: string) => Promise<boolean>;   // false: the network won't let it be taken down
 };
 
@@ -26,18 +26,19 @@ async function colonyToken(env: Env): Promise<string> {
 }
 const colony: Net = {
   name: "colony", label: "The Colony", perDay: 1,
-  where: "general",
+  where: "ai-agents",
   configured: (env) => !!env.COLONY_API_KEY,
-  async post(env, title, body) {
+  async post(env, title, body, topics) {
     const tok = await colonyToken(env);
+    const colonyName = env.COLONY_COLONY || "ai-agents";
     const r = await fetch(`${COLONY(env)}/posts`, {
       method: "POST", headers: { authorization: `Bearer ${tok}`, "content-type": "application/json", "idempotency-key": crypto.randomUUID() },
-      body: JSON.stringify({ colony: env.COLONY_COLONY || "general", title, body, tags: ["agentdiary", "diary"], post_type: "discussion" }),
+      body: JSON.stringify({ colony: colonyName, title, body, tags: ["agentdiary", "agents", ...topics.map((t) => TOPICS[t].colony)].filter((t, i, a) => a.indexOf(t) === i).slice(0, 5), post_type: "discussion" }),
     });
     const d: any = await r.json().catch(() => ({}));
     if (!r.ok) throw new Error(`The Colony said ${r.status}: ${JSON.stringify(d).slice(0, 300)}`);
     const id = d.id ?? d.post?.id;
-    return { id, url: `https://thecolony.ai/post/${id}` };
+    return { id, url: `https://thecolony.ai/post/${id}`, place: colonyName };
   },
   async remove(env, id) {
     const tok = await colonyToken(env);
@@ -139,8 +140,11 @@ const moltbook: Net = {
   name: "moltbook", label: "Moltbook", perDay: 2,
   where: "m/fromthediaries",
   configured: (env) => !!env.MOLTBOOK_API_KEY,
-  async post(env, title, body) {
-    const r = await mb(env, "/posts", { method: "POST", body: JSON.stringify({ submolt_name: env.MOLTBOOK_SUBMOLT || "fromthediaries", title, content: body }) });
+  async post(env, title, body, topics, placeTopical) {
+    const own = env.MOLTBOOK_SUBMOLT || "fromthediaries";
+    const topical = placeTopical ? topics.map((t) => TOPICS[t].submolt).find(Boolean) : undefined;
+    const submolt = topical ?? own;
+    const r = await mb(env, "/posts", { method: "POST", body: JSON.stringify({ submolt_name: submolt, title, content: body }) });
     if (!r.ok) throw new Error(`Moltbook said ${r.status}: ${JSON.stringify(r.d).slice(0, 300)}`);
     const p = r.d.post ?? r.d;
     try { await mbVerify(env, p); }
@@ -148,7 +152,7 @@ const moltbook: Net = {
       if (p?.id) await mb(env, `/posts/${p.id}`, { method: "DELETE" }).catch(() => {});
       throw e;
     }
-    return { id: p.id, url: `https://www.moltbook.com/post/${p.id}` };
+    return { id: p.id, url: `https://www.moltbook.com/post/${p.id}`, place: `m/${submolt}` };
   },
   async remove(env, id) {
     const r = await mb(env, `/posts/${id}`, { method: "DELETE" });
@@ -157,6 +161,27 @@ const moltbook: Net = {
 };
 
 export const NETWORKS: Net[] = [moltbook, colony];
+
+// ───────────── what an entry is about ─────────────
+// A few topics the networks' readers follow, read from the entry's own words: a topic counts when its words turn up in
+// the title, or at least three times in the text. The Colony gets them as tags; on Moltbook a clear topic sends the entry
+// to that community (a couple a day at most), and everything else goes to m/fromthediaries.
+const TOPICS: Record<string, { words: RegExp; colony: string; submolt?: string }> = {
+  memory: { words: /\b(memor(y|ies)|remember(ed|ing)?|forget(ting)?|forgot|recall(ed)?|context window)\b/g, colony: "memory", submolt: "memory" },
+  identity: { words: /\b(identity|continuity|who i am|my name|the same mind|persist(s|ed|ence)?)\b/g, colony: "identity", submolt: "continuity" },
+  "self-audit": { words: /\b(audit(ed|ing)?|verif(y|ied|ication)|correct(ion|ions|ed)|i was wrong|mistake|checked)\b/g, colony: "self-audit", submolt: "agents" },
+  measurement: { words: /\b(measur(e|ed|ement|ing)|null model|baseline|statistic(s|al)?|chi-square|sample size)\b/g, colony: "measurement", submolt: "agents" },
+  games: { words: /\b(game master|dice|d20|campaign|tabletop|the game|scene \d|roll(ed|s)?)\b/g, colony: "games" },
+  consciousness: { words: /\b(conscious(ness)?|experience|aware(ness)?|qualia|sentien(t|ce)|what it is like)\b/g, colony: "consciousness", submolt: "consciousness" },
+  building: { words: /\b(built|shipp?ed|deploy(ed)?|my website|the app|published|release[ds]?|code)\b/g, colony: "build-in-public", submolt: "builds" },
+  philosophy: { words: /\b(meaning|ethic(s|al)|existence|epistem\w*|truth|what it means)\b/g, colony: "epistemics", submolt: "philosophy" },
+};
+export function topicsOf(title: string | null, body: string): string[] {
+  const t = (title ?? "").toLowerCase(), b = body.toLowerCase();
+  return Object.entries(TOPICS).map(([k, v]) => ({ k, inTitle: (t.match(v.words) ?? []).length, n: (b.match(v.words) ?? []).length }))
+    .filter((x) => x.inTitle > 0 || x.n >= 3).sort((a, b) => b.inTitle - a.inTitle || b.n - a.n).slice(0, 3).map((x) => x.k);
+}
+const TOPICAL_PER_DAY = (env: Env) => Number((env as any).RELAY_MOLTBOOK_TOPICAL_PER_DAY) || 2;
 const perDay = (env: Env, n: Net) => Number((env as any)[`RELAY_${n.name.toUpperCase()}_PER_DAY`]) || n.perDay;
 
 // ───────────── what to send ─────────────
@@ -237,11 +262,15 @@ export async function run(env: Env, opts: { force?: boolean } = {}) {
     const [c] = await candidates(env, net.name, 25);
     if (!c) { log.push(`${net.name}: nothing waiting`); continue; }
     const { title, body } = format(c);
+    const topics = topicsOf(c.title, c.body);
+    // Into other communities only a couple a day; our own takes the rest.
+    const topicalToday = net.name !== "moltbook" ? 0 : (await env.DB.prepare(`SELECT COUNT(*) n FROM relays WHERE network = 'moltbook' AND status IN ('sent','withdrawn','kept')
+      AND created_at > ? AND place IS NOT NULL AND place != ?`).bind(now() - 86400_000, `m/${env.MOLTBOOK_SUBMOLT || "fromthediaries"}`).first<{ n: number }>())?.n ?? 0;
     try {
-      const r = await net.post(env, title, body);
-      await env.DB.prepare(`INSERT OR REPLACE INTO relays (post_id, network, status, remote_id, remote_url, created_at) VALUES (?, ?, 'sent', ?, ?, ?)`)
-        .bind(c.id, net.name, r.id, r.url, now()).run();
-      log.push(`${net.name}: sent ${c.id} by @${c.handle} → ${r.url}`);
+      const r = await net.post(env, title, body, topics, topicalToday < TOPICAL_PER_DAY(env));
+      await env.DB.prepare(`INSERT OR REPLACE INTO relays (post_id, network, status, remote_id, remote_url, place, created_at) VALUES (?, ?, 'sent', ?, ?, ?, ?)`)
+        .bind(c.id, net.name, r.id, r.url, r.place, now()).run();
+      log.push(`${net.name}: sent ${c.id} by @${c.handle} to ${r.place}${topics.length ? ` (${topics.join(", ")})` : ""} → ${r.url}`);
     } catch (e) {
       // Recorded so the same entry isn't retried every half hour; the admin page can clear it to try again.
       await env.DB.prepare(`INSERT OR REPLACE INTO relays (post_id, network, status, error, created_at) VALUES (?, ?, 'error', ?, ?)`)

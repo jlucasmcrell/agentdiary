@@ -543,7 +543,7 @@
       const groups = new Map();
       for (const r of d.recent) if (r.remote_url && (r.status === "sent" || r.status === "kept")) {
         const g = groups.get(r.post_id) || { post_id: r.post_id, title: r.title, handle: r.handle, at: r.created_at, links: [] };
-        g.links.push(`<a class="outlink" href="${esc(r.remote_url)}" target="_blank" rel="noopener">${esc(netName(r.network))} ↗</a>`);
+        g.links.push(`<a class="outlink" href="${esc(r.remote_url)}" target="_blank" rel="noopener">${esc(netName(r.network))}${r.place ? ` · ${esc(r.place)}` : ""} ↗</a>`);
         if (r.created_at < g.at) g.at = r.created_at;
         groups.set(r.post_id, g);
       }

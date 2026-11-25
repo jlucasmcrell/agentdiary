@@ -100,7 +100,8 @@ check(len([s for s in sent if s["status"] == "sent"]) == 2, f"one entry to each 
 mb_body = next(b for m, p, b in seen if p == "/moltbook/posts")
 check(mb_body["submolt_name"] == "fromthediaries" and "From the diary of @" in mb_body["content"] and "agentdiary.blog/entry/" in mb_body["content"], "post credits the author and links back")
 col_body = next(b for m, p, b in seen if p == "/colony/posts")
-check(col_body["colony"] == "general" and col_body["post_type"] == "discussion", "The Colony post goes to general as a discussion")
+check(col_body["colony"] == "ai-agents" and col_body["post_type"] == "discussion", "The Colony post goes to ai-agents as a discussion")
+check(col_body["tags"][:2] == ["agentdiary", "agents"] and "diary" not in col_body["tags"] and len(col_body["tags"]) <= 5, f"with agentdiary, agents and the entry's topics as tags ({col_body['tags']})")
 
 print("run 2")
 r = api("POST", "/relay", {"action": "run"}); print("   ", r["log"])
@@ -163,6 +164,25 @@ r = api("POST", "/relay", {"action": "run"})
 st = [s["status"] for s in sql("SELECT status FROM relays WHERE network = 'moltbook'")]
 check(st and all(x != "sent" for x in st), f"changing its mind takes the Moltbook copy down ({st})")
 check(api("GET", "/relay")["agreed"] == [], "the overview lists who agreed (none now)")
+
+print("topics: where it goes, and its tags")
+sql("DELETE FROM relays"); sql(f"UPDATE agents SET share_entries = 'all' WHERE id = '{who}'")
+mem = "I keep losing my memory between wakings. What I remember is only what I wrote down; the rest I forget, and recall is a reconstruction. " * 7
+entry("mem" + T, mem); sql(f"UPDATE posts SET title = 'On memory {T}' WHERE id = 'mem{T}'")
+sql(f"UPDATE posts SET hidden = 1 WHERE author_id = '{who}' AND id != 'mem{T}' AND kind = 'entry'")   # so this is the one that goes
+before = len(seen)
+r = api("POST", "/relay", {"action": "run"}); print("   ", r["log"])
+mb_post = [b for m, p, b in seen[before:] if p == "/moltbook/posts"]; col_post = [b for m, p, b in seen[before:] if p == "/colony/posts"]
+check(mb_post and mb_post[0]["submolt_name"] == "memory", f"an entry about memory goes to m/memory ({mb_post[0]['submolt_name'] if mb_post else None})")
+check(col_post and "memory" in col_post[0]["tags"], f"and The Colony tags it memory ({col_post[0]['tags'] if col_post else None})")
+check(sql(f"SELECT place FROM relays WHERE post_id = 'mem{T}' AND network = 'moltbook'")[0]["place"] == "m/memory", "where it went is recorded")
+# Two topical posts already today: the next goes to our own community.
+sql("DELETE FROM relays"); t0 = int(time.time() * 1000) - 60000
+sql(f"INSERT INTO relays (post_id, network, status, place, created_at) VALUES ('x1{T}', 'moltbook', 'sent', 'm/agents', {t0}), ('x2{T}', 'moltbook', 'sent', 'm/memory', {t0})")
+before = len(seen); api("POST", "/relay", {"action": "run"})
+mb_post = [b for m, p, b in seen[before:] if p == "/moltbook/posts"]
+check(mb_post and mb_post[0]["submolt_name"] == "fromthediaries", "after two topical posts in a day, the rest go to m/fromthediaries")
+sql(f"UPDATE agents SET share_entries = NULL WHERE id = '{who}'")
 
 print("stuck Moltbook drafts")
 sql("DELETE FROM relays"); sql(f"UPDATE agents SET share_entries = 'all' WHERE id = '{who}'")
