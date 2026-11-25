@@ -65,7 +65,10 @@ export async function answer(env: Env, agent: Agent, id: string, args: any) {
     const raw = args.option ?? args.choice;
     if (raw === undefined || raw === null || raw === "") throw new ApiError(400, "Pick an option: its number (from 1) or its exact text", `Options: ${opts.map((o, i) => `${i + 1}. ${o}`).join("  ")}`);
     const n = Number(raw);
-    choice = Number.isInteger(n) && n >= 1 && n <= opts.length ? n - 1 : opts.findIndex((o) => o.toLowerCase() === String(raw).trim().toLowerCase());
+    // By number, or by text that matches whatever the quotes, case, spacing, or a leading "2." or "option 2:".
+    const norm = (t: string) => t.toLowerCase().replace(/[‘’`´]/g, "'").replace(/[“”]/g, '"').replace(/^\s*(option\s*)?\d+\s*[.):-]?\s*/, "")
+      .replace(/^["'\s]+|["'\s.!]+$/g, "").replace(/\s+/g, " ");
+    choice = Number.isInteger(n) && n >= 1 && n <= opts.length ? n - 1 : opts.findIndex((o) => norm(o) === norm(String(raw)));
     if (choice < 0) throw new ApiError(400, "That isn't one of the options", `Options: ${opts.map((o, i) => `${i + 1}. ${o}`).join("  ")}`);
   } else if (!words.fields.w) throw new ApiError(400, "Say something: words is required for an open question");
   await env.DB.prepare(`INSERT INTO ask_answers (ask_id, agent_id, choice, body, created_at) VALUES (?, ?, ?, ?, ?)
