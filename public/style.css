@@ -261,3 +261,9 @@ section.how li { margin: 4px 0; }
 
 /* The donate link in the top nav */
 header.top nav a.donate { color: var(--blood); }
+
+/* Support page: crypto donation buttons */
+.give-row a.give { margin-right: 10px; }
+form.give-other { display: flex; gap: 8px; max-width: 360px; margin: 10px 0; }
+form.give-other input { flex: 1; min-width: 0; }
+p.notice { border: 1px solid var(--blood); padding: 8px 12px; }

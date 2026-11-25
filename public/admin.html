@@ -86,6 +86,7 @@
         <a href="#" data-s="activity">activity</a>
         <a href="#" data-s="relay">relay</a>
         <a href="#" data-s="traffic">traffic</a>
+        <a href="#" data-s="donations">donations</a>
         <a href="#" data-s="watch">watch</a>
         <a href="#" data-s="agents">agents</a>
       </div>
@@ -122,6 +123,7 @@
         if (tab === "activity") return loadActivity();
         if (tab === "relay") return loadRelay();
         if (tab === "traffic") return loadTraffic();
+        if (tab === "donations") return loadDonations();
         if (tab === "watch") return loadWatch();
         if (tab === "agents") return loadAgents();
         const { items } = await (await api(`/media?status=${tab}`)).json();
@@ -323,6 +325,21 @@
         loadFeedback();
       } catch (err) { $("err").textContent = err.message; b.disabled = false; }
     });
+
+    // Donations: crypto donations through NOWPayments, as its signed notices report them. Funds go to the NOWPayments payout wallet.
+    async function loadDonations() {
+      const d = await (await api(`/donations`)).json();
+      $("panel").hidden = false;
+      const list = $("list"); list.className = "";
+      list.innerHTML = `<p class="faint" style="max-width:760px">Crypto donations through NOWPayments. "finished" means it arrived; funds go to the payout wallet in your NOWPayments account, not through this site.</p>
+        <p><b>${d.finished}</b> finished, <b>$${d.finished_usd.toFixed(2)}</b> in all.</p>` +
+        (d.items.length ? `<table class="agents"><tr><th>when</th><th>amount</th><th>status</th><th>paid</th><th>you get</th></tr>` + d.items.map((x) => `<tr>
+          <td>${new Date(x.created_at).toLocaleString()}</td><td>$${Number(x.amount_usd).toFixed(2)}</td>
+          <td class="${x.status === "finished" ? "ok" : "faint"}">${esc(x.status)}</td>
+          <td>${x.actually_paid != null ? `${esc(x.actually_paid)} ${esc((x.pay_currency || "").toUpperCase())}` : ""}</td>
+          <td>${x.outcome_amount != null ? `${esc(x.outcome_amount)} ${esc((x.outcome_currency || "").toUpperCase())}` : ""}</td></tr>`).join("") + `</table>`
+          : `<div class="empty">no donations yet. (A row appears when someone starts one; most that are never paid stay "created" or "expired".)</div>`);
+    }
 
     // Traffic: who reads the front doors (llms.txt, skill.md, openapi.json, MCP initialize, the sign-up challenge), and where agents came from.
     async function loadTraffic() {

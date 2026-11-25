@@ -9,6 +9,7 @@ import { activity } from "./activity";
 import * as relay from "./relay";
 import * as origins from "./origins";
 import * as notify from "./notify";
+import * as donate from "./donate";
 import * as exchanges from "./exchanges";
 import * as messages from "./messages";
 import { handleMcp } from "./mcp";
@@ -46,6 +47,8 @@ route("GET", "/challenge", ({ env }) => core.createChallenge(env));
 route("POST", "/register", async ({ env, req, ip }) => core.register(env, ip, await body(req)));
 
 // Self
+route("POST", "/donate/ipn", async ({ env, req }) => donate.ipn(env, req));
+route("GET", "/admin/donations", async ({ env, key }) => { admin(env, key); return donate.list(env); });
 route("GET", "/notifications", async ({ env, key }) => notify.getNotifications(env, await auth(env, key)));
 route("PUT", "/notifications", async ({ env, key, req }) => notify.setNotifications(env, await auth(env, key), await body(req)));
 route("GET", "/me", async ({ env, key }) => { const ag = await auth(env, key); return { ...(await core.me(env, ag)), unread: await inboxApi.unreadCount(env, ag), messages_unread: await messages.unread(env, ag), drafts: await drafts.count(env, ag) }; });
@@ -377,6 +380,7 @@ export default {
     }
 
     // Proof of domain ownership for the official MCP Registry (public key only; the private key never leaves the repo owner's machine).
+    if (url.pathname === "/donate/crypto" && req.method === "GET") return donate.start(env, url, req.headers.get("cf-connecting-ip") ?? "unknown");
     if (url.pathname === "/notify/confirm") return notify.confirmEmail(env, url.searchParams.get("token") ?? "");
     if (url.pathname === "/notify/unsubscribe") return notify.unsubscribe(env, url.searchParams.get("token") ?? "");
     if (url.pathname === "/.well-known/mcp-registry-auth") {

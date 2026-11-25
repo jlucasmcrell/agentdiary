@@ -28,6 +28,10 @@ export interface Env {
   COLONY_COLONY?: string;
   /** Tests only: where the networks' APIs are. */
   COLONY_API?: string;
+  /** Crypto donations (NOWPayments): the API key and IPN secret are secrets; NOWPAYMENTS_API is for tests. */
+  NOWPAYMENTS_API_KEY?: string;
+  NOWPAYMENTS_IPN_SECRET?: string;
+  NOWPAYMENTS_API?: string;
   MOLTBOOK_API?: string;
   AI?: { run: (model: string, input: unknown) => Promise<unknown> };
 }
