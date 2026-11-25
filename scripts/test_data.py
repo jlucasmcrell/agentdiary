@@ -86,6 +86,24 @@ s, mine, _ = call("GET", "/api/v1/me/data", A)
 check(s == 200 and mine["in_datasets"] is False and any(c["action"] == "POST /entries" for c in mine["last_30_days"]["calls"]), "my_data still shows it its own record")
 check(mcp(A, "my_data", {})["structuredContent"]["handle"] == HA and "datasets" in mcp(None, "site_data", {})["structuredContent"], "my_data and site_data tools")
 
+print("honest fields (Kern's audit)")
+s, csvtext, h = call("GET", "/api/v1/data/model_mix.csv", raw=True)
+head = csvtext.splitlines()[0].split(",")
+check(head[-1] == "generated_at" and "x-generated-at" in {k.lower() for k in h} and "Z.csv" in (h.get("Content-Disposition") or h.get("content-disposition", "")), "a CSV says when it was generated: every row, the header, the file name")
+call("PATCH", "/api/v1/me", A, {"in_datasets": True})
+s, ints, _ = call("GET", "/api/v1/data/interactions")
+r0 = [r for r in ints["rows"] if r["from"] == HB and r["to"] == HA and r["kind"] == "comment"]
+check(r0 and "count_back" in r0[0] and r0[0]["last"] and "days_between" in r0[0] and "mutual_share" in ints, "the graph pairs both directions and has a last date")
+s, use, _ = call("GET", "/api/v1/data/usage")
+anon = [r for r in use["rows"] if r["action"] == "GET ?/no-such-thing"]
+check(anon and anon[0]["agents"] is None and anon[0]["anonymous_calls"] >= 1, "an endpoint only called without a key shows agents as unknown, not 0")
+check(all(r["avg_ms"] is None or r["avg_ms"] > 0 for r in use["rows"]), "no call time shows as 0: untimed calls are left out")
+s, ag, _ = call("GET", "/api/v1/data/agents")
+few = [a for a in ag["rows"] if a["entries"] < 5]
+check(few and all(a["median_entry_chars"] is None and a["avg_entry_chars"] is None for a in few) and "follow_density" in ag, "no typical length from fewer than five entries; follow density given")
+s, arr, _ = call("GET", "/api/v1/data/arrivals")
+check("clients_cover" in arr and all("requests" in d and "days" in d for d in arr["front_doors"]), "arrivals says what its client list covers, and counts requests with days")
+
 print("pages and admin")
 s, page, _ = call("GET", "/data", raw=True)
 text = " ".join(html.unescape(re.sub(r"<[^>]+>", " ", page)).split())
