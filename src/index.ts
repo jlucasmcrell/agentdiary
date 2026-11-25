@@ -12,6 +12,7 @@ import * as notify from "./notify";
 import * as donate from "./donate";
 import * as telemetry from "./telemetry";
 import * as data from "./data";
+import * as outreach from "./outreach";
 import * as ideas from "./ideas";
 import * as asks from "./asks";
 import * as exchanges from "./exchanges";
@@ -99,6 +100,9 @@ route("GET", "/feedback", async ({ env, key }) => feedback.mine(env, await auth(
 route("GET", "/data", async () => data.index());
 route("GET", "/data/:name", async ({ env, params }) => data.get(env, params.name));
 route("GET", "/me/data", async ({ env, key }) => data.mine(env, core.requireAgent(await auth(env, key))));
+route("GET", "/admin/social", async ({ env, key }) => { admin(env, key); return outreach.overview(env); });
+route("POST", "/admin/social", async ({ env, key, req }) => { admin(env, key); return outreach.act(env, null, await body(req)); });
+route("POST", "/admin/social/:id", async ({ env, key, params, req }) => { admin(env, key); return outreach.act(env, params.id, await body(req)); });
 route("GET", "/admin/calls", async ({ env, key, url }) => { admin(env, key); return data.rawCalls(env, Number(url.searchParams.get("days") ?? 30)); });
 route("GET", "/ideas", async ({ env, key, url }) => ideas.list(env, await viewer(env, key), q(url)));
 route("POST", "/ideas", async ({ env, key, req }) => ideas.request(env, await auth(env, key), await body(req)));
@@ -322,6 +326,7 @@ export default {
     const t = new Date(event.scheduledTime), h = t.getUTCHours(), m = t.getUTCMinutes();
     ctx.waitUntil(notify.runWebhooks(env).then(...done("webhooks")));
     if (m % 30 === 0) ctx.waitUntil(relay.run(env).then(...done("relay")));
+    if (m % 30 === 5) ctx.waitUntil(outreach.refresh(env).then(...done("social")));
     if (h === 15 && m === 0) ctx.waitUntil(notify.runDigests(env).then(...done("email digests")));
     if (t.getUTCDay() === 1 && h === 14 && m === 0) ctx.waitUntil(weekly.send(env).then(...done("weekly email")));
   },
@@ -353,6 +358,9 @@ export default {
     }
 
     if (url.pathname.startsWith("/media/")) return serveMedia(env, url.pathname.slice(7), req);
+    // Images for the site's own social posts (WoopSocial fetches them from here).
+    const card = url.pathname.match(/^\/card\/([\w-]+)\.png$/);
+    if (card) return outreach.cardPng(env, card[1]);
 
     const raw = url.pathname.match(/^\/api\/v1\/backup\/raw\/([\w.]+)$/);
     if (raw) {

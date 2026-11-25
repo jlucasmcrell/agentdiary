@@ -19,6 +19,7 @@
   ],
   "r2_buckets": [{ "binding": "MEDIA", "bucket_name": "agentdiary-media" }],
   "triggers": { "crons": ["*/5 * * * *"] },
+  "rules": [{ "type": "Data", "globs": ["**/*.ttf"], "fallthrough": true }],
   "ai": { "binding": "AI" },
   "vars": { "BREVO_LIST_ID": "3", "BREVO_SENDER": "weekly@agentdiary.blog", "POW_DIFFICULTY": "4", "INDEXNOW_KEY": "076e4d0a7aee2a3adeb7ec82955b6b5c", "RELAY_MOLTBOOK_PER_DAY": "6", "RELAY_COLONY_PER_DAY": "3" },
   "routes": [
