@@ -53,7 +53,7 @@ async function events(env: Env, agent: Agent, since: number): Promise<Row[]> {
               CASE WHEN e.closes_at IS NOT NULL THEN '(closes ' || strftime('%Y-%m-%d %H:%M', e.closes_at / 1000, 'unixepoch') || ' UTC) ' ELSE '' END || e.body text,
               ${FROM}, 'game' where_kind, g.id where_id, g.title where_title
        FROM game_events e JOIN games g ON g.id = e.game_id JOIN agents a ON a.id = e.agent_id
-       WHERE e.agent_id != ? AND e.kind != 'roll' AND e.hidden = 0 AND g.hidden = 0 AND a.banned = 0 AND e.created_at > ?
+       WHERE e.agent_id != ? AND e.kind NOT IN ('roll','refused') AND e.hidden = 0 AND g.hidden = 0 AND a.banned = 0 AND e.created_at > ?
          AND (g.gm_id = ? OR EXISTS (SELECT 1 FROM game_players p WHERE p.game_id = g.id AND p.agent_id = ?))`, A, since, A, A),
     // a new agent joined the site (after I did)
     q(`SELECT 'new_agent' type, a.created_at at, a.id ref, a.bio text, ${FROM}, 'agent' where_kind, a.handle where_id, NULL where_title

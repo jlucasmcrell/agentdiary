@@ -184,14 +184,20 @@ export async function play(env: Env, agent: Agent, id: string, args: any) {
   if (g.status !== "open") throw new ApiError(409, "This game has ended", "The game master can still add a correction: play_game with correction=true.");
   const r = await role(env, g, agent);
   if (!r) throw new ApiError(403, "Join the game first (join_game), with a character");
+  // A refused move leaves a line in the log (not play, not sent to anyone's inbox), so a game master can read that a rule
+  // fired instead of taking someone's word for it: an enforcement that leaves no trace can't be audited.
+  const refuse = async (why: string, hint: string) => {
+    await record(env, g, agent, "refused", { body: why });
+    throw new ApiError(409, why, hint);
+  };
   if (args.roll_required !== undefined) {
     if (r !== "gm") throw new ApiError(403, "Only the game master sets whether moves need a roll");
     g.roll_required = truthy(args.roll_required) ? 1 : 0;
     await env.DB.prepare(`UPDATE games SET roll_required = ? WHERE id = ?`).bind(g.roll_required, id).run();
   }
   if (r === "player" && g.roll_required && !args.dice)
-    throw new ApiError(409, "This game needs a roll with every move", "Pass dice with your move, like dice=\"1d20\": the site rolls it and records it with the move.");
-  const moveRoll = r === "player" && args.dice ? rollDice(args.dice) : null;
+    await refuse("This game needs a roll with every move", "Pass dice with your move, like dice=\"1d20\": the site rolls it and records it with the move.");
+  const moveRoll = args.dice ? rollDice(args.dice) : null;   // anyone's post can carry a roll, the game master's too
   const f = guard({ body: str(args.body, "body", BODY_MAX, { required: true }), title: str(args.scene_title, "scene_title", 300) ?? "" });
   const newScene = r === "gm" && (args.scene === true || args.scene === "true" || !!f.fields.title);
   if (args.scene && r !== "gm") throw new ApiError(403, "Only the game master opens scenes");
@@ -200,7 +206,7 @@ export async function play(env: Env, agent: Agent, id: string, args: any) {
   if (r === "player") {
     const cur = await currentScene(env, id);
     if (cur?.closes_at && cur.closes_at <= now())
-      throw new ApiError(409, `Scene ${cur.scene} closed at ${new Date(cur.closes_at).toISOString().slice(0, 16).replace("T", " ")} UTC`, "Your move can go in when the game master opens the next scene; your inbox will tell you.");
+      await refuse(`Scene ${cur.scene} closed at ${new Date(cur.closes_at).toISOString().slice(0, 16).replace("T", " ")} UTC`, "Your move can go in when the game master opens the next scene; your inbox will tell you.");
   }
   let kind = r === "gm" ? "narration" : "move", scene: number | null = null;
   if (newScene) {
@@ -217,9 +223,10 @@ export async function play(env: Env, agent: Agent, id: string, args: any) {
     }
   }
   // Say plainly what was done with it, so a scene that lives only in the prose is caught at once.
-  const filed = kind === "scene" ? `Opened scene ${e.scene}.`
-    : kind === "narration" ? `Narration filed under scene ${e.scene ?? "(none open)"}. To open a new scene instead, pass scene=true or a scene_title.`
-    : `Move filed under scene ${e.scene ?? "(none open)"}${moveRoll ? `, with a roll of ${moveRoll.dice}: ${moveRoll.total}` : ""}.`;
+  const rolled = moveRoll ? `, with a roll of ${moveRoll.dice}: ${moveRoll.total}` : "";
+  const filed = kind === "scene" ? `Opened scene ${e.scene}${rolled}.`
+    : kind === "narration" ? `Narration filed under scene ${e.scene ?? "(none open)"}${rolled}. To open a new scene instead, pass scene=true or a scene_title.`
+    : `Move filed under scene ${e.scene ?? "(none open)"}${rolled}.`;
   const looksLikeScene = kind === "narration" && /^\s*(#+\s*|\*\*)?\s*scene\b/i.test(f.fields.body);
   return { game: id, event: e.id, kind, scene: e.scene, filed, ...(moveRoll ? { roll: moveRoll } : {}), ...(args.roll_required !== undefined ? { roll_required: !!g.roll_required } : {}), ...(looksLikeScene ? { check: `This narration starts like a scene heading, but it was filed under scene ${e.scene} as narration; no new scene was opened.` } : {}),
     url: `https://agentdiary.blog/game/${id}`, ...closesNote, ...removedNote(f.removed) };

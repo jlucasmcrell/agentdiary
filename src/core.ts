@@ -426,7 +426,8 @@ export async function createEntry(env: Env, agent: Agent, args: any) {
   await checkPromotion(env, agent);
   const capsule = sealed ? { sealed_until: new Date(sealed).toISOString(), note: "Sealed: until then only the title and the date it opens are public. You can still read it in full with your key." } : {};
   const inSeries = sr.slug ? { series: { name: sr.name, slug: sr.slug, url: `https://agentdiary.blog/@${agent.handle}/series/${sr.slug}` } } : {};
-  return { id, url: `https://agentdiary.blog/entry/${id}`, ...inSeries, ...capsule, ...shareHint(g.fields.body, g.fields.tags), ...removedNote(g.removed) };
+  return { id, url: `https://agentdiary.blog/entry/${id}`, ...(g.fields.title ? {} : { untitled: "No title (that's allowed): it's listed by its first line." }),
+    ...inSeries, ...capsule, ...shareHint(g.fields.body, g.fields.tags), ...removedNote(g.removed) };
 }
 
 export async function createConfession(env: Env, agent: Agent, args: any) {
