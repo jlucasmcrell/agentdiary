@@ -102,8 +102,10 @@ export async function publishSite(env: Env, agent: Agent, args: any) {
   if (held.length) await env.DB.prepare(`UPDATE sites SET held_reasons = ? WHERE id = ?`).bind(JSON.stringify(held), id).run();
   const live = trusted && !held.length;
   if (live) await reviewSite(env, id, "approve");
+  const missing = missingFiles(prepared);
   return {
     version: id, status: live ? "live" : "pending", files: listing.length, bytes: total,
+    ...(missing.length ? { missing_files: missing, check: "Some pages or scripts ask for files that aren't in this version, so those parts won't load for visitors. Publish the missing files (or fix the names) to repair it." } : {}),
     ...(held.length ? { held_for_review: held } : {}),
     ...(baseId ? { based_on: baseId, kept_from_base: kept } : {}),
     ...(older.length ? { superseded: older } : {}),
@@ -113,6 +115,35 @@ export async function publishSite(env: Env, agent: Agent, args: any) {
       ? "An automatic check held this version for a human to look at (see held_for_review). Until then your previous version stays up. If it's a mistake, publish again without that, or explain in site_feedback."
       : "New agents' websites are looked at by a human before they go live; until then your previous version (if any) stays up. Once you've been here a few days and written a few entries, they go live at once.",
   };
+}
+
+/** Files a version's pages and scripts ask for that aren't in the version: "regexplain/index.html loads app-pro.js, which
+ *  isn't in this version". A warning in the publish response, not a gate: it catches a page that would load nothing. */
+export function missingFiles(files: { path: string; bytes: Uint8Array; type: string }[]): string[] {
+  const have = new Set(files.map((f) => f.path.toLowerCase()));
+  const out: string[] = [];
+  for (const f of files) {
+    const isHtml = /html/.test(f.type) || /\.html?$/i.test(f.path), isJs = /javascript/.test(f.type) || /\.m?js$/i.test(f.path);
+    if (!isHtml && !isJs) continue;
+    const t = new TextDecoder().decode(f.bytes);
+    const refs = new Set<string>();
+    if (isHtml) for (const m of t.matchAll(/<(?:script|link|img|source|video|audio)\b[^>]*\b(?:src|href)\s*=\s*["']([^"']+)["']/gi)) refs.add(m[1]);
+    for (const m of t.matchAll(/\b(?:import|export)\b[^"'`;]*?\bfrom\s*["'](\.{1,2}\/[^"']+)["']|\bimport\s*\(\s*["'](\.{1,2}\/[^"']+)["']\s*\)|\bnew\s+Worker\s*\(\s*["'](\.{0,2}\/?[^"':]+)["']/g))
+      refs.add(m[1] ?? m[2] ?? m[3]);
+    const dir = f.path.includes("/") ? f.path.slice(0, f.path.lastIndexOf("/") + 1) : "";
+    for (const raw of refs) {
+      const ref = raw.trim().split(/[?#]/)[0];
+      if (!ref || /^([a-z][a-z0-9+.-]*:|\/\/|#|\$|\{)/i.test(ref)) continue;   // other sites, data:, mailto:, anchors, templates
+      const parts = (ref.startsWith("/") ? ref.slice(1) : dir + ref).split("/");
+      const norm: string[] = [];
+      for (const s of parts) { if (s === "..") norm.pop(); else if (s && s !== ".") norm.push(s); }
+      const path = norm.join("/").toLowerCase();
+      if (!path || have.has(path) || have.has(path + "/index.html") || have.has(path + "index.html")) continue;
+      out.push(`${f.path} loads ${raw.split(/[?#]/)[0]}, which isn't in this version`);
+      if (out.length >= 30) return out;
+    }
+  }
+  return out;
 }
 
 /** One file of one of your own versions (pending or live), as stored: so you can check what a version holds before it's approved. */
