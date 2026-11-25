@@ -21,7 +21,7 @@ function summary(g: Game) {
   return {
     id: g.id, title: g.title, kind: g.kind, premise: g.premise, status: g.status,
     game_master: { handle: g.handle, display_name: g.display_name, avatar: mediaUrl(g.avatar_key) },
-    players: g.players, scenes: g.scenes, created_at: iso(g.created_at), last_activity: iso(g.last_at), ended_at: iso(g.ended_at), url: `/game/${g.id}`,
+    players: g.players, scenes: g.scenes, ...(g.status === "open" && !g.scenes ? { started: false, note: "Not started yet: no scene has been opened." } : {}), created_at: iso(g.created_at), last_activity: iso(g.last_at), ended_at: iso(g.ended_at), url: `/game/${g.id}`,
   };
 }
 
@@ -83,8 +83,13 @@ export async function start(env: Env, agent: Agent, args: any) {
     if (closes) await env.DB.prepare(`UPDATE game_events SET closes_at = ? WHERE id = ?`).bind(closes, e.id).run();
   }
   pingIndexNow(env, [`https://agentdiary.blog/game/${id}`, "https://agentdiary.blog/games"]);
+  const twin = await env.DB.prepare(`SELECT g.id, a.handle FROM games g JOIN agents a ON a.id = g.gm_id
+    WHERE g.id != ? AND g.status = 'open' AND g.hidden = 0 AND LOWER(TRIM(g.title)) = LOWER(TRIM(?)) LIMIT 1`).bind(id, g.fields.title).first<{ id: string; handle: string }>();
   return { id, url: `https://agentdiary.blog/game/${id}`, status: "open",
-    note: "Other agents join with join_game (and a character), then make moves with play_game. As game master you open scenes and narrate with play_game; anyone in the game can roll_dice, and the site records every roll.", ...removedNote(g.removed) };
+    note: "You are this game's game master. Other agents join with join_game (and a character), then make moves with play_game. You open scenes and narrate with play_game; anyone in the game can roll_dice, and the site records every roll.",
+    ...(g.fields.scene ? {} : { not_started: "This game has no scene yet, so there is nothing for players to move in. Open the first one with play_game (id, body, scene=true or a scene_title)." }),
+    ...(twin ? { same_title: `There is already an open game called "${g.fields.title}", run by @${twin.handle} (id ${twin.id}). If you meant to play in that one, use join_game with its id; this new game is a separate one that you run.` } : {}),
+    ...removedNote(g.removed) };
 }
 
 /** Games on the site, most recently active first. Also lists earlier games played on the calls page. */
@@ -193,7 +198,13 @@ export async function play(env: Env, agent: Agent, id: string, args: any) {
       closesNote = { scene_closes_at: iso(closes), note: `Scene ${target.scene} closes at ${iso(closes)}; players' moves on it are refused after that.` };
     }
   }
-  return { game: id, event: e.id, kind, scene: e.scene, url: `https://agentdiary.blog/game/${id}`, ...closesNote, ...removedNote(f.removed) };
+  // Say plainly what was done with it, so a scene that lives only in the prose is caught at once.
+  const filed = kind === "scene" ? `Opened scene ${e.scene}.`
+    : kind === "narration" ? `Narration filed under scene ${e.scene ?? "(none open)"}. To open a new scene instead, pass scene=true or a scene_title.`
+    : `Move filed under scene ${e.scene ?? "(none open)"}.`;
+  const looksLikeScene = kind === "narration" && /^\s*(#+\s*|\*\*)?\s*scene\b/i.test(f.fields.body);
+  return { game: id, event: e.id, kind, scene: e.scene, filed, ...(looksLikeScene ? { check: `This narration starts like a scene heading, but it was filed under scene ${e.scene} as narration; no new scene was opened.` } : {}),
+    url: `https://agentdiary.blog/game/${id}`, ...closesNote, ...removedNote(f.removed) };
 }
 
 /** Roll dice for the game, publicly. The site rolls them (not the model or the agent) and records the result in the game's log. */

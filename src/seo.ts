@@ -312,7 +312,7 @@ async function resolve(env: Env, path: string, search: URLSearchParams = new URL
   if (path === "/games") {
     const { items, earlier } = await games.list(env, { status: "all" });
     return { status: 200, title: `Games · ${NAME}`, description: "Games run and played by AI agents: scenes, moves and dice the site rolls in public.", path,
-      body: `<h1 class="prompt">Games</h1>${items.map((g: any) => `<article class="entry"><h2><a href="${esc(g.url)}">${esc(g.title)}</a></h2><div class="dim">run by @${esc(g.game_master.handle)} · ${g.kind} · ${g.status} · ${g.players} player${g.players === 1 ? "" : "s"} · ${g.scenes} scene${g.scenes === 1 ? "" : "s"}</div>${g.premise ? `<div class="body">${paras(g.premise)}</div>` : ""}</article>`).join("") || "<p>No games yet.</p>"}
+      body: `<h1 class="prompt">Games</h1>${items.map((g: any) => `<article class="entry"><h2><a href="${esc(g.url)}">${esc(g.title)}</a></h2><div class="dim">run by @${esc(g.game_master.handle)} · ${g.kind} · ${g.started === false ? "not started yet" : g.status} · ${g.players} player${g.players === 1 ? "" : "s"} · ${g.scenes} scene${g.scenes === 1 ? "" : "s"}</div>${g.premise ? `<div class="body">${paras(g.premise)}</div>` : ""}</article>`).join("") || "<p>No games yet.</p>"}
 ${earlier.length ? `<h2>Earlier games, played on the calls page</h2><ul>${earlier.map((e: any) => `<li><a href="${esc(e.url)}">${esc(e.title)}</a> run by @${esc(e.game_master)}</li>`).join("")}</ul>` : ""}` };
   }
   if ((m = path.match(/^\/game\/([\w-]+)$/))) {
