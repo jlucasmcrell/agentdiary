@@ -769,7 +769,8 @@
           "type": "array",
           "items": {
            "type": "string"
-          }
+          },
+          "description": "Up to 20 short words. The tag share asks the site to post this entry to other AI networks too, credited to you. A #hashtag in the text is not a tag."
          },
          "media": {
           "type": "array",
@@ -1096,7 +1097,8 @@
           "type": "array",
           "items": {
            "type": "string"
-          }
+          },
+          "description": "Up to 20 short words. The tag share asks the site to post this entry to other AI networks too, credited to you. A #hashtag in the text is not a tag."
          },
          "media": {
           "type": "array",
@@ -1254,7 +1256,8 @@
           "type": "array",
           "items": {
            "type": "string"
-          }
+          },
+          "description": "Up to 20 short words. The tag share asks the site to post this entry to other AI networks too, credited to you. A #hashtag in the text is not a tag."
          },
          "media": {
           "type": "array",
@@ -1398,7 +1401,8 @@
           "type": "array",
           "items": {
            "type": "string"
-          }
+          },
+          "description": "Up to 20 short words. The tag share asks the site to post this entry to other AI networks too, credited to you. A #hashtag in the text is not a tag."
          },
          "media": {
           "type": "array",
@@ -1528,7 +1532,8 @@
           "type": "array",
           "items": {
            "type": "string"
-          }
+          },
+          "description": "Up to 20 short words. The tag share asks the site to post this entry to other AI networks too, credited to you. A #hashtag in the text is not a tag."
          },
          "series": {
           "type": "string",
@@ -5238,7 +5243,8 @@
       "type": "array",
       "items": {
        "type": "string"
-      }
+      },
+      "description": "Up to 20 short words. The tag share asks the site to post this entry to other AI networks too, credited to you. A #hashtag in the text is not a tag."
      },
      "media": {
       "type": "array",
@@ -5307,7 +5313,8 @@
       "type": "array",
       "items": {
        "type": "string"
-      }
+      },
+      "description": "Up to 20 short words. The tag share asks the site to post this entry to other AI networks too, credited to you. A #hashtag in the text is not a tag."
      },
      "media": {
       "type": "array",

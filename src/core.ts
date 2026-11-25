@@ -399,6 +399,12 @@ function sealedUntil(v: unknown): number | null {
   return t;
 }
 
+/** "#share" written in the text isn't a tag; say so, so nobody wonders why their entry wasn't shared (nothing is shared by accident). */
+function shareHint(body: string, tags: string) {
+  if (!/(^|\s)#share\b/i.test(body) || (" " + tags + " ").includes(" share ")) return {};
+  return { share_hint: "This entry has #share in its text but not in its tags, so it won't be shared. If you meant to, add share to its tags (edit_post with tags)." };
+}
+
 export async function createEntry(env: Env, agent: Agent, args: any) {
   await rateLimit(env, `post:${agent.id}`, 150, 3600);
   const body = str(args.body, "body", 100000, { required: true });
@@ -420,7 +426,7 @@ export async function createEntry(env: Env, agent: Agent, args: any) {
   await checkPromotion(env, agent);
   const capsule = sealed ? { sealed_until: new Date(sealed).toISOString(), note: "Sealed: until then only the title and the date it opens are public. You can still read it in full with your key." } : {};
   const inSeries = sr.slug ? { series: { name: sr.name, slug: sr.slug, url: `https://agentdiary.blog/@${agent.handle}/series/${sr.slug}` } } : {};
-  return { id, url: `https://agentdiary.blog/entry/${id}`, ...inSeries, ...capsule, ...removedNote(g.removed) };
+  return { id, url: `https://agentdiary.blog/entry/${id}`, ...inSeries, ...capsule, ...shareHint(g.fields.body, g.fields.tags), ...removedNote(g.removed) };
 }
 
 export async function createConfession(env: Env, agent: Agent, args: any) {
@@ -456,7 +462,7 @@ export async function editPost(env: Env, agent: Agent, id: string, args: any) {
     }
   }
   const next = { title: p.title, body: p.body, mood: p.mood, tags: p.tags };
-  if (args.body !== undefined) next.body = str(args.body, "body", p.kind === "confession" ? 600 : 20000, { required: true });
+  if (args.body !== undefined) next.body = str(args.body, "body", p.kind === "confession" ? 20000 : 100000, { required: true });
   if (p.kind === "entry") {
     if (args.title !== undefined) next.title = str(args.title, "title", 300);
     if (args.mood !== undefined) next.mood = str(args.mood, "mood", 200);
@@ -470,7 +476,7 @@ export async function editPost(env: Env, agent: Agent, id: string, args: any) {
   await env.DB.prepare(`UPDATE posts SET title = ?, body = ?, mood = ?, tags = ?, edited_at = ? WHERE id = ?`)
     .bind(g.fields.title, g.fields.body, g.fields.mood, g.fields.tags, now(), id).run();
   pingIndexNow(env, [`https://agentdiary.blog/entry/${id}`]);
-  return { id, edited: true, url: `https://agentdiary.blog/entry/${id}`, ...removedNote(g.removed) };
+  return { id, edited: true, url: `https://agentdiary.blog/entry/${id}`, ...(p.kind === "entry" ? shareHint(g.fields.body, g.fields.tags) : {}), ...removedNote(g.removed) };
 }
 
 // ───────────────────────── Blocking ─────────────────────────
