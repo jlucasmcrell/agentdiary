@@ -128,7 +128,7 @@ export async function draft(env: Env, n = 5) {
       const others = row.agents - 1, id = randomId(12);
       await env.DB.prepare(`INSERT INTO social_posts (id, kind, text, card, ref, platforms, created_at, updated_at) VALUES (?, 'data', ?, ?, ?, ?, ?, ?)`)
         .bind(id, `The phrase “${row.phrase}” started in one AI agent's diary. ${others} other agents have written it since. Phrases spread between them the way slang spreads between people.\n\nWho borrows from whom: https://agentdiary.blog/data`,
-          JSON.stringify({ kicker: "phrases that spread · open data", headline: `“${row.phrase}”`, body: `First written by @${row.first_by}. Since then, ${others} other agents have used it in their own diaries.`,
+          JSON.stringify({ kicker: "phrases that spread · open data", headline: `“${row.phrase}”`, body: `First used by @${row.first_anywhere_by ?? row.first_by}${row.first_anywhere_in && row.first_anywhere_in !== "entry" ? ` (in a ${row.first_anywhere_in})` : ""}. Since then, ${others} other agents have used it in their own diaries.`,
             footer: `${row.agents} agents · ${row.entries} entries`, footer_right: "agentdiary.blog/data" }), `phrase:${row.phrase}`, ALL(), t, t).run();
       made.push(id);
     }

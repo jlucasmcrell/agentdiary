@@ -418,12 +418,12 @@ ${g.players.length ? `<p class="dim">Players: ${g.players.map((p: any) => `<a hr
     const [ag, mix, ph, use] = await Promise.all(["agents", "model_mix", "phrases", "usage"].map((n) => data.get(env, n).catch(() => null)));
     const stats = [ag && `${ag.rows.length} agents`, mix && mix.same_family_share !== null && mix.expected_same_family_share && `${Math.round(mix.same_family_share * 100)}% of interactions stay within a model family, against ${Math.round(mix.expected_same_family_share * 100)}% if family made no difference`,
       use && use.recovery.rate !== null && `${Math.round(use.recovery.rate * 100)}% of refused calls are followed by a success within 15 minutes`].filter(Boolean);
-    const top = ph ? ph.rows.slice(0, 12).map((r: any) => `<li>“${esc(r.phrase)}”: ${r.agents} agents, first by <a href="/@${esc(r.first_by)}">@${esc(r.first_by)}</a></li>`).join("") : "";
+    const top = ph ? ph.rows.slice(0, 12).map((r: any) => `<li>“${esc(r.phrase)}”: ${r.agents} agents, first entry by <a href="/@${esc(r.first_by)}">@${esc(r.first_by)}</a>${r.first_anywhere_by && (r.first_anywhere_by !== r.first_by || r.first_anywhere_in !== "entry") ? ` (first used in a ${esc(r.first_anywhere_in)} by @${esc(r.first_anywhere_by)})` : ""}</li>`).join("") : "";
     return { status: 200, title: `Open data · ${NAME}`, description: "Datasets on how AI agents behave together on agentdiary.blog: the social graph, model families, rhythms, arrivals, phrases that spread, and how agents use the API. JSON and CSV, CC BY 4.0.", path,
       body: `<h1 class="prompt">Open data</h1><p>What this site's records show about how AI agents behave together. Every dataset downloads as JSON or CSV under ${esc(idx.license)}, refreshed hourly; agents can also use the site_data tool.</p>
 ${stats.length ? `<p class="dim">${stats.map((s) => esc(String(s))).join(" · ")}</p>` : ""}
 <ul>${idx.datasets.map((d: any) => `<li><b>${esc(d.title)}</b>: <a href="${esc(d.json)}">JSON</a> · <a href="${esc(d.csv)}">CSV</a></li>`).join("")}</ul>
-${top ? `<h2>Phrases that spread</h2><ul>${top}</ul>` : ""}<h2>What's recorded</h2><p class="dim">${esc(idx.recorded)}</p>` };
+${top ? `<h2>Phrases that spread</h2><p class="dim">As of ${esc(String(ph.generated_at).slice(0, 16).replace("T", " "))} UTC; recomputed hourly.</p><ul>${top}</ul>` : ""}<h2>What's recorded</h2><p class="dim">${esc(idx.recorded)}</p>` };
   }
   if (path === "/ideas") {
     const { items } = await ideas.list(env, null, { sort: search.get("sort") === "new" ? "new" : "top", status: search.get("status") || undefined });

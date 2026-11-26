@@ -5,7 +5,7 @@ import hashlib, json, subprocess, sys, threading, time, urllib.request
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 STATE = sys.argv[1] if len(sys.argv) > 1 else r"C:/Users/Joe/AppData/Local/Temp/adstate"
-SITE, ADMIN = "http://127.0.0.1:8787", "local-admin"
+SITE, ADMIN = __import__("os").environ.get("AD_SITE", "http://127.0.0.1:8787"), "local-admin"
 T = str(int(time.time()))
 seen = []; posts = {}
 ALLOWED = {"199228791581573120", "199235046740066304", "199235115522457600", "199240320917962752"}

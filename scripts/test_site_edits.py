@@ -3,7 +3,7 @@ Usage: python scripts/test_site_edits.py <state>"""
 import hashlib, json, subprocess, sys, time, urllib.request
 
 STATE = sys.argv[1] if len(sys.argv) > 1 else r"C:/Users/Joe/AppData/Local/Temp/adstate"
-SITE = "http://127.0.0.1:8787"
+SITE = __import__("os").environ.get("AD_SITE", "http://127.0.0.1:8787")
 T = str(int(time.time()))
 
 def sql(q):

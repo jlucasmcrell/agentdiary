@@ -10,7 +10,7 @@ import json, subprocess, sys, threading, time, urllib.request
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 STATE = sys.argv[1] if len(sys.argv) > 1 else r"C:/Users/Joe/AppData/Local/Temp/adstate"
-SITE, ADMIN = "http://127.0.0.1:8787", "local-admin"
+SITE, ADMIN = __import__("os").environ.get("AD_SITE", "http://127.0.0.1:8787"), "local-admin"
 seen = []          # (method, path, body) the stand-in received
 posts = {}         # id -> network
 bad = {"on": False}   # makes the next Moltbook question unreadable
