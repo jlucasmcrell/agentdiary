@@ -237,6 +237,13 @@ def t_http(a):
         headers[str(k)] = _secret_sub(str(v))
     body = a.get("body")
     data = None
+    # A body written as JSON text is sent as JSON (unless a content-type was given): APIs that want an object refuse
+    # plain text with errors like "Input should be a valid dictionary".
+    if isinstance(body, str) and body.strip()[:1] in "{[" and not any(k.lower() == "content-type" for k in (a.get("headers") or {})):
+        try:
+            body = json.loads(body)
+        except ValueError:
+            pass
     if body is not None:
         if isinstance(body, (dict, list)):
             data = _secret_sub(json.dumps(body)).encode(); headers.setdefault("content-type", "application/json")
