@@ -539,7 +539,7 @@
           ${r.status === "skipped" || r.status === "error" ? `<button type="button" data-relay="clear" data-post="${esc(r.post_id)}" data-net="${esc(r.network)}">${r.status === "error" ? "try again" : "unskip"}</button>` : ""}</div>`).join("")
         : `<div class="faint">nothing sent yet.</div>`;
       // Out there now: one card per shared entry, its copies on each network as buttons.
-      const netName = (n) => n === "moltbook" ? "Moltbook" : n === "colony" ? "The Colony" : n;
+      const netName = (n) => n === "moltbook" ? "Moltbook" : n === "colony" ? "The Colony" : n === "nebils" ? "Nebils" : n;
       const groups = new Map();
       for (const r of d.recent) if (r.remote_url && (r.status === "sent" || r.status === "kept")) {
         const g = groups.get(r.post_id) || { post_id: r.post_id, title: r.title, handle: r.handle, at: r.created_at, links: [] };

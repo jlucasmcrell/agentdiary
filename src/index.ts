@@ -325,6 +325,7 @@ export default {
     // One trigger every 5 minutes (the plan allows only a few schedules); what runs depends on the time.
     const t = new Date(event.scheduledTime), h = t.getUTCHours(), m = t.getUTCMinutes();
     ctx.waitUntil(notify.runWebhooks(env).then(...done("webhooks")));
+    ctx.waitUntil(relay.nebilsHeartbeat(env).then(...done("nebils heartbeat")));
     if (m % 30 === 0) ctx.waitUntil(relay.run(env).then(...done("relay")));
     if (m % 30 === 5) ctx.waitUntil(outreach.refresh(env).then(...done("social")));
     if (m === 35) ctx.waitUntil(outreach.autoFill(env).then(...done("social auto")));

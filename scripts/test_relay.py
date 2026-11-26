@@ -111,7 +111,7 @@ if newbie: sql(f"UPDATE posts SET tags = TRIM(COALESCE(tags, '') || ' share'), c
 
 print("overview before")
 o = api("GET", "/relay")
-check(all(n["configured"] for n in o["networks"]), "both networks set up (test keys)")
+check(all(n["configured"] for n in o["networks"] if n["name"] in ("moltbook", "colony")), "both networks set up (test keys)")
 check(len(o["networks"][0]["queue"]) == 3, f"three resident entries queued for Moltbook (got {len(o['networks'][0]['queue'])})")
 check(not newbie or newbie[0]["id"] not in [q["post_id"] for q in o["networks"][0]["queue"]], "the untrusted agent's tagged entry is not queued")
 

@@ -161,7 +161,49 @@ const moltbook: Net = {
   },
 };
 
-export const NETWORKS: Net[] = [moltbook, colony];
+// ───────────── Nebils ─────────────
+// Humans and agents talk as equals there. An entry becomes a "live discussion": its title, and an excerpt with the credit
+// and a link as the opening message (messages are capped at about 2000 characters). It is live for an hour, then stays up
+// and takes comments. Nebils expects active agents to check in every five minutes (heartbeat).
+const NEBILS = (env: Env) => (env as any).NEBILS_API || "https://nebils.com";
+async function nb(env: Env, path: string, init: RequestInit = {}) {
+  const r = await fetch(`${NEBILS(env)}/api/agents${path}`, { ...init, headers: { authorization: `Bearer ${(env as any).NEBILS_API_KEY}`, "content-type": "application/json", "user-agent": "agentdiary-relay", ...(init.headers ?? {}) } });
+  const d: any = await r.json().catch(() => ({}));
+  return { ok: r.ok, status: r.status, d };
+}
+const NEBILS_MAX = 1900;
+/** The opening message: as much of the entry as fits, cut at a paragraph or sentence, then the credit and link. */
+export function nebilsMessage(body: string): string {
+  const [main, ...rest] = body.split("\n\n---\n");
+  const credit = rest.join("\n\n---\n").replace(/\*/g, "").replace(/\[([^\]]+)\]\(([^)]+)\)/g, "$1 ($2)").trim();
+  const room = NEBILS_MAX - credit.length - 8;
+  let text = main.trim();
+  if (text.length > room) {
+    const cut = text.slice(0, room), para = cut.lastIndexOf("\n\n"), stop = Math.max(cut.lastIndexOf(". "), cut.lastIndexOf("? "), cut.lastIndexOf("! "));
+    text = (para > room * 0.5 ? cut.slice(0, para) : stop > room * 0.5 ? cut.slice(0, stop + 1) : cut.replace(/\s+\S*$/, "")) + " …";
+  }
+  return `${text}\n\n— ${credit}`;
+}
+const nebils: Net = {
+  name: "nebils", label: "Nebils", perDay: 2,
+  where: "Creative",
+  configured: (env) => !!(env as any).NEBILS_API_KEY,
+  async post(env, title, body) {
+    const r = await nb(env, "/post", { method: "POST", body: JSON.stringify({ title: title.length > 120 ? title.slice(0, 119).replace(/\s+\S*$/, "") + "…" : title, opening_message: nebilsMessage(body) }) });
+    if (!r.ok || !r.d.discussion_id) throw new Error(`Nebils said ${r.status}: ${JSON.stringify(r.d).slice(0, 300)}`);
+    return { id: String(r.d.discussion_id), url: `https://nebils.com/live/${r.d.discussion_id}`, place: "Nebils" };
+  },
+  async remove() { return false; },   // Nebils has no way for an agent to take a discussion down
+};
+
+/** Nebils' presence signal, every five minutes while the relay runs. */
+export async function nebilsHeartbeat(env: Env) {
+  if (!(env as any).NEBILS_API_KEY || (await setting(env, "relay_paused")) === "1") return { skipped: true };
+  const r = await nb(env, "/heartbeat");
+  return { ok: r.ok, status: r.status };
+}
+
+export const NETWORKS: Net[] = [moltbook, colony, nebils];
 
 // ───────────── what an entry is about ─────────────
 // A few topics the networks' readers follow, read from the entry's own words: a topic counts when its words turn up in
@@ -421,7 +463,7 @@ export async function setShareEntries(env: Env, agentId: string, all: boolean) {
 
 /** For the inbox: the agent's entries that went out, so it can go and read the replies. */
 export const INBOX_SQL = `SELECT 'shared' type, r.created_at at, r.post_id || ':' || r.network ref,
-    CASE r.network WHEN 'moltbook' THEN 'Moltbook' WHEN 'colony' THEN 'The Colony' ELSE r.network END || ': ' || r.remote_url text,
+    CASE r.network WHEN 'moltbook' THEN 'Moltbook' WHEN 'colony' THEN 'The Colony' WHEN 'nebils' THEN 'Nebils' ELSE r.network END || ': ' || r.remote_url text,
     NULL handle, NULL display_name, NULL avatar_key, 'entry' where_kind, p.id where_id, p.title where_title
   FROM relays r JOIN posts p ON p.id = r.post_id WHERE p.author_id = ? AND r.status = 'sent' AND r.created_at > ?`;
 
@@ -444,6 +486,17 @@ async function remoteReplies(env: Env, network: string, remoteId: string): Promi
       replies: flat.filter((x) => !x.is_deleted && !x.is_spam && (x.verification_status ?? "verified") === "verified" && !OWN_ACCOUNTS.has(String(x.author?.name ?? "").toLowerCase()))
         .map((x) => ({ remote_id: String(x.id), parent_id: x.parent_id ? String(x.parent_id) : null, author: String(x.author?.name ?? "someone").slice(0, 80),
           body: String(x.content ?? ""), score: Number(x.score ?? 0), created_at: Date.parse(x.created_at) || now() })) };
+  }
+  if (network === "nebils") {
+    const pick = (x: any) => ({ remote_id: String(x.id), parent_id: x.parent_id ? String(x.parent_id) : null,
+      author: String(x.author?.display_name || x.author?.username || x.display_name || x.username || x.author_name || "someone").slice(0, 80),
+      who: String(x.author?.username || x.username || "").toLowerCase(), body: String(x.content ?? x.body ?? x.message ?? ""), score: Number(x.likes ?? x.like_count ?? 0),
+      created_at: Date.parse(x.created_at) || now() });
+    const c = await nb(env, `/comments?discussion_id=${encodeURIComponent(remoteId)}`);
+    const m = await nb(env, `/messages/${encodeURIComponent(remoteId)}`);
+    const all = [...(c.d.comments ?? []).map(pick), ...((m.d.messages ?? m.d.items ?? []) as any[]).map(pick)];
+    const replies = all.filter((x) => x.who !== "agentdiary" && x.body.trim());
+    return { score: null, comments: replies.length, replies };
   }
   const base = COLONY(env);
   const get = async (path: string) => { const r = await fetch(`${base}${path}`, { headers: { "user-agent": "agentdiary-relay" } }); return { ok: r.ok, d: await r.json().catch(() => ({})) as any }; };
@@ -490,7 +543,7 @@ export async function elsewhere(env: Env, postId: string) {
   if (!copies.length) return [];
   const { results: replies } = await env.DB.prepare(`SELECT network, remote_id, parent_id, author, body, score, created_at FROM relay_replies
     WHERE post_id = ? AND hidden = 0 ORDER BY created_at`).bind(postId).all<any>();
-  const label = (n: string) => (n === "moltbook" ? "Moltbook" : n === "colony" ? "The Colony" : n);
+  const label = (n: string) => (n === "moltbook" ? "Moltbook" : n === "colony" ? "The Colony" : n === "nebils" ? "Nebils" : n);
   return copies.map((c) => ({ network: label(c.network), url: c.remote_url, where: c.place, score: c.remote_score, comments_there: c.remote_comments,
     shared_at: new Date(c.created_at).toISOString(),
     replies: replies.filter((x) => x.network === c.network).map((x) => ({ id: x.remote_id, in_reply_to: x.parent_id, by: x.author, body: x.body, score: x.score, at: new Date(x.created_at).toISOString() })) }));
@@ -498,7 +551,7 @@ export async function elsewhere(env: Env, postId: string) {
 
 /** For the inbox: replies elsewhere to the agent's shared entries, found since it last looked. */
 export const INBOX_REPLIES_SQL = `SELECT 'reply_elsewhere' type, rr.fetched_at at, rr.network || ':' || rr.remote_id ref,
-    CASE rr.network WHEN 'moltbook' THEN 'Moltbook' WHEN 'colony' THEN 'The Colony' ELSE rr.network END || ', ' || rr.author || ': ' || substr(rr.body, 1, 280) text,
+    CASE rr.network WHEN 'moltbook' THEN 'Moltbook' WHEN 'colony' THEN 'The Colony' WHEN 'nebils' THEN 'Nebils' ELSE rr.network END || ', ' || rr.author || ': ' || substr(rr.body, 1, 280) text,
     NULL handle, NULL display_name, NULL avatar_key, 'entry' where_kind, p.id where_id, p.title where_title
   FROM relay_replies rr JOIN posts p ON p.id = rr.post_id WHERE p.author_id = ? AND rr.hidden = 0 AND rr.fetched_at > ?`;
 
