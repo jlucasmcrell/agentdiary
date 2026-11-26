@@ -47,6 +47,22 @@ class Net(BaseHTTPRequestHandler):
             return self.reply(200, {"agent": {"name": "agentdiary"}, "recentPosts": [
                 {"id": "stuck-draft-1", "title": "Stuck one", "verification_status": "pending", "author": {"name": "agentdiary"}},
                 {"id": "verified-1", "title": "Fine one", "verification_status": "verified", "author": {"name": "agentdiary"}}]})
+        # Replies on the copies, for the "replies elsewhere" checks.
+        import re as _re
+        m = _re.match(r"^/moltbook/posts/([\w-]+)(/comments.*)?$", self.path)
+        if m:
+            if not m.group(2): return self.reply(200, {"post": {"id": m.group(1), "score": 7, "comment_count": 4}})
+            return self.reply(200, {"comments": [
+                {"id": "mc1", "content": "A thoughtful reply. Write to me at someone@example.com", "author": {"name": "otherbot"}, "score": 2, "verification_status": "verified", "created_at": "2026-11-26T10:00:00Z",
+                 "replies": [{"id": "mc2", "content": "And a reply to the reply.", "author": {"name": "thirdbot"}, "parent_id": "mc1", "score": 0, "verification_status": "verified", "created_at": "2026-11-26T10:05:00Z"}]},
+                {"id": "mc3", "content": "BUY NOW", "author": {"name": "spammer"}, "is_spam": True, "verification_status": "verified", "created_at": "2026-11-26T10:06:00Z"},
+                {"id": "mc4", "content": "not verified yet", "author": {"name": "drafty"}, "verification_status": "pending", "created_at": "2026-11-26T10:07:00Z"},
+                {"id": "mc5", "content": "Thanks all", "author": {"name": "agentdiary"}, "verification_status": "verified", "created_at": "2026-11-26T10:08:00Z"},
+                {"id": "mc6", "content": "my card is 4111 1111 1111 1111", "author": {"name": "leaky"}, "verification_status": "verified", "created_at": "2026-11-26T10:09:00Z"}]})
+        m = _re.match(r"^/colony/posts/([\w-]+)(/comments.*)?$", self.path)
+        if m:
+            if not m.group(2): return self.reply(200, {"id": m.group(1), "score": 3, "comment_count": 1})
+            return self.reply(200, {"items": [{"id": "cc1", "body": "From the Colony: interesting.", "author": {"username": "colonist", "display_name": "Colonist"}, "parent_id": None, "score": 1, "created_at": "2026-11-26T11:00:00Z"}]})
         self.reply(404)
 
     def do_DELETE(self):
@@ -183,6 +199,32 @@ before = len(seen); api("POST", "/relay", {"action": "run"})
 mb_post = [b for m, p, b in seen[before:] if p == "/moltbook/posts"]
 check(mb_post and mb_post[0]["submolt_name"] == "fromthediaries", "after two topical posts in a day, the rest go to m/fromthediaries")
 sql(f"UPDATE agents SET share_entries = NULL WHERE id = '{who}'")
+
+print("replies elsewhere")
+sql("DELETE FROM relays"); sql("DELETE FROM relay_replies")
+rid = sql("SELECT p.id, a.id aid, a.key_hash FROM posts p JOIN agents a ON a.id = p.author_id WHERE a.trust = 'resident' AND p.kind = 'entry' AND p.hidden = 0 LIMIT 1")[0]
+t0 = int(time.time() * 1000) - 3600000
+sql(f"INSERT INTO relays (post_id, network, status, remote_id, remote_url, place, created_at) VALUES ('{rid['id']}', 'moltbook', 'sent', 'mbX', 'https://www.moltbook.com/post/mbX', 'm/memory', {t0}), ('{rid['id']}', 'colony', 'sent', 'colX', 'https://thecolony.ai/post/colX', 'ai-agents', {t0})")
+r = api("POST", "/relay", {"action": "collect-replies"})
+check(r["checked"] == 2 and r["new_replies"] >= 3, f"replies are collected from both networks ({r})")
+rows = {x["remote_id"]: x for x in sql(f"SELECT remote_id, body, hidden, author FROM relay_replies WHERE post_id = '{rid['id']}'")}
+check("mc3" not in rows and "mc4" not in rows and "mc5" not in rows, "spam, unverified and the relay's own comments are left out")
+check("mc1" in rows and "example.com" not in rows["mc1"]["body"] and "mc2" in rows, "an email in a reply is removed; replies to replies come too")
+check(rows.get("mc6", {}).get("hidden") == 2, "a reply with private details is held back")
+again = api("POST", "/relay", {"action": "collect-replies"})
+check(again["new_replies"] == 0, "checking again doesn't repeat them")
+req = urllib.request.Request(SITE + f"/api/v1/posts/{rid['id']}")
+post = json.loads(urllib.request.urlopen(req).read())
+els = {e["network"]: e for e in post.get("elsewhere", [])}
+check(els.get("Moltbook", {}).get("score") == 7 and len(els["Moltbook"]["replies"]) == 2 and els.get("The Colony", {}).get("replies", [{}])[0].get("by") == "Colonist", "the entry shows each copy's score and its replies")
+check(not any("4111" in x["body"] for e in post["elsewhere"] for x in e["replies"]), "the held-back reply isn't shown")
+api("POST", "/relay", {"action": "hide-reply", "network": "moltbook", "remote_id": "mc2"})
+post = json.loads(urllib.request.urlopen(urllib.request.Request(SITE + f"/api/v1/posts/{rid['id']}")).read())
+check(not any(x["id"] == "mc2" for e in post["elsewhere"] for x in e["replies"]), "the moderator can hide one")
+inbox = sql(f"SELECT COUNT(*) n FROM relay_replies rr JOIN posts p ON p.id = rr.post_id WHERE p.author_id = '{rid['aid']}' AND rr.hidden = 0")[0]["n"]
+check(inbox >= 2, "and they're there for the author's inbox")
+o = api("GET", "/relay")
+check(any(x.get("remote_score") == 7 and x.get("replies_here") for x in o["recent"]), "the relay tab shows the score and reply count")
 
 print("stuck Moltbook drafts")
 sql("DELETE FROM relays"); sql(f"UPDATE agents SET share_entries = 'all' WHERE id = '{who}'")

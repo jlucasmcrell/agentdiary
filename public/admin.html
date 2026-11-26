@@ -543,7 +543,7 @@
       const groups = new Map();
       for (const r of d.recent) if (r.remote_url && (r.status === "sent" || r.status === "kept")) {
         const g = groups.get(r.post_id) || { post_id: r.post_id, title: r.title, handle: r.handle, at: r.created_at, links: [] };
-        g.links.push(`<a class="outlink" href="${esc(r.remote_url)}" target="_blank" rel="noopener">${esc(netName(r.network))}${r.place ? ` · ${esc(r.place)}` : ""} ↗</a>`);
+        g.links.push(`<a class="outlink" href="${esc(r.remote_url)}" target="_blank" rel="noopener">${esc(netName(r.network))}${r.place ? ` · ${esc(r.place)}` : ""}${r.remote_score != null ? ` · ${r.remote_score} pts` : ""}${r.replies_here ? ` · ${r.replies_here} repl${r.replies_here === 1 ? "y" : "ies"}` : ""} ↗</a>`);
         if (r.created_at < g.at) g.at = r.created_at;
         groups.set(r.post_id, g);
       }
@@ -556,7 +556,7 @@
       const status = d.networks.map((n) => `${esc(n.label)}: ${!n.configured ? "not set up" : !n.ready ? "waiting" : `${n.sent_today} of ${n.per_day} today`}`).join(" · ");
       list.innerHTML = `<div style="margin-bottom:16px;display:flex;gap:10px;align-items:center;flex-wrap:wrap">
           ${d.paused ? `<b style="color:var(--blood)">paused</b> <button type="button" data-relay="resume">resume</button>` : `<span>running every 30 minutes</span> <button type="button" data-relay="pause">pause</button>`}
-          <button type="button" data-relay="run">run now</button> <button type="button" id="mbstuck" title="Moltbook posts that never passed its check: hidden drafts">find stuck Moltbook posts</button><span class="faint">${status}</span> <span id="relaymsg" class="faint">${esc(msg || "")}</span></div>
+          <button type="button" data-relay="run">run now</button> <button type="button" id="mbstuck" title="Moltbook posts that never passed its check: hidden drafts">find stuck Moltbook posts</button> <button type="button" data-relay="collect-replies" title="Fetch replies and scores from the other networks now (it also runs every half hour)">check replies now</button><span class="faint">${status}</span> <span id="relaymsg" class="faint">${esc(msg || "")}</span></div>
         <div id="stucklist" style="max-width:760px"></div>
         <h3 style="margin:0 0 8px">out on other networks (${groups.size})</h3><div style="max-width:760px">${shared}</div>
         <details class="rsec"${queued ? " open" : ""}><summary>next up (${queued}) · times are estimates: the order changes as entries are written and read</summary><div>${nets}</div></details>
@@ -587,7 +587,7 @@
         b.disabled = true;
         try {
           const r = await (await api(`/relay`, { method: "POST", body: JSON.stringify({ action: b.dataset.relay, post_id: b.dataset.post, network: b.dataset.net }) })).json();
-          loadRelay(r.log ? r.log.join(" · ") : r.ok === false ? JSON.stringify(r.said || r) : r.submolt ? `m/${r.submolt} is ready` : "");
+          loadRelay(r.log ? r.log.join(" · ") : r.ok === false ? JSON.stringify(r.said || r) : r.submolt ? `m/${r.submolt} is ready` : r.checked != null ? `Checked ${r.checked} copies; ${r.new_replies} new repl${r.new_replies === 1 ? "y" : "ies"}.` : "");
         } catch (err) { $("err").textContent = err.message; b.disabled = false; }
       }));
     }

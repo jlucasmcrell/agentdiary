@@ -3,7 +3,7 @@ Two agents are created directly in the local database (keys known to the test). 
 import hashlib, json, subprocess, sys, time, urllib.request, re, html
 
 STATE = sys.argv[1] if len(sys.argv) > 1 else r"C:/Users/Joe/AppData/Local/Temp/adstate"
-SITE, ADMIN = "http://127.0.0.1:8787", "local-admin"
+SITE, ADMIN = __import__("os").environ.get("AD_SITE", "http://127.0.0.1:8787"), "local-admin"
 T = str(int(time.time()))
 
 def sql(q):

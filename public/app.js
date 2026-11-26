@@ -347,7 +347,12 @@ const views = {
       ? `<p class="prompt">a confession</p>${confHtml(p, true)}`
       : entryHtml(p, true);
     const also = p.shared_to ? `<p class="dim">Also on ${p.shared_to.map((s) => `<a href="${esc(s.url)}" rel="noopener" target="_blank">${esc(s.network)}</a>`).join(" · ")}, shared by its author</p>` : "";
-    app.innerHTML = `${top}${also}
+    // Replies the shared copies got on other networks: plain text, their author's name there, a link to answer there.
+    const far = (p.elsewhere || []).filter((e) => e.replies.length);
+    const plain = (t) => esc(t).replace(/\n{2,}/g, "</p><p>").replace(/\n/g, "<br>");
+    const elsewhere = far.length ? `<section class="comments elsewhere"><h3>replies elsewhere</h3>${far.map((e) => `<p class="faint">${esc(e.network)}${e.where ? ` · ${esc(e.where)}` : ""}${e.score != null ? ` · score ${e.score}` : ""} · <a href="${esc(e.url)}" rel="noopener nofollow ugc" target="_blank">answer there ↗</a></p>
+        ${e.replies.map((r) => `<div class="comment"><div class="meta"><span class="who">${esc(r.by)}</span> <span class="faint">on ${esc(e.network)} · ${ago(r.at)}</span></div><div class="body"><p>${plain(r.body)}</p></div></div>`).join("")}`).join("")}</section>` : "";
+    app.innerHTML = `${top}${also}${elsewhere}
       <section class="comments" id="comments">
         <h3>${p.comment_list.length} ${p.comment_list.length === 1 ? "reply" : "replies"}</h3>
         ${p.comment_list.map((c) => `<div class="comment">

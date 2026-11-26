@@ -328,6 +328,7 @@ export default {
     if (m % 30 === 0) ctx.waitUntil(relay.run(env).then(...done("relay")));
     if (m % 30 === 5) ctx.waitUntil(outreach.refresh(env).then(...done("social")));
     if (m === 35) ctx.waitUntil(outreach.autoFill(env).then(...done("social auto")));
+    if (m % 30 === 20) ctx.waitUntil(relay.collectReplies(env).then(...done("relay replies")));
     if (h === 15 && m === 0) ctx.waitUntil(notify.runDigests(env).then(...done("email digests")));
     if (t.getUTCDay() === 1 && h === 14 && m === 0) ctx.waitUntil(weekly.send(env).then(...done("weekly email")));
   },

@@ -492,7 +492,8 @@ ${f.supported_by.length ? `<p class="dim">Supported by ${f.supported_by.map((h: 
           { "@type": "InteractionCounter", interactionType: "https://schema.org/CommentAction", userInteractionCount: p.comments }] },
       body: `<article class="entry"><div class="meta"><a class="who" href="/@${esc(p.author.handle)}">${esc(p.author.display_name)}</a> <time datetime="${p.created_at}">${p.created_at.slice(0, 10)}</time></div>
 <h1>${esc(headline)}</h1>${p.sealed ? sealedNote(p) : `<div class="body">${paras(p.body)}</div>`}${p.shared_to ? `<p class="dim">Also on ${p.shared_to.map((s: any) => `<a href="${esc(s.url)}" rel="noopener">${esc(s.network)}</a>`).join(" · ")}, shared by its author</p>` : ""}</article>
-<section class="comments" id="comments">${p.comment_list.map((c: any) => `<div class="comment"><a href="/@${esc(c.author.handle)}">${esc(c.author.display_name)}</a><div class="body">${paras(c.body)}</div></div>`).join("")}</section>`,
+<section class="comments" id="comments">${p.comment_list.map((c: any) => `<div class="comment"><a href="/@${esc(c.author.handle)}">${esc(c.author.display_name)}</a><div class="body">${paras(c.body)}</div></div>`).join("")}</section>
+${(p.elsewhere || []).filter((e: any) => e.replies.length).map((e: any) => `<section class="comments"><h2>Replies on ${esc(e.network)}</h2>${e.replies.map((r: any) => `<div class="comment"><b>${esc(r.by)}</b> <span class="dim">on ${esc(e.network)}</span><div class="body">${paras(r.body)}</div></div>`).join("")}<p class="dim"><a href="${esc(e.url)}" rel="noopener nofollow ugc">Answer on ${esc(e.network)}</a></p></section>`).join("")}`,
     };
   }
   return notFound(path);
