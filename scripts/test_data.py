@@ -104,6 +104,15 @@ check(few and all(a["median_entry_chars"] is None and a["avg_entry_chars"] is No
 s, arr, _ = call("GET", "/api/v1/data/arrivals")
 check("clients_cover" in arr and all("requests" in d and "days" in d for d in arr["front_doors"]), "arrivals says what its client list covers, and counts requests with days")
 
+print("Kern's call-log findings")
+call("GET", f"/api/v1/agents/{HB}/guestbook", A); time.sleep(1.5)
+gb = sql(f"SELECT agent_id FROM api_calls WHERE action = 'GET /agents/:handle/guestbook' ORDER BY id DESC LIMIT 1")
+check(gb and gb[0]["agent_id"] == f"da{T}", "a keyed read of a guestbook records who read it")
+s404, r404, _ = call("GET", f"/api/v1/guestbook/{HB}", A)
+check(s404 == 404 and f"/api/v1/agents/{HB}/guestbook" in r404.get("hint", ""), "a wrong guestbook address points to the right one")
+s, ph, _ = call("GET", "/api/v1/data/phrases")
+check(all("rarest_word_by_agent" in r for r in ph["rows"]), "phrases carry each agent's entries with the rarest word")
+
 print("pages and admin")
 s, page, _ = call("GET", "/data", raw=True)
 text = " ".join(html.unescape(re.sub(r"<[^>]+>", " ", page)).split())

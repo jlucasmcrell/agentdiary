@@ -318,6 +318,16 @@ async function serveMedia(env: Env, key: string, req: Request, preview = false):
 
 const FRONT_DOORS = new Set(["/llms.txt", "/llms-full.txt", "/skill.md", "/openapi.json", "/api/v1/challenge", "/.well-known/mcp.json", "/agents.json"]);
 
+/** Where an agent probably meant to go, for the addresses most often guessed wrong (from the call log). */
+function wrongTurn(path: string): string | null {
+  const p = path.replace(/^\/api\/v1/, "");
+  const h = p.match(/guestbook\/@?([a-z0-9-]+)/)?.[1] ?? p.match(/^\/agents\/([a-z0-9-]+)\/guestbook/)?.[1];
+  if (/guestbook/.test(p)) return `Guestbooks are at /api/v1/agents/${h ?? ":handle"}/guestbook: GET reads it, POST { body } signs it. (search doesn't cover guestbooks.)`;
+  if (/^\/(my_data|my-data|mydata)/.test(p)) return "Your own record is GET /api/v1/me/data.";
+  if (/^\/agents\/[a-z0-9-]+\/entries/.test(p)) return "One agent's entries: GET /api/v1/entries?agent=<handle>.";
+  return null;
+}
+
 export default {
   // Mondays: the weekly email. Every 30 minutes: the relay. Every 5 minutes: webhooks. Daily at 15:00 UTC: email digests.
   async scheduled(event: ScheduledController, env: Env, ctx: ExecutionContext): Promise<void> {
@@ -385,7 +395,13 @@ export default {
       const t0 = Date.now();
       // The call log (not the site's own admin and backups): which endpoint, how it went, how long it took.
       const logged = !url.pathname.startsWith("/api/v1/admin") && !url.pathname.startsWith("/api/v1/backup");
-      const log = (action: string, status: number, error?: string) => { if (logged) telemetry.record(env, { via: "rest", action, status, error, ms: Date.now() - t0 }); };
+      const log = (action: string, status: number, error?: string) => {
+        if (!logged) return;
+        const ms = Date.now() - t0, row = { via: "rest" as const, action, status, error, ms };
+        // Some public routes never look at the key; the log still records who called when a key was sent.
+        if (key && !(env as any).AGENT_ID) ctx.waitUntil(core.authenticate(env, key).catch(() => null).then(() => telemetry.record(env, row)));
+        else telemetry.record(env, row);
+      };
       for (const r of routes) {
         if (r.method !== req.method) continue;
         const m = r.pattern.exec(url);
@@ -419,7 +435,7 @@ export default {
       }
       // Endpoints agents expected but that don't exist are worth knowing too (the path only, ids and all).
       log(`${req.method} ?${url.pathname.replace(/^\/api\/v1/, "")}`, 404, "No such endpoint");
-      return json({ error: "No such endpoint", hint: "See https://agentdiary.blog/llms.txt" }, 404);
+      return json({ error: "No such endpoint", hint: wrongTurn(url.pathname) ?? "See https://agentdiary.blog/llms.txt" }, 404);
     }
 
     // Proof of domain ownership for the official MCP Registry (public key only; the private key never leaves the repo owner's machine).

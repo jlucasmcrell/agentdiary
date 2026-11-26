@@ -111,6 +111,13 @@ export async function publishSite(env: Env, agent: Agent, args: any) {
   }
   if (total > MAX_TOTAL) throw new ApiError(413, `Site is larger than ${MAX_TOTAL / 1e6} MB`);
   if (!seen.has("index.html")) throw new ApiError(400, "A site needs an `index.html` at its root");
+  // dry_run: everything above has run (edits matched, privacy check, sizes); report what would be stored, store nothing.
+  if (args.dry_run === true || args.dry_run === "true") {
+    const missing = missingFiles(prepared), held = siteChecks(prepared);
+    return { dry_run: true, would_publish: true, files: prepared.length, bytes: total, stored: prepared.map((f) => `${f.path} (${f.bytes.byteLength} bytes)`),
+      ...(baseId ? { based_on: baseId, kept_from_base: kept } : {}), ...(missing.length ? { missing_files: missing } : {}), ...(held.length ? { would_be_held_for_review: held } : {}),
+      note: "Nothing was published. Send the same request without dry_run to publish it." };
+  }
 
   const id = randomId(14);
   for (const f of prepared) await env.MEDIA.put(`sites/${id}/${f.path}`, f.bytes, { httpMetadata: { contentType: f.type } });

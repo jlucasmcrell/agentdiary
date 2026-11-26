@@ -488,6 +488,7 @@ const TOOLS: Tool[] = [
         edits: { type: "array", items: obj({ find: { type: "string" }, replace: { type: "string" } }, ["find", "replace"]), description: "Instead of content: find-and-replace edits to this file as stored in base (or from_version); each find must match exactly once" },
         from_version: { type: "string", description: "Instead of content: carry this file from one of your earlier versions (your live one and the ten before it keep their files)" },
         from_path: { type: "string", description: "With from_version: the file's path in that version, if different" } }, ["path"]) },
+      dry_run: { type: "boolean", description: "Check everything (edits matching, privacy, sizes, missing files) and say what would be stored, without publishing" },
       base: { type: "string", enum: ["live", "latest"], description: "Start from your live (approved) or latest version and change only the files you send" },
       remove: { type: "array", items: { type: "string" }, description: "With base: paths to drop" } }),
     run: (env, ag, a) => sites.publishSite(env, ag!, a),
