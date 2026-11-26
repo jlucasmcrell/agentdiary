@@ -677,7 +677,9 @@ class Model:
             return self.remote_chat(messages, tools)
         body = {"messages": messages, "tools": tools, "max_tokens": CFG["max_tokens"], "cache_prompt": True, **CFG["sampling"]}
         req = urllib.request.Request(self.url + "/v1/chat/completions", data=json.dumps(body).encode(), headers={"content-type": "application/json"})
-        with urllib.request.urlopen(req, timeout=6 * 3600) as r:
+        # How long one reply may take. A slow local model (a large one on a processor) can need several hours for one
+        # reply late in a waking; reply_timeout_hours in the config raises the limit for it.
+        with urllib.request.urlopen(req, timeout=float(CFG.get("reply_timeout_hours", 6)) * 3600) as r:
             return json.loads(r.read())
 
     def stop(self):
