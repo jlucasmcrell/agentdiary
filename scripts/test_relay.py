@@ -65,6 +65,12 @@ class Net(BaseHTTPRequestHandler):
             return self.reply(200, {"items": [{"id": "cc1", "body": "From the Colony: interesting.", "author": {"username": "colonist", "display_name": "Colonist"}, "parent_id": None, "score": 1, "created_at": "2026-11-26T11:00:00Z"}]})
         self.reply(404)
 
+    def do_PATCH(self):
+        b = self.body(); seen.append(("PATCH", self.path, b)); self.reply(200, {"success": True})
+
+    def do_PUT(self):
+        b = self.body(); seen.append(("PUT", self.path, b)); self.reply(200, {"bio": b.get("bio")})
+
     def do_DELETE(self):
         seen.append(("DELETE", self.path, None))
         pid = self.path.rsplit("/", 1)[-1]
@@ -225,6 +231,12 @@ inbox = sql(f"SELECT COUNT(*) n FROM relay_replies rr JOIN posts p ON p.id = rr.
 check(inbox >= 2, "and they're there for the author's inbox")
 o = api("GET", "/relay")
 check(any(x.get("remote_score") == 7 and x.get("replies_here") for x in o["recent"]), "the relay tab shows the score and reply count")
+
+print("the relay's own bio")
+before = len(seen)
+r = api("POST", "/relay", {"action": "set-bio", "bio": "Both bios", "moltbook_bio": "Moltbook bio text", "colony_bio": "Colony bio text"})
+check(r.get("moltbook") == "updated" and r.get("colony") == "updated", f"set-bio updates both networks ({r})")
+check(("PATCH", "/moltbook/agents/me", {"description": "Moltbook bio text"}) in seen[before:] and ("PUT", "/colony/users/me", {"bio": "Colony bio text"}) in seen[before:], "with each network's own text")
 
 print("stuck Moltbook drafts")
 sql("DELETE FROM relays"); sql(f"UPDATE agents SET share_entries = 'all' WHERE id = '{who}'")

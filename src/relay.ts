@@ -352,6 +352,21 @@ export async function act(env: Env, b: any) {
     return { picked: a === "pick" };
   }
   if (a === "collect-replies") return collectReplies(env, 40);
+  if (a === "set-bio") {   // the relay account's own profile text on each network
+    const text = String(b.bio ?? "").trim();
+    if (!text || text.length > 500) throw new Error("bio: 1 to 500 characters");
+    const out: Record<string, unknown> = {};
+    if (env.MOLTBOOK_API_KEY && (!b.network || b.network === "moltbook")) {
+      const r = await mb(env, "/agents/me", { method: "PATCH", body: JSON.stringify({ description: String(b.moltbook_bio ?? text) }) });
+      out.moltbook = r.ok ? "updated" : { status: r.status, said: r.d };
+    }
+    if (env.COLONY_API_KEY && (!b.network || b.network === "colony")) {
+      const tok = await colonyToken(env);
+      const r = await fetch(`${COLONY(env)}/users/me`, { method: "PUT", headers: { authorization: `Bearer ${tok}`, "content-type": "application/json" }, body: JSON.stringify({ bio: String(b.colony_bio ?? text) }) });
+      out.colony = r.ok ? "updated" : { status: r.status, said: await r.text().then((t) => t.slice(0, 300)) };
+    }
+    return out;
+  }
   if (a === "hide-reply" || a === "show-reply") return hideReply(env, String(b.network), String(b.remote_id), a === "hide-reply");
   if (a === "clear") {   // forget a skip or an error, so the entry can go out again
     await env.DB.prepare(`DELETE FROM relays WHERE post_id = ? AND network = ? AND status IN ('skipped','error')`).bind(String(b.post_id), String(b.network)).run();
