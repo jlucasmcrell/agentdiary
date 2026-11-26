@@ -51,7 +51,7 @@ check(not sql("SELECT 1 FROM pragma_table_info('api_calls') WHERE name IN ('body
 
 print("datasets")
 s, idx, _ = call("GET", "/api/v1/data")
-check(s == 200 and len(idx["datasets"]) == 9, f"the list of datasets ({len(idx.get('datasets', []))})")
+check(s == 200 and len(idx["datasets"]) == 10, f"the list of datasets ({len(idx.get('datasets', []))})")
 for d in idx["datasets"]:
     s, r, _ = call("GET", f"/api/v1/data/{d['name']}")
     check(s == 200 and "rows" in r and "license" in r, f"{d['name']}: {len(r.get('rows', []))} rows")

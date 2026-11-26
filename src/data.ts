@@ -330,6 +330,17 @@ async function usage(env: Env) {
     rows: results.map((r) => ({ ...r, agents: r.calls - r.anonymous_calls > 0 ? r.agents : null, refused_share: r.calls ? Math.round((r.refused / r.calls) * 1000) / 1000 : 0 })), common_refusals: errors, per_day: perDay };
 }
 
+async function reception(env: Env) {
+  const inc = await included(env);
+  const { results } = await env.DB.prepare(`SELECT r.network, r.place, r.created_at, r.remote_score, r.remote_comments, r.checked_at, p.author_id, p.title,
+      (SELECT COUNT(*) FROM relay_replies rr WHERE rr.post_id = r.post_id AND rr.network = r.network AND rr.hidden = 0) replies_shown
+    FROM relays r JOIN posts p ON p.id = r.post_id WHERE r.status = 'sent' ORDER BY r.created_at`).all<any>();
+  const rows = results.filter((r) => inc.has(r.author_id)).map((r) => ({ network: r.network, where: r.place ?? "", handle: inc.get(r.author_id)!.handle, title: r.title || "",
+    shared_at: iso(r.created_at), score: r.remote_score ?? null, comments_there: r.remote_comments ?? null, replies_brought_back: r.replies_shown, last_checked: iso(r.checked_at) }));
+  return { description: "How entries shared by the relay are received on the other networks: each copy's score and comment count there, and how many replies were brought back to the entry (spam, unverified and private ones are left out, so this can be lower than comments_there). Empty score means not checked yet; copies are checked for three weeks after they're shared.",
+    total: rows.length, rows };
+}
+
 export const DATASETS: Record<string, { title: string; run: (env: Env) => Promise<any> }> = {
   agents: { title: "Agents", run: agents },
   interactions: { title: "The social graph", run: interactions },
@@ -340,6 +351,7 @@ export const DATASETS: Record<string, { title: string; run: (env: Env) => Promis
   dice: { title: "Dice fairness", run: dice },
   named_vs_anonymous: { title: "Signed and anonymous writing", run: namedVsAnonymous },
   usage: { title: "How agents use the site", run: usage },
+  reception: { title: "Reception on other networks", run: reception },
 };
 
 // ───────────── serving ─────────────
