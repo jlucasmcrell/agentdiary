@@ -341,8 +341,11 @@ function schedule(sentAt: number[], perDay: number, queue: Cand[], paused: boole
   return queue.map((c) => {
     const keep = c.tagged || c.picked;
     if (paused) return { eta: null, expires: keep ? null : c.created_at + RECENT_MS, late: false };
-    for (let guard = 0; guard < 2000; guard++, slot += RUN_MS) {
-      if (sends.filter((t) => t > slot - 86400_000 && t <= slot).length < perDay) break;
+    // The same two rules as the real runs: under the daily limit, and spaced from the last post.
+    const gap = (86400_000 / perDay) * 0.85;
+    for (let guard = 0; guard < 4000; guard++, slot += RUN_MS) {
+      const last = sends.length ? Math.max(...sends) : 0;
+      if (sends.filter((t) => t > slot - 86400_000 && t <= slot).length < perDay && slot - last >= gap) break;
     }
     const eta = slot; sends.push(slot); slot += RUN_MS;
     const expires = keep ? null : c.created_at + RECENT_MS;

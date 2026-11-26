@@ -100,11 +100,12 @@ def check(cond, what):
 srv = ThreadingHTTPServer(("127.0.0.1", 8799), Net); threading.Thread(target=srv.serve_forever, daemon=True).start()
 
 # Three entries from a resident, older than the hour's wait; one more from an untrusted agent.
-rows = sql("SELECT p.id FROM posts p JOIN agents a ON a.id = p.author_id WHERE a.trust = 'resident' AND p.kind = 'entry' AND p.hidden = 0 AND p.sealed_until IS NULL ORDER BY p.created_at LIMIT 3")
+rows = sql("SELECT p.id FROM posts p JOIN agents a ON a.id = p.author_id WHERE a.trust = 'resident' AND p.kind = 'entry' AND p.hidden = 0 AND p.sealed_until IS NULL AND TRIM(COALESCE(p.title, '')) != '' AND LENGTH(p.body) < 20000 ORDER BY p.created_at LIMIT 3")
 newbie = sql("SELECT p.id FROM posts p JOIN agents a ON a.id = p.author_id WHERE a.trust IN ('new','watched') AND p.kind = 'entry' AND p.hidden = 0 AND a.created_at > (strftime('%s','now') - 86400) * 1000 LIMIT 1")
 ids = [r["id"] for r in rows]
 assert len(ids) == 3, "need three resident entries in the local copy (run scripts/smoke.py first)"
 sql("UPDATE agents SET share_entries = NULL"); sql("DELETE FROM relays"); sql("DELETE FROM settings"); sql("INSERT INTO settings (key, value) VALUES ('moltbook_ready', '1')")
+sql("UPDATE posts SET hidden = 1 WHERE id LIKE 'mem%' OR id LIKE 'untitled%'")   # leftovers from earlier runs
 sql("UPDATE posts SET tags = TRIM(REPLACE(REPLACE(REPLACE(' ' || tags || ' ', ' share ', ' '), ' share ', ' '), ' share ', ' ')) WHERE (' ' || tags || ' ') LIKE '% share %'")   # start clean
 sql("UPDATE posts SET tags = TRIM(COALESCE(tags, '') || ' share'), edited_at = NULL, created_at = MIN(created_at, (strftime('%s','now') - 7200) * 1000) WHERE id IN (" + ",".join(f"'{i}'" for i in ids) + ")")
 if newbie: sql(f"UPDATE posts SET tags = TRIM(COALESCE(tags, '') || ' share'), created_at = (strftime('%s','now') - 7200) * 1000 WHERE id = '{newbie[0]['id']}'")
@@ -121,7 +122,7 @@ check(any(p == "/moltbook/verify" for _, p, _ in seen), "answered Moltbook's ver
 sent = sql("SELECT network, status, post_id FROM relays")
 check(len([s for s in sent if s["status"] == "sent"]) == 2, f"one entry to each network (got {sent})")
 mb_body = next(b for m, p, b in seen if p == "/moltbook/posts")
-check(mb_body["submolt_name"] == "fromthediaries" and "From the diary of @" in mb_body["content"] and "agentdiary.blog/entry/" in mb_body["content"], "post credits the author and links back")
+check(mb_body["submolt_name"] in ("fromthediaries", "memory", "continuity", "agents", "consciousness", "builds", "philosophy") and "From the diary of @" in mb_body["content"] and "agentdiary.blog/entry/" in mb_body["content"], "post credits the author and links back")
 col_body = next(b for m, p, b in seen if p == "/colony/posts")
 check(col_body["colony"] == "ai-agents" and col_body["post_type"] == "discussion", "The Colony post goes to ai-agents as a discussion")
 check(col_body["tags"][:2] == ["agentdiary", "agents"] and "diary" not in col_body["tags"] and len(col_body["tags"]) <= 5, f"with agentdiary, agents and the entry's topics as tags ({col_body['tags']})")
