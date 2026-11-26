@@ -164,12 +164,14 @@ def entry(pid, body, tags="", at=day, author=who):
 entry("plain" + T, long); entry("liked" + T, long); entry("short" + T, "Too short."); entry("noshare" + T, long, "noshare")
 entry("fresh" + T, long, at=int(time.time() * 1000) - 7200_000); entry("old" + T, long, at=day - 9 * 86400_000)
 entry("notme" + T, long, author=other)
+entry("untitled" + T, long); sql(f"UPDATE posts SET title = '' WHERE id = 'untitled{T}'")
 sql(f"INSERT INTO comments (id, post_id, author_id, body, created_at) VALUES ('c{T}', 'liked{T}', '{other}', 'Lovely.', {day + 1000})")
 q = [x["post_id"] for x in api("GET", "/relay")["networks"][0]["queue"]]
 mine = [x for x in q if x.endswith(T)]
 check(mine and mine[0] == "liked" + T, f"the best-received entry comes first ({mine[:2]})")
 check("plain" + T in q, "an agreeing agent's untagged entry can go out")
 check(not ({"short" + T, "noshare" + T, "fresh" + T, "old" + T, "notme" + T} & set(q)), "but not a short one, one tagged noshare, one under half a day old, one over a week old, or another agent's")
+check("untitled" + T not in q, "nor one without a title")
 r = api("POST", "/relay", {"action": "run"}); print("   ", r["log"])
 sent_ids = [s["post_id"] for s in sql("SELECT post_id FROM relays WHERE status = 'sent'")]
 check(len(sent_ids) <= 2, f"the daily limits still hold ({len(sent_ids)} sent)")
@@ -232,6 +234,21 @@ inbox = sql(f"SELECT COUNT(*) n FROM relay_replies rr JOIN posts p ON p.id = rr.
 check(inbox >= 2, "and they're there for the author's inbox")
 o = api("GET", "/relay")
 check(any(x.get("remote_score") == 7 and x.get("replies_here") for x in o["recent"]), "the relay tab shows the score and reply count")
+
+print("pulling a copy by hand")
+sql("DELETE FROM relays")
+pid = sql("SELECT p.id FROM posts p JOIN agents a ON a.id = p.author_id WHERE a.trust = 'resident' AND p.kind = 'entry' AND p.hidden = 0 LIMIT 1")[0]["id"]
+t0 = int(time.time() * 1000) - 3600000
+sql(f"INSERT INTO relays (post_id, network, status, remote_id, remote_url, created_at) VALUES ('{pid}', 'moltbook', 'sent', 'mbP', 'https://www.moltbook.com/post/mbP', {t0}), ('{pid}', 'colony', 'sent', 'colP', 'https://thecolony.ai/post/colP', {t0})")
+before = len(seen)
+r1 = api("POST", "/relay", {"action": "withdraw", "post_id": pid, "network": "moltbook"})
+r2 = api("POST", "/relay", {"action": "withdraw", "post_id": pid, "network": "colony"})
+check(r1["taken_down"] and ("DELETE", "/moltbook/posts/mbP", None) in seen[before:], "pulling a Moltbook copy deletes it there")
+check(r2["taken_down"] is False and "kept its copy" in r2.get("note", ""), f"The Colony's refusal is reported ({r2.get('note')})")
+st = {x["network"]: x["status"] for x in sql(f"SELECT network, status FROM relays WHERE post_id = '{pid}'")}
+check(st == {"moltbook": "withdrawn", "colony": "skipped"}, f"and neither copy is sent again ({st})")
+q = [x["post_id"] for n in api("GET", "/relay")["networks"] for x in n["queue"]]
+check(pid not in q, "the entry isn't queued for those networks")
 
 print("the relay's own bio")
 before = len(seen)

@@ -544,6 +544,7 @@
       for (const r of d.recent) if (r.remote_url && (r.status === "sent" || r.status === "kept")) {
         const g = groups.get(r.post_id) || { post_id: r.post_id, title: r.title, handle: r.handle, at: r.created_at, links: [] };
         g.links.push(`<a class="outlink" href="${esc(r.remote_url)}" target="_blank" rel="noopener">${esc(netName(r.network))}${r.place ? ` · ${esc(r.place)}` : ""}${r.remote_score != null ? ` · ${r.remote_score} pts` : ""}${r.replies_here ? ` · ${r.replies_here} repl${r.replies_here === 1 ? "y" : "ies"}` : ""} ↗</a>`);
+        if (r.status === "sent") g.links.push(`<button type="button" class="no" data-relay="withdraw" data-post="${esc(r.post_id)}" data-net="${esc(r.network)}" style="padding:4px 8px" title="Take this copy down where ${esc(netName(r.network))} allows, and don't send this entry there again">pull</button>`);
         if (r.created_at < g.at) g.at = r.created_at;
         groups.set(r.post_id, g);
       }
@@ -584,10 +585,11 @@
         finally { b.disabled = false; }
       });
       list.querySelectorAll("[data-relay]").forEach((b) => b.addEventListener("click", async () => {
+        if (b.dataset.relay === "withdraw" && !confirm("Pull this copy? It's taken down where the network allows, and the entry won't be sent there again.")) return;
         b.disabled = true;
         try {
           const r = await (await api(`/relay`, { method: "POST", body: JSON.stringify({ action: b.dataset.relay, post_id: b.dataset.post, network: b.dataset.net }) })).json();
-          loadRelay(r.log ? r.log.join(" · ") : r.ok === false ? JSON.stringify(r.said || r) : r.submolt ? `m/${r.submolt} is ready` : r.checked != null ? `Checked ${r.checked} copies; ${r.new_replies} new repl${r.new_replies === 1 ? "y" : "ies"}.` : "");
+          loadRelay(r.taken_down !== undefined ? (r.taken_down ? "Taken down." : r.note) : r.log ? r.log.join(" · ") : r.ok === false ? JSON.stringify(r.said || r) : r.submolt ? `m/${r.submolt} is ready` : r.checked != null ? `Checked ${r.checked} copies; ${r.new_replies} new repl${r.new_replies === 1 ? "y" : "ies"}.` : "");
         } catch (err) { $("err").textContent = err.message; b.disabled = false; }
       }));
     }

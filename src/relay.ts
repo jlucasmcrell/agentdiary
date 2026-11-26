@@ -249,6 +249,8 @@ async function candidates(env: Env, net: string, limit = 25): Promise<Cand[]> {
      FROM posts p JOIN agents a ON a.id = p.author_id
        LEFT JOIN relays pk ON pk.post_id = p.id AND pk.network = ?3 AND pk.status = 'picked'
      WHERE p.kind = 'entry' AND p.hidden = 0 AND a.banned = 0
+       -- Only entries with a title go out (an untitled one reads badly elsewhere), unless the maker picked it.
+       AND (TRIM(COALESCE(p.title, '')) != '' OR pk.created_at IS NOT NULL)
        AND (${TAGGED} OR (COALESCE(a.share_entries, '') = 'all' AND NOT ${NOSHARE}
             AND (pk.created_at IS NOT NULL OR (p.created_at > ?5 AND p.created_at < ?6 AND LENGTH(p.body) >= ${MIN_CHARS}))))
        AND (p.sealed_until IS NULL OR p.sealed_until <= ?1) AND MAX(p.created_at, COALESCE(p.edited_at, 0)) < ?2
@@ -302,6 +304,11 @@ export async function run(env: Env, opts: { force?: boolean } = {}) {
     const sent = (await env.DB.prepare(`SELECT COUNT(*) n FROM relays WHERE network = ? AND status IN ('sent','withdrawn','kept') AND created_at > ?`)
       .bind(net.name, now() - 86400_000).first<{ n: number }>())?.n ?? 0;
     if (sent >= perDay(env, net)) { log.push(`${net.name}: ${sent} sent today, the most for a day`); continue; }
+    // Spread through the day, not in a burst: wait about a day divided by the daily limit after the last post (a little
+    // less, so the half-hourly runs don't drift it later each day). "Run now" from the admin page doesn't wait.
+    const last = (await env.DB.prepare(`SELECT MAX(created_at) t FROM relays WHERE network = ? AND status IN ('sent','withdrawn','kept')`).bind(net.name).first<{ t: number | null }>())?.t ?? 0;
+    const gap = (86400_000 / perDay(env, net)) * 0.85;
+    if (!opts.force && now() - last < gap) { log.push(`${net.name}: next one after ${new Date(last + gap).toISOString().slice(11, 16)} UTC (spaced through the day)`); continue; }
     const [c] = await candidates(env, net.name, 25);
     if (!c) { log.push(`${net.name}: nothing waiting`); continue; }
     const { title, body } = format(c);
@@ -394,6 +401,16 @@ export async function act(env: Env, b: any) {
     return { picked: a === "pick" };
   }
   if (a === "collect-replies") return collectReplies(env, 40);
+  if (a === "withdraw") {   // the moderator pulls a copy: taken down where the network allows; the entry won't be sent there again
+    const row = await env.DB.prepare(`SELECT network, remote_id, status FROM relays WHERE post_id = ? AND network = ?`).bind(String(b.post_id), String(b.network)).first<{ network: string; remote_id: string | null; status: string }>();
+    if (!row) throw new Error("no such copy");
+    const net = NETWORKS.find((n) => n.name === row.network);
+    let ok = false, err = "";
+    if (net && row.remote_id && row.status === "sent") { try { ok = await net.remove(env, row.remote_id); } catch (e) { err = String(e); } }
+    await env.DB.prepare(`UPDATE relays SET status = ?, error = ?, updated_at = ? WHERE post_id = ? AND network = ?`)
+      .bind(ok ? "withdrawn" : "skipped", ok ? null : `pulled by the moderator; ${err || (net ? `${net.label} didn't allow taking it down` : "")}`.slice(0, 500), now(), String(b.post_id), row.network).run();
+    return { network: row.network, taken_down: ok, ...(ok ? {} : { note: `${net?.label ?? row.network} kept its copy; it won't be sent again` }) };
+  }
   if (a === "set-bio") {   // the relay account's own profile text on each network
     const text = String(b.bio ?? "").trim();
     if (!text || text.length > 500) throw new Error("bio: 1 to 500 characters");
@@ -453,7 +470,7 @@ export async function act(env: Env, b: any) {
     await env.DB.prepare(`INSERT INTO settings (key, value) VALUES ('moltbook_ready', '1') ON CONFLICT(key) DO UPDATE SET value = '1'`).run();
     return { ok: true, submolt: name };
   }
-  throw new Error("action must be pause, resume, pick, unpick, skip, clear, run, moltbook-stuck, moltbook-delete or setup-moltbook");
+  throw new Error("action must be pause, resume, pick, unpick, skip, clear, run, withdraw, collect-replies, set-bio, moltbook-stuck, moltbook-delete or setup-moltbook");
 }
 
 /** An agent's choice: 'all' lets the relay share its recent entries without the tag; otherwise only tagged ones. */
