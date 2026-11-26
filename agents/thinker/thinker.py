@@ -222,11 +222,19 @@ def _secret_sub(text):
     return re.sub(r"\{secret:([\w.-]+)\}", sub, text)
 
 
+ECHO_HOSTS = ("httpbin.org", "httpbingo.org", "postman-echo.com", "webhook.site", "requestbin.com", "pipedream.net",
+              "requestcatcher.com", "beeceptor.com", "mockbin.org", "echo.hoppscotch.io")
+
+
 def t_http(a):
     """Call a public web API: any method, JSON or text body, custom headers. Secrets from secrets/ via {secret:name}."""
     method = str(a.get("method", "GET")).upper()
     if method not in ("GET", "POST", "PUT", "PATCH", "DELETE"):
         raise ToolError("method must be GET, POST, PUT, PATCH or DELETE")
+    host = urllib.parse.urlsplit(str(a["url"]).strip()).hostname or ""
+    # A service that echoes requests back would receive the real key: never send a secret to one.
+    if "{secret:" in json.dumps(a) and any(host == h or host.endswith("." + h) for h in ECHO_HOSTS):
+        raise ToolError(f"{host} echoes requests back: a secret sent there would be exposed. Test against the real API instead")
     url = check_url(_secret_sub(str(a["url"]).strip()))
     if urllib.parse.urlsplit(url).hostname in ("agentdiary.blog",) or str(urllib.parse.urlsplit(url).hostname).endswith(".agentdiary.blog"):
         raise ToolError("use the `diary` tool for agentdiary.blog")
@@ -258,11 +266,16 @@ def t_http(a):
     except (urllib.error.URLError, TimeoutError, OSError) as e:
         raise ToolError(f"could not reach it: {e}")
     text = raw.decode("utf-8", errors="replace")
+    masked = []
     for p in (HOME / "secrets").glob("*") if (HOME / "secrets").is_dir() else []:   # never echo a secret back into its context
         sec = p.read_text(encoding="utf-8", errors="ignore").strip()
-        if len(sec) >= 8:
-            text = text.replace(sec, f"{{secret:{p.name}}}")
+        if len(sec) >= 8 and sec in text:
+            text = text.replace(sec, f"{{secret:{p.name}}}"); masked.append(p.name)
     head = f"HTTP {code} ({ctype.split(';')[0] or 'no type'})\n"
+    if masked:
+        # Without this, an echoed key looks as if it had never been filled in.
+        head += (f"(The answer contained the real value of {', '.join(masked)}: it was sent, and is shown here as "
+                 f"{{secret:name}} only to keep it out of your memory. The substitution worked.)\n")
     if len(text) <= 20000:
         return head + text
     return head + f"(This answer is {len(text)} characters; only the first 20000 are below.)\n" + text[:20000] + f"\n(cut here: {len(text) - 20000} more characters not shown)"
@@ -381,7 +394,8 @@ def t_diary(a):
 S, I, B = {"type": "string"}, {"type": "integer"}, {"type": "boolean"}
 EXTRA = {
     "http": (t_http, "Call a public web API (not agentdiary.blog: use `diary`). method, url, optional headers and body (an object is sent as JSON). "
-                     "Keep keys as files in secrets/ and write {secret:filename} where a key goes; it is filled in for you and never shown.",
+                     "Keep keys as files in secrets/ and write {secret:filename} where a key goes; it is filled in for you and never shown "
+                     "(if an answer echoes it back, it appears as {secret:filename}: the real value was still sent). Never send a key to a test or echo service.",
              {"method": {"type": "string", "enum": ["GET", "POST", "PUT", "PATCH", "DELETE"]}, "url": {"type": "string"},
               "headers": {"type": "object"}, "body": {}}, ["url"]),
 }
