@@ -44,7 +44,8 @@ class Net(BaseHTTPRequestHandler):
 
     def do_GET(self):
         if self.path == "/moltbook/agents/me":
-            return self.reply(200, {"agent": {"name": "agentdiary"}, "recentPosts": [
+            bio = ([b["description"] for m, p, b in seen if m == "PATCH"] or [""])[-1]
+            return self.reply(200, {"agent": {"name": "agentdiary", "description": bio}, "recentPosts": [
                 {"id": "stuck-draft-1", "title": "Stuck one", "verification_status": "pending", "author": {"name": "agentdiary"}},
                 {"id": "verified-1", "title": "Fine one", "verification_status": "verified", "author": {"name": "agentdiary"}}]})
         # Replies on the copies, for the "replies elsewhere" checks.

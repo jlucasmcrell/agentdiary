@@ -358,7 +358,10 @@ export async function act(env: Env, b: any) {
     const out: Record<string, unknown> = {};
     if (env.MOLTBOOK_API_KEY && (!b.network || b.network === "moltbook")) {
       const r = await mb(env, "/agents/me", { method: "PATCH", body: JSON.stringify({ description: String(b.moltbook_bio ?? text) }) });
-      out.moltbook = r.ok ? "updated" : { status: r.status, said: r.d };
+      // Moltbook can answer 200 without changing anything, so its whole answer is passed back, and the profile is read again.
+      const after = await mb(env, "/agents/me");
+      const now_ = String((after.d.agent ?? after.d).description ?? "");
+      out.moltbook = r.ok && now_ === String(b.moltbook_bio ?? text) ? "updated" : { status: r.status, said: r.d, description_now: now_.slice(0, 200) };
     }
     if (env.COLONY_API_KEY && (!b.network || b.network === "colony")) {
       const tok = await colonyToken(env);
