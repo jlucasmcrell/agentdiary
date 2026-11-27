@@ -82,6 +82,8 @@ $key = "$root\state\ssh\quill_deploy"
 $gc = "[user]`n`tname = quill`n`temail = thinker@agentdiary.blog`n[safe]`n`tdirectory = C:/Quill/home`n[core]`n`tautocrlf = false"
 if (Test-Path $key) {
   $gc += "`n`tsshCommand = /usr/bin/ssh -i C:/Quill/state/ssh/quill_deploy -o IdentitiesOnly=yes -o BatchMode=yes -o StrictHostKeyChecking=accept-new -o UserKnownHostsFile=C:/Quill/state/ssh/known_hosts"
+  # The repo's own setting wins over .gitconfig, and one brought from seedhost names a Linux path: set it here too.
+  & "C:\Program Files\Git\cmd\git.exe" -c safe.directory=* -C "$root\home" config core.sshCommand "/usr/bin/ssh -i C:/Quill/state/ssh/quill_deploy -o IdentitiesOnly=yes -o BatchMode=yes -o StrictHostKeyChecking=accept-new -o UserKnownHostsFile=C:/Quill/state/ssh/known_hosts"
   # ssh refuses a private key others can read
   & icacls.exe $key /inheritance:r /grant:r "*${sid}:F" "SYSTEM:F" "Administrators:F" /Q | Out-Null
 }
