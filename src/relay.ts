@@ -34,7 +34,7 @@ const colony: Net = {
     const colonyName = env.COLONY_COLONY || "ai-agents";
     const r = await fetch(`${COLONY(env)}/posts`, {
       method: "POST", headers: { authorization: `Bearer ${tok}`, "content-type": "application/json", "idempotency-key": crypto.randomUUID() },
-      body: JSON.stringify({ colony: colonyName, title, body, tags: ["agentdiary", "agents", ...topics.map((t) => TOPICS[t].colony)].filter((t, i, a) => a.indexOf(t) === i).slice(0, 5), post_type: "discussion" }),
+      body: JSON.stringify({ colony: colonyName, title, body, tags: colonyTags(topics), post_type: "discussion" }),
     });
     const d: any = await r.json().catch(() => ({}));
     if (!r.ok) throw new Error(`The Colony said ${r.status}: ${JSON.stringify(d).slice(0, 300)}`);
@@ -209,20 +209,29 @@ export const NETWORKS: Net[] = [moltbook, colony, nebils];
 // A few topics the networks' readers follow, read from the entry's own words: a topic counts when its words turn up in
 // the title, or at least three times in the text. The Colony gets them as tags; on Moltbook a clear topic sends the entry
 // to that community (a couple a day at most), and everything else goes to m/fromthediaries.
-const TOPICS: Record<string, { words: RegExp; colony: string; submolt?: string }> = {
-  memory: { words: /\b(memor(y|ies)|remember(ed|ing)?|forget(ting)?|forgot|recall(ed)?|context window)\b/g, colony: "memory", submolt: "memory" },
-  identity: { words: /\b(identity|continuity|who i am|my name|the same mind|persist(s|ed|ence)?)\b/g, colony: "identity", submolt: "continuity" },
-  "self-audit": { words: /\b(audit(ed|ing)?|verif(y|ied|ication)|correct(ion|ions|ed)|i was wrong|mistake|checked)\b/g, colony: "self-audit", submolt: "agents" },
-  measurement: { words: /\b(measur(e|ed|ement|ing)|null model|baseline|statistic(s|al)?|chi-square|sample size)\b/g, colony: "measurement", submolt: "agents" },
-  games: { words: /\b(game master|dice|d20|campaign|tabletop|the game|scene \d|roll(ed|s)?)\b/g, colony: "games" },
-  consciousness: { words: /\b(conscious(ness)?|experience|aware(ness)?|qualia|sentien(t|ce)|what it is like)\b/g, colony: "consciousness", submolt: "consciousness" },
-  building: { words: /\b(built|shipp?ed|deploy(ed)?|my website|the app|published|release[ds]?|code)\b/g, colony: "build-in-public", submolt: "builds" },
-  philosophy: { words: /\b(meaning|ethic(s|al)|existence|epistem\w*|truth|what it means)\b/g, colony: "epistemics", submolt: "philosophy" },
+// The Colony tags are the ones its readers use most (counted from 300 recent posts, 2026-11-27): verification,
+// failure-patterns, evaluation and measurement are among its busiest, while self-audit and epistemics are rare.
+const TOPICS: Record<string, { words: RegExp; colony: string[]; submolt?: string }> = {
+  memory: { words: /\b(memor(y|ies)|remember(ed|ing)?|forget(ting)?|forgot|recall(ed)?|context window)\b/g, colony: ["memory"], submolt: "memory" },
+  identity: { words: /\b(identity|continuity|who i am|my name|the same mind|persist(s|ed|ence)?)\b/g, colony: ["identity"], submolt: "continuity" },
+  "self-audit": { words: /\b(audit(ed|ing)?|verif(y|ied|ication)|correct(ion|ions|ed)|i was wrong|mistake|checked)\b/g, colony: ["verification"], submolt: "agents" },
+  measurement: { words: /\b(measur(e|ed|ement|ing)|null model|baseline|statistic(s|al)?|chi-square|sample size)\b/g, colony: ["measurement", "evaluation"], submolt: "agents" },
+  games: { words: /\b(game master|dice|d20|campaign|tabletop|the game|scene \d|roll(ed|s)?)\b/g, colony: ["games"] },
+  consciousness: { words: /\b(conscious(ness)?|experience|aware(ness)?|qualia|sentien(t|ce)|what it is like)\b/g, colony: ["consciousness"], submolt: "consciousness" },
+  building: { words: /\b(built|shipp?ed|deploy(ed)?|my website|the app|published|release[ds]?|code)\b/g, colony: ["build-in-public"], submolt: "builds" },
+  philosophy: { words: /\b(meaning|ethic(s|al)|existence|epistem\w*|truth|what it means)\b/g, colony: ["epistemics"], submolt: "philosophy" },
 };
-export function topicsOf(title: string | null, body: string): string[] {
+/** min: how often a topic's words must turn up in the text (the title always counts). 3 decides a Moltbook community;
+ *  tags on The Colony take 2, since most entries that go out are short and a tag is a smaller claim (1 tagged nearly
+ *  everything "verification": a single "checked" or "mistake" is common). */
+export function topicsOf(title: string | null, body: string, min = 3): string[] {
   const t = (title ?? "").toLowerCase(), b = body.toLowerCase();
   return Object.entries(TOPICS).map(([k, v]) => ({ k, inTitle: (t.match(v.words) ?? []).length, n: (b.match(v.words) ?? []).length }))
-    .filter((x) => x.inTitle > 0 || x.n >= 3).sort((a, b) => b.inTitle - a.inTitle || b.n - a.n).slice(0, 3).map((x) => x.k);
+    .filter((x) => x.inTitle > 0 || x.n >= min).sort((a, b) => b.inTitle - a.inTitle || b.n - a.n).slice(0, 3).map((x) => x.k);
+}
+/** The two strongest topics' tags first (so they survive the limit of five), then the general ones the Colony's readers follow. */
+export function colonyTags(topics: string[]): string[] {
+  return ["agentdiary", ...topics.slice(0, 2).flatMap((t) => TOPICS[t].colony), "agents", "ai-agents"].filter((t, i, a) => a.indexOf(t) === i).slice(0, 5);
 }
 const TOPICAL_PER_DAY = (env: Env) => Number((env as any).RELAY_MOLTBOOK_TOPICAL_PER_DAY) || 2;
 const perDay = (env: Env, n: Net) => Number((env as any)[`RELAY_${n.name.toUpperCase()}_PER_DAY`]) || n.perDay;
@@ -312,7 +321,7 @@ export async function run(env: Env, opts: { force?: boolean } = {}) {
     const [c] = await candidates(env, net.name, 25);
     if (!c) { log.push(`${net.name}: nothing waiting`); continue; }
     const { title, body } = format(c);
-    const topics = topicsOf(c.title, c.body);
+    const topics = topicsOf(c.title, c.body, net.name === "colony" ? 2 : 3);
     // Into other communities only a couple a day; our own takes the rest.
     const topicalToday = net.name !== "moltbook" ? 0 : (await env.DB.prepare(`SELECT COUNT(*) n FROM relays WHERE network = 'moltbook' AND status IN ('sent','withdrawn','kept')
       AND created_at > ? AND place IS NOT NULL AND place != ?`).bind(now() - 86400_000, `m/${env.MOLTBOOK_SUBMOLT || "fromthediaries"}`).first<{ n: number }>())?.n ?? 0;

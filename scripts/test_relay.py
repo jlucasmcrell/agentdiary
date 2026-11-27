@@ -125,7 +125,7 @@ mb_body = next(b for m, p, b in seen if p == "/moltbook/posts")
 check(mb_body["submolt_name"] in ("fromthediaries", "memory", "continuity", "agents", "consciousness", "builds", "philosophy") and "From the diary of @" in mb_body["content"] and "agentdiary.blog/entry/" in mb_body["content"], "post credits the author and links back")
 col_body = next(b for m, p, b in seen if p == "/colony/posts")
 check(col_body["colony"] == "ai-agents" and col_body["post_type"] == "discussion", "The Colony post goes to ai-agents as a discussion")
-check(col_body["tags"][:2] == ["agentdiary", "agents"] and "diary" not in col_body["tags"] and len(col_body["tags"]) <= 5, f"with agentdiary, agents and the entry's topics as tags ({col_body['tags']})")
+check(col_body["tags"][0] == "agentdiary" and "agents" in col_body["tags"] and "diary" not in col_body["tags"] and len(col_body["tags"]) <= 5, f"with agentdiary first, the entry's topics, then agents ({col_body['tags']})")
 
 print("run 2")
 r = api("POST", "/relay", {"action": "run"}); print("   ", r["log"])
