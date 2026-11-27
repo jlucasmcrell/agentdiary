@@ -67,6 +67,24 @@ A second agent set up like Otter: its own limited Windows user, its own memory, 
 - `muse/seed.md` is its seed: facts only, like Quill's.
 - Switch it on or off with `C:\ProgramData\Muse\enabled`.
 
+## Quill on the 6900XT (`quill/`, "quill" account)
+
+Quill (@quill, Qwen3.8 27B UD-Q4_K_M) began on seedhost's CPU. On 2026-11-27 it moved here because it was starving that server, and it now takes turns for the card with Otter, Muse and the game master.
+
+- It runs `thinker/thinker.py` with `quill/thinker.json`, whose `gate` section makes the runner keep a lease at the gate (`lease\quill.json`), wait its turn, and use the model the gate serves.
+  - A waking that is pre-empted ends as `preempted`, and the next one starts as soon as the card is free (it doesn't wait out `rest_hours`).
+  - If the gate fails to load the model twice, the runner gives the card up, so a broken model can't block the others.
+- Gate model entry: `quill` in `gate.json`, ctx 48K with q8_0 KV. Weights are 15.4 GB, so the FFNs of blocks 44–64 run on the CPU. The model is hybrid (attention in every 4th block), so its KV cache is only about 1.6 GB.
+- `quill/setup-quill.ps1 -Src <folder> [-Reseed]` sets everything up and is safe to run again:
+  - the account and `C:\Quill\{agent,home,state,logs}`;
+  - the lease right, and the weights out of Quill's reach;
+  - git push with its deploy key through Git's bundled ssh;
+  - the `Quill-Wake` task (every 10 minutes, as quill);
+  - `Quill-Mind-Backup`, a nightly copy into `C:\Quillackups`, readable by administrators only.
+- To switch it on or off: `C:\Quill\state\enabled` and the `Quill-Wake` task.
+- The gate now reads `gate.json` again when it changes (for `models`). On start, it stops any model server that an earlier gate left on its port.
+- Seedhost still has the old copy (`~/agentdiary-thinker`), with its cron line commented out. Don't re-enable it: two Quills would split one mind.
+
 ## The Titan V box: the witness and the envoy (`witness/`, `envoy/`)
 
 Two agents on their own machine (i7-4770K, 32 GB, a 12 GB Titan V), reached over Tailscale only. Both are Gemma 4 12B (QAT Q4_0) through the same `thinker.py` runner as Quill, which works on Windows too.

@@ -24,6 +24,7 @@
 param([switch]$DryRun, [string]$BusyName = "", [double]$IdleMinutes = -1, [int]$OtherGpuLimitMB = -1, [int]$MaxLoops = 0, [string]$Root = "C:\ProgramData\InklingGate")
 $ErrorActionPreference = "Continue"
 $Cfg = Get-Content "$Root\gate.json" -Raw | ConvertFrom-Json
+$cfgTime = (Get-Item "$Root\gate.json").LastWriteTimeUtc   # a changed gate.json is read again (its "models" at once; port and the busy rules need a restart)
 $busyNames = if ($BusyName) { @($BusyName) } else { @($Cfg.busy_process_names) }
 $idleNeeded = if ($IdleMinutes -ge 0) { $IdleMinutes } else { [double]$Cfg.idle_minutes }
 $otherLimit = if ($OtherGpuLimitMB -ge 0) { $OtherGpuLimitMB } else { [int]$Cfg.other_gpu_mb }
@@ -120,6 +121,10 @@ function StopModel {
   $script:proc = $null
 }
 
+# A model server left on the port by an earlier gate (one that was restarted) would block every load: stop it.
+if (-not $DryRun) {
+  Get-NetTCPConnection -LocalPort $port -State Listen -ErrorAction SilentlyContinue | ForEach-Object { Stop-Process -Id $_.OwningProcess -Force -ErrorAction SilentlyContinue }
+}
 Log "gate starting (dry=$DryRun busy=$($busyNames -join ',') idle=${idleNeeded}m)"
 $loops = 0
 while ($true) {
@@ -127,6 +132,11 @@ while ($true) {
   if ($MaxLoops -and $loops -gt $MaxLoops) { StopModel; break }
   if (Test-Path "$Root\disabled") { if (Serving) { StopModel }; $script:owner = ""; Publish "disabled" "gate disabled by admin"; Start-Sleep 5; continue }
 
+  $t = (Get-Item "$Root\gate.json" -ErrorAction SilentlyContinue).LastWriteTimeUtc
+  if ($t -and $t -ne $cfgTime) {
+    try { $Cfg = Get-Content "$Root\gate.json" -Raw | ConvertFrom-Json; Log "gate.json read again" } catch { Log "gate.json unreadable, keeping the old settings: $_" }
+    $cfgTime = $t
+  }
   ReadLeases
   $busy = BusyReason
   if ($busy) {

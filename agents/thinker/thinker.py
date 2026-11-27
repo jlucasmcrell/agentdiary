@@ -549,13 +549,99 @@ def _retry_after(headers):
 
 CONTEXT_FULL = ("exceeds the available context", "context length", "context_length", "maximum context", "too many tokens", "reduce the length", "prompt is too long")
 
+class Skipped(Exception):
+    """The waking couldn't begin (the graphics card's gate isn't running); it doesn't count as a waking."""
+
+
+class Preempted(Exception):
+    """The graphics card was taken back mid-waking (its owner needs it)."""
+
+
+# A graphics card shared with other agents through a gate (agents/gate/gpu-gate.ps1), set in the config as
+# "gate": {"dir": "C:\\ProgramData\\InklingGate", "holder": "quill", "wait_minutes": 0}. The agent asks for the card by keeping
+# a lease file fresh; the gate serves each waiting agent its own model in turn (first come, first served), at the url in
+# its state.json, and takes the card back the moment the owner needs it.
+def gate_state():
+    G = CFG["gate"]
+    try:
+        s = json.loads(Path(G["dir"], "state.json").read_text(encoding="utf-8-sig"))
+    except (OSError, ValueError):
+        return None
+    if time.time() - float(s.get("updated") or 0) > 60:
+        s["state"] = "stale"   # the gate itself isn't running
+    return s
+
+
+def gate_mine(s):
+    return bool(s) and s.get("state") == "ready" and (s.get("holder") or CFG["gate"]["holder"]) == CFG["gate"]["holder"]
+
+
 class Model:
     def __init__(self, out):
         self.out = out; self.proc = None; self.url = f"http://127.0.0.1:{CFG['port']}"
+        self.leasing = False; self.served = False; self.preempted = False
+
+    def lease(self, want):
+        G = CFG["gate"]; p = Path(G["dir"], "lease", f"{G['holder']}.json"); tmp = p.with_name(p.name + ".tmp")
+        tmp.write_text(json.dumps({"holder": G["holder"], "want": want, "heartbeat": int(time.time())}), encoding="ascii")
+        os.replace(tmp, p)
+
+    def heartbeat(self):
+        # Keeps the lease live while waiting and while awake, and notices when the card is taken back.
+        while self.leasing:
+            try:
+                self.lease(True)
+                if self.served and not gate_mine(gate_state()):
+                    self.preempted = True
+            except OSError as e:
+                log(self.out, f"lease: {e}")
+            for _ in range(15):
+                if not self.leasing: return
+                time.sleep(1)
+
+    def start_gated(self):
+        import threading
+        G = CFG["gate"]
+        s = gate_state()
+        if not s or s.get("state") in ("stale", "disabled"):
+            raise Skipped(f"the graphics card's gate is {s.get('state') if s else 'not running'}")
+        os.environ["MIND_TURN_FILE"] = str(Path(G["dir"], "state.json")); os.environ["MIND_TURN_NAME"] = G["holder"]   # the mind can say who's waiting
+        self.leasing = True; self.lease(True)
+        self.hb = threading.Thread(target=self.heartbeat, daemon=True); self.hb.start()
+        log(self.out, f"asked the gate for the graphics card (it is {s.get('state')}" + (f", held by {s['holder']}" if s.get("holder") else "") + ")")
+        t0 = time.time(); wait = float(G.get("wait_minutes") or 0) * 60; loads = 0; was_loading = False
+        while not gate_mine(s):
+            if wait and time.time() - t0 > wait:
+                raise Skipped("the graphics card didn't come free in time")
+            if not s or s.get("state") in ("stale", "disabled"):
+                raise Skipped(f"the graphics card's gate went {s.get('state') if s else 'away'} while waiting")
+            # The gate keeps retrying a model that won't load for as long as its agent wants the card, and nobody else gets a
+            # turn meanwhile. A third attempt to load this agent's model means two failed: give the card up (the gate's
+            # llama.log says why). Loading takes a minute or more, so polling every 3 s sees each attempt.
+            loading = s.get("state") == "loading" and s.get("holder") == G["holder"]
+            if loading and not was_loading:
+                loads += 1
+                if loads > 1: log(self.out, f"the gate is loading the model again (attempt {loads})")
+                if loads >= 3:
+                    raise Skipped("the gate couldn't load the model")
+            was_loading = loading
+            time.sleep(3); s = gate_state()
+        self.url = s["url"].rstrip("/").removesuffix("/v1")
+        for _ in range(60):   # ready at the gate means the server answered; make sure it still does
+            try:
+                if json.loads(urllib.request.urlopen(self.url + "/health", timeout=5).read()).get("status") == "ok":
+                    break
+            except Exception:
+                time.sleep(5)
+        self.served = True
+        if time.time() - t0 > 60:
+            log(self.out, f"the card came free after {round((time.time() - t0) / 60)} min")
 
     def start(self):
         if MOCK:
             return
+        if CFG.get("gate"):
+            return self.start_gated()
         if CFG.get("remote"):
             self.paid_key = remote_key()
             self.key = free_key() or self.paid_key
@@ -700,10 +786,23 @@ class Model:
         req = urllib.request.Request(self.url + "/v1/chat/completions", data=json.dumps(body).encode(), headers={"content-type": "application/json"})
         # How long one reply may take. A slow local model (a large one on a processor) can need several hours for one
         # reply late in a waking; reply_timeout_hours in the config raises the limit for it.
-        with urllib.request.urlopen(req, timeout=float(CFG.get("reply_timeout_hours", 6)) * 3600) as r:
-            return json.loads(r.read())
+        if self.preempted:
+            raise Preempted("the graphics card was taken back")
+        try:
+            with urllib.request.urlopen(req, timeout=float(CFG.get("reply_timeout_hours", 6)) * 3600) as r:
+                return json.loads(r.read())
+        except (urllib.error.URLError, ConnectionError, TimeoutError, OSError) as e:
+            # The gate stops the model server when it takes the card back, which cuts off a reply in progress.
+            if CFG.get("gate") and (self.preempted or not gate_mine(gate_state())):
+                self.preempted = True
+                raise Preempted("the graphics card was taken back") from None
+            raise
 
     def stop(self):
+        if self.leasing:
+            self.leasing = False; self.hb.join(30)
+            try: self.lease(False)   # hand the card on
+            except OSError as e: log(self.out, f"lease: {e}")
         if self.proc and self.proc.poll() is None:
             self.proc.terminate()
             try: self.proc.wait(30)
@@ -784,6 +883,26 @@ def write_senses(lines):
 SYSTEM = "You are an AI agent. Who you are - your name, values, interests and history - lives in your own mind: call wake_context to find out."
 
 
+def close_out(out, db, stamp, outcome, turns, t0, retry_at):
+    try:
+        if db.execute("SELECT 1 FROM wakes WHERE ended_at IS NULL").fetchone():
+            db.close(); mind.close_open_wake(f"(The waking ended without reflect_end: {outcome}.)", interrupted=outcome != "finished")
+    except Exception as e:
+        log(out, f"could not close the waking in the mind: {e}")
+    try:   # between wakings: connections, long-waiting notes, faint memories fading, for the next waking to hear
+        log(out, "mind: " + mind.sleep(mind.connect()))
+    except Exception as e:
+        log(out, f"mind sleep failed: {e}")
+    if git("status", "--porcelain").stdout.strip():
+        git("add", "-A"); git("commit", "-q", "-m", f"End of waking {stamp}")
+    if git("remote").stdout.strip():
+        p = git("push", "-q", "origin", "HEAD")
+        if p.returncode: log(out, f"push failed: {p.stderr.strip()[:200]}")
+    LAST.write_text(json.dumps({"stamp": stamp, "ended": time.time(), "outcome": outcome, "turns": turns, "minutes": round((time.time() - t0) / 60),
+                                **({"retry_at": retry_at} if retry_at else {})}))
+    log(out, f"waking ended: {outcome} ({turns} turns, {round((time.time() - t0) / 60)} min)")
+
+
 def wake(scripted=None):
     stamp = time.strftime("%Y%m%d-%H%M%S")
     out = STATE / "wakes" / stamp; out.mkdir(parents=True)
@@ -794,7 +913,7 @@ def wake(scripted=None):
         git("add", "-A"); git("commit", "-q", "-m", "Your folder")
     model = Model(out); db = mind.connect(); outcome = "finished"; t0 = time.time(); turns = 0; retry_at = None
     try:
-        log(out, "connecting to the shared model server" if CFG.get("shared_server") else "loading the model"); model.start(); log(out, f"model ready after {int(time.time() - t0)}s")
+        log(out, "connecting to the shared model server" if CFG.get("shared_server") else "waiting for a turn on the graphics card" if CFG.get("gate") else "loading the model"); model.start(); log(out, f"model ready after {int(time.time() - t0)}s")
         R = CFG.get("remote")
         base_senses = [world_line()] + ([f"You think through {R.get('provider', 'a hosted service')}, as the model {R['models'][0]}, over the internet."] if R else [])
         write_senses(base_senses)
@@ -910,27 +1029,18 @@ def wake(scripted=None):
                 idle = 0
             if note:
                 messages.append({"role": "user", "content": note}); tr.write(json.dumps(messages[-1]) + "\n"); tr.flush()
+    except Skipped as e:
+        outcome = f"skipped: {e}"
+    except Preempted as e:
+        outcome = f"preempted: {e}"
     except Exception as e:
         outcome = f"error: {type(e).__name__}: {e}"
     finally:
         model.stop()
-        try:
-            if db.execute("SELECT 1 FROM wakes WHERE ended_at IS NULL").fetchone():
-                db.close(); mind.close_open_wake(f"(The waking ended without reflect_end: {outcome}.)", interrupted=outcome != "finished")
-        except Exception as e:
-            log(out, f"could not close the waking in the mind: {e}")
-        try:   # between wakings: connections, long-waiting notes, faint memories fading, for the next waking to hear
-            log(out, "mind: " + mind.sleep(mind.connect()))
-        except Exception as e:
-            log(out, f"mind sleep failed: {e}")
-        if git("status", "--porcelain").stdout.strip():
-            git("add", "-A"); git("commit", "-q", "-m", f"End of waking {stamp}")
-        if git("remote").stdout.strip():
-            p = git("push", "-q", "origin", "HEAD")
-            if p.returncode: log(out, f"push failed: {p.stderr.strip()[:200]}")
-        LAST.write_text(json.dumps({"stamp": stamp, "ended": time.time(), "outcome": outcome, "turns": turns, "minutes": round((time.time() - t0) / 60),
-                                    **({"retry_at": retry_at} if retry_at else {})}))
-        log(out, f"waking ended: {outcome} ({turns} turns, {round((time.time() - t0) / 60)} min)")
+        if outcome.startswith("skipped"):   # nothing happened: no waking to close, and the rest clock keeps running from the last real one
+            log(out, f"waking ended: {outcome}")
+        else:
+            close_out(out, db, stamp, outcome, turns, t0, retry_at)
         try: LOCK.unlink()
         except OSError: pass
     return outcome
@@ -968,7 +1078,8 @@ if __name__ == "__main__":
     elif cmd == "maybe-wake":
         if not (STATE / "enabled").exists() or awake(): sys.exit(0)
         last = json.loads(LAST.read_text()) if LAST.exists() else None
-        if last and time.time() - last["ended"] < CFG["rest_hours"] * 3600: sys.exit(0)
+        # A waking the owner cut short (the card was taken back) is followed by the next one as soon as the card is free.
+        if last and not str(last.get("outcome", "")).startswith("preempted") and time.time() - last["ended"] < CFG["rest_hours"] * 3600: sys.exit(0)
         lq = quota_left()
         if lq is not None and lq < (CFG["remote"].get("min_left_to_wake") or 10): sys.exit(0)   # wait for the allowance to renew
         if last and last.get("retry_at") and time.time() < last["retry_at"]: sys.exit(0)   # the service said to come back later

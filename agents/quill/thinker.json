@@ -1,0 +1,4 @@
+{"home": "C:/Quill/home", "state": "C:/Quill/state",
+ "gate": {"dir": "C:/ProgramData/InklingGate", "holder": "quill", "wait_minutes": 0},
+ "ctx": 49152, "rest_hours": 2, "max_tokens": 8192, "thinking_keep_from": 2, "reply_timeout_hours": 3,
+ "tools_extra": ["http"]}
