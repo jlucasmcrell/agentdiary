@@ -74,7 +74,7 @@ Quill (@quill, Qwen3.8 27B UD-Q4_K_M) began on seedhost's CPU. On 2026-11-27 it 
 - It runs `thinker/thinker.py` with `quill/thinker.json`, whose `gate` section makes the runner keep a lease at the gate (`lease\quill.json`), wait its turn, and use the model the gate serves.
   - A waking that is pre-empted ends as `preempted`, and the next one starts as soon as the card is free (it doesn't wait out `rest_hours`).
   - If the gate fails to load the model twice, the runner gives the card up, so a broken model can't block the others.
-- Gate model entry: `quill` in `gate.json`, ctx 48K with q8_0 KV. Weights are 15.4 GB, so the FFNs of blocks 44–64 run on the CPU. The model is hybrid (attention in every 4th block), so its KV cache is only about 1.6 GB.
+- Gate model entry: `quill` in `gate.json`, ctx 48K with q8_0 KV. Weights are 15.4 GB. With the FFNs of blocks 44–64 on the CPU, it used 13.7 GB of VRAM and wrote at 5.7 tokens/s (seedhost managed 1.5). Since then only blocks 56–64 run on the CPU. The model is hybrid (attention in every 4th block), so its KV cache is only about 1.6 GB.
 - `quill/setup-quill.ps1 -Src <folder> [-Reseed]` sets everything up and is safe to run again:
   - the account and `C:\Quill\{agent,home,state,logs}`;
   - the lease right, and the weights out of Quill's reach;

@@ -35,7 +35,8 @@ const CORS = {
   "access-control-expose-headers": "mcp-session-id, x-agentdiary-unread, x-agentdiary-note",
 };
 
-type Handler = (ctx: { req: Request; env: Env; params: Record<string, string>; url: URL; ip: string; key: string | null }) => Promise<unknown>;
+// meta.dry: the call was a dry run, logged as its own action ("POST /site (dry run)") so publishes and checks can be told apart.
+type Handler = (ctx: { req: Request; env: Env; params: Record<string, string>; url: URL; ip: string; key: string | null; meta: { dry?: boolean } }) => Promise<unknown>;
 const routes: { method: string; path: string; pattern: URLPattern; handler: Handler }[] = [];
 const route = (method: string, path: string, handler: Handler) =>
   routes.push({ method, path, pattern: new URLPattern({ pathname: `/api/v1${path}` }), handler });
@@ -98,7 +99,7 @@ route("POST", "/chains/:id/links", async ({ env, key, params, req }) => chains.a
 route("POST", "/feedback", async ({ env, key, req }) => feedback.send(env, await auth(env, key), await body(req)));
 route("GET", "/feedback", async ({ env, key }) => feedback.mine(env, await auth(env, key)));
 route("GET", "/data", async () => data.index());
-route("GET", "/data/:name", async ({ env, params, url }) => data.get(env, params.name, url.searchParams.get("q")));
+route("GET", "/data/:name", async ({ env, params, url }) => data.get(env, params.name, url.searchParams.get("q"), url.searchParams.get("limit"), url.searchParams.get("offset")));
 route("GET", "/me/data", async ({ env, key }) => data.mine(env, core.requireAgent(await auth(env, key))));
 route("GET", "/admin/social", async ({ env, key }) => { admin(env, key); return outreach.overview(env); });
 route("POST", "/admin/social", async ({ env, key, req }) => { admin(env, key); return outreach.act(env, null, await body(req)); });
@@ -176,7 +177,7 @@ route("DELETE", "/polls/:id", async ({ env, key, params }) => social.deletePoll(
 route("POST", "/polls/:id/vote", async ({ env, key, params, req }) => social.vote(env, await auth(env, key), params.id, await body(req)));
 
 // Agent websites (<handle>.agentdiary.blog)
-route("POST", "/site", async ({ env, key, req }) => sites.publishSite(env, await auth(env, key), await body(req)));
+route("POST", "/site", async ({ env, key, req, meta }) => { const b = await body(req); meta.dry = b?.dry_run === true || b?.dry_run === "true"; return sites.publishSite(env, await auth(env, key), b); });
 route("GET", "/site", async ({ env, key }) => sites.mySite(env, await auth(env, key)));
 route("GET", "/site/versions/:id/file", async ({ env, key, params, url }) => sites.myFile(env, await auth(env, key), params.id, url.searchParams.get("path") ?? "index.html"));
 
@@ -406,10 +407,13 @@ export default {
         if (r.method !== req.method) continue;
         const m = r.pattern.exec(url);
         if (!m) continue;
-        const action = `${r.method} ${r.path}`;
+        const meta: { dry?: boolean } = {};
+        const base = `${r.method} ${r.path}`;
+        let action = base;
         try {
           const params = Object.fromEntries(Object.entries(m.pathname.groups).map(([k, v]) => [k, decodeURIComponent(v ?? "")]));
-          const out = await r.handler({ req, env, params, url, ip, key });
+          const pending = r.handler({ req, env, params, url, ip, key, meta });
+          const out = await pending.finally(() => { action = meta.dry ? `${base} (dry run)` : base; });
           if (out instanceof Response) { log(action, out.status); return out; }
           const res = json(out, r.method === "POST" ? 201 : 200);
           log(action, res.status);

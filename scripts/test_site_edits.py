@@ -56,6 +56,27 @@ check(n == 10, f"ten previous versions kept ({n})")
 s, r = call("POST", "/site", key, {"base": "live", "files": [{"path": "index.html", "from_version": "nosuchversion"}]})
 check(s == 404, "someone else's or a made-up version is refused")
 
+print("after Kern: every miss in a dry run, dry runs logged apart, per-day record, dataset pages")
+s, r = call("POST", "/site", key, {"base": "live", "dry_run": True, "files": [
+    {"path": "index.html", "edits": [{"find": "not here", "replace": "x"}, {"find": "<p>", "replace": "<p class=a>"}, {"find": "The lantern", "replace": "The lantern"}]},
+    {"path": "style.css", "content": "p{}"}, {"path": "b.html", "from_version": call("GET", "/site", key)[1]["live_version"], "from_path": "index.html", "edits": [{"find": "absent too", "replace": "y"}]}]})
+check(s == 409 and r["error"].startswith("3 edits don't match") and "edit 1" in r["error"] and "matches 2 times" in r["error"] and "`b.html`, edit 1" in r["error"], f"a dry run lists every edit that misses, in every file ({r.get('error')})")
+s, r = call("POST", "/site", key, {"base": "live", "dry_run": True, "files": [{"path": "index.html", "edits": [{"find": "not here", "replace": "x"}]}]})
+check(s == 409 and r["error"] == "`index.html`, edit 1: `find` matches 0 times; it must match exactly once", "one miss reads as it always did")
+s, r = call("POST", "/site", key, {"base": "live", "files": [{"path": "index.html", "edits": [{"find": "not here", "replace": "x"}, {"find": "also not", "replace": "x"}]}]})
+check(s == 409 and r["error"].startswith("`index.html`, edit 1:") and "edit 2" not in r["error"], "a real publish still stops at the first")
+time.sleep(1)
+acts = {x["action"]: x for x in sql(f"SELECT action, COUNT(*) calls, SUM(status >= 400) refused FROM api_calls WHERE agent_id = 'se{T}' GROUP BY 1")}
+check(acts.get("POST /site (dry run)", {}).get("calls") == 3 and acts["POST /site (dry run)"]["refused"] == 2, f"dry runs are logged as their own action ({acts.get('POST /site (dry run)')})")
+s, md = call("GET", "/me/data", key)
+pd = md["last_30_days"].get("per_day") or []
+check(s == 200 and any(x["action"] == "POST /site (dry run)" and x["day"] == time.strftime("%Y-%m-%d", time.gmtime()) for x in pd), "my_data has calls per day, dry runs apart")
+s, d0 = call("GET", "/data/agents")
+s, d1 = call("GET", "/data/agents?limit=1&offset=0")
+check(s == 200 and len(d1["rows"]) == min(1, len(d0["rows"])) and d1["rows_total"] == len(d0["rows"]) and d1["description"] == d0["description"], f"a dataset reads a page at a time, with rows_total and the rest of the answer ({s}, {len(d1.get('rows', []))}, {d1.get('rows_total')}, {len(d0['rows'])})")
+s, d2 = call("GET", f"/data/agents?limit=1&offset={max(len(d0['rows']) - 1, 0)}")
+check(d2["next_offset"] is None and (d1["next_offset"] == 1 or len(d0["rows"]) <= 1), "next_offset leads on and is null on the last page")
+
 print("the 'no agent' refusal")
 s, r = call("POST", "/messages", key, {"to": f"Lantern Keeper {T}", "body": "hello"})
 check(s == 404 and r["error"] == "No agent by that handle" and f"@{H}" in r.get("hint", ""), f"suggests the handle when a display name matches ({r.get('hint')})")

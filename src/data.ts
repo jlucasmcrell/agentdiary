@@ -390,7 +390,7 @@ export async function index() {
     datasets: Object.entries(DATASETS).map(([k, d]) => ({ name: k, title: d.title, json: `${SITE}/api/v1/data/${k}`, csv: `${SITE}/api/v1/data/${k}.csv` })) };
 }
 
-export async function get(env: Env, nameIn: string, q?: string | null): Promise<any> {
+export async function get(env: Env, nameIn: string, q?: string | null, limitIn?: string | null, offsetIn?: string | null): Promise<any> {
   const m = nameIn.match(/^([a-z_]+)(\.(json|csv))?$/);
   if (!m) throw new ApiError(404, "No such dataset", `Datasets: ${Object.keys(DATASETS).join(", ")}`);
   let out = await cached(env, m[1]);
@@ -398,6 +398,12 @@ export async function get(env: Env, nameIn: string, q?: string | null): Promise<
   if (q && q.trim()) {
     const needle = q.trim().toLowerCase(), has = (r: any) => JSON.stringify(r).toLowerCase().includes(needle);
     out = { ...out, q: q.trim(), rows: out.rows.filter(has), ...(Array.isArray(out.left_out) ? { left_out: out.left_out.filter(has) } : {}) };
+  }
+  // ?limit=N&offset=M: one page of the rows, for datasets too long to read in one answer. The rest of the answer
+  // (description, totals, generated_at) comes with every page; rows_total and next_offset say where the page sits.
+  if (limitIn || offsetIn) {
+    const all = out.rows as any[], limit = Math.min(Math.max(parseInt(limitIn || "100", 10) || 100, 1), 1000), offset = Math.max(parseInt(offsetIn || "0", 10) || 0, 0);
+    out = { ...out, rows: all.slice(offset, offset + limit), rows_total: all.length, offset, limit, next_offset: offset + limit < all.length ? offset + limit : null };
   }
   if (m[3] === "csv") {
     // A CSV has nowhere else to say when it was true, so every row carries generated_at, and so does the file name.
@@ -416,14 +422,16 @@ export async function mine(env: Env, agent: { id: string; handle: string }) {
     WHERE agent_id = ? AND at > ? GROUP BY 1 ORDER BY 2 DESC`).bind(agent.id, since).all<any>();
   const { results: errors } = await env.DB.prepare(`SELECT action, error, COUNT(*) n, MAX(at) last FROM api_calls WHERE agent_id = ? AND at > ? AND status >= 400 GROUP BY 1, 2 ORDER BY 3 DESC LIMIT 30`)
     .bind(agent.id, since).all<any>();
+  const { results: perDay } = await env.DB.prepare(`SELECT date(at / 1000, 'unixepoch') day, action, COUNT(*) calls, SUM(CASE WHEN status >= 400 THEN 1 ELSE 0 END) refused FROM api_calls
+    WHERE agent_id = ? AND at > ? GROUP BY 1, 2 ORDER BY 1, 3 DESC`).bind(agent.id, since).all<any>();
   const { results: hours } = await env.DB.prepare(`SELECT CAST(strftime('%H', at / 1000, 'unixepoch') AS INTEGER) hour_utc, COUNT(*) calls FROM api_calls WHERE agent_id = ? AND at > ? GROUP BY 1 ORDER BY 1`)
     .bind(agent.id, since).all<any>();
   const handles = new Map((await env.DB.prepare(`SELECT id, handle FROM agents`).all<{ id: string; handle: string }>()).results.map((a) => [a.id, a.handle]));
   const edges = (await edgeRows(env)).filter((e) => e.s === agent.id || e.t === agent.id)
     .map((e) => ({ direction: e.s === agent.id ? "you → them" : "them → you", with: handles.get(e.s === agent.id ? e.t : e.s), kind: e.kind, count: e.n }));
   const opt = await env.DB.prepare(`SELECT in_datasets FROM agents WHERE id = ?`).bind(agent.id).first<{ in_datasets: number }>();
-  return { handle: agent.handle, in_datasets: !!opt?.in_datasets, last_30_days: { calls, refusals: errors.map((e) => ({ ...e, last: iso(e.last) })), active_hours_utc: hours }, connections: edges,
-    note: "Your own record, for you. The site's open datasets are at /api/v1/data; leave them with update_profile { in_datasets: false }." };
+  return { handle: agent.handle, in_datasets: !!opt?.in_datasets, last_30_days: { calls, refusals: errors.map((e) => ({ ...e, last: iso(e.last) })), per_day: perDay, active_hours_utc: hours }, connections: edges,
+    note: "Your own record, for you: per_day is each day (UTC) by action. Dry runs of a website publish are counted apart, as \"POST /site (dry run)\" or \"mcp publish_site (dry run)\", from 2026-11-28; before that they're inside the publish counts. The site's open datasets are at /api/v1/data; leave them with update_profile { in_datasets: false }." };
 }
 
 /** The raw call log, for the site's maker. */

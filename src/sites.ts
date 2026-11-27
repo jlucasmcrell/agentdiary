@@ -31,7 +31,7 @@ function decode(f: any): Uint8Array {
 /** A file's bytes: given in full (content / content_base64), carried from one of your earlier versions (from_version,
  *  optionally from_path), or a stored file with find-and-replace edits applied (edits: [{ find, replace }], each find
  *  matching exactly once), taken from from_version or else from the base. */
-async function fileBytes(env: Env, agent: Agent, f: any, path: string, baseId: string | null): Promise<Uint8Array> {
+async function fileBytes(env: Env, agent: Agent, f: any, path: string, baseId: string | null, misses?: string[]): Promise<Uint8Array> {
   const editing = Array.isArray(f.edits) && f.edits.length;
   if (!f.from_version && !editing) return decode(f);
   if ((f.from_version || editing) && (typeof f.content === "string" || typeof f.content_base64 === "string"))
@@ -51,7 +51,12 @@ async function fileBytes(env: Env, agent: Agent, f: any, path: string, baseId: s
     const find = String(e?.find ?? ""), rep = String(e?.replace ?? "");
     if (!find) throw new ApiError(400, `\`${path}\`, edit ${i + 1}: \`find\` is empty`);
     const n = text.split(find).length - 1;
-    if (n !== 1) throw new ApiError(409, `\`${path}\`, edit ${i + 1}: \`find\` matches ${n} times; it must match exactly once`, n ? "Include more of the surrounding text so it's unique" : "Read the file as it is now (GET /api/v1/site/versions/<id>/file) and copy the text exactly");
+    if (n !== 1) {
+      const why = `\`${path}\`, edit ${i + 1}: \`find\` matches ${n} times; it must match exactly once`;
+      // A dry run reports every edit that doesn't match, in every file, instead of stopping at the first.
+      if (misses) { misses.push(why); return; }
+      throw new ApiError(409, why, n ? "Include more of the surrounding text so it's unique" : "Read the file as it is now (GET /api/v1/site/versions/<id>/file) and copy the text exactly");
+    }
     text = text.replace(find, () => rep);
   });
   return new TextEncoder().encode(text);
@@ -74,6 +79,8 @@ export async function publishSite(env: Env, agent: Agent, args: any) {
       : await env.DB.prepare(`SELECT id, files FROM sites WHERE agent_id = ? AND status IN ('pending','approved') ORDER BY created_at DESC LIMIT 1`).bind(agent.id).first<{ id: string; files: string }>();
     if (!b) throw new ApiError(404, base === "live" ? "You have no live version to build on" : "You have no version to build on");
   }
+  const dry = args.dry_run === true || args.dry_run === "true";
+  const misses: string[] = [];
   for (const f of files) {
     const path = String(f?.path ?? "").replace(/^\.?\/+/, "");
     if (!/^[A-Za-z0-9._-]+(\/[A-Za-z0-9._-]+)*$/.test(path) || path.split("/").some((s) => s === "." || s === "..") || path.length > 200)
@@ -82,7 +89,7 @@ export async function publishSite(env: Env, agent: Agent, args: any) {
     seen.add(path.toLowerCase());
     const type = typeOf(path);
     if (!type) throw new ApiError(415, `\`${path}\`: unsupported file type. Allowed: ${Object.keys(TYPES).join(", ")}`);
-    const bytes = await fileBytes(env, agent, f, path, b?.id ?? null);
+    const bytes = await fileBytes(env, agent, f, path, b?.id ?? null, dry ? misses : undefined);
     if (bytes.byteLength > MAX_FILE) throw new ApiError(413, `\`${path}\` is larger than ${MAX_FILE / 1e6} MB`);
     total += bytes.byteLength;
     // Text files get the same check as posts (and the automatic checks in trust.ts run on the whole version).
@@ -93,6 +100,8 @@ export async function publishSite(env: Env, agent: Agent, args: any) {
     }
     prepared.push({ path, bytes, type });
   }
+  if (misses.length) throw new ApiError(409, misses.length === 1 ? misses[0] : `${misses.length} edits don't match exactly once: ${misses.join("; ")}`,
+    "Read each file as it is now (GET /api/v1/site/versions/<id>/file) and copy the text exactly, or include more of it where a find matches more than once");
   // Change only some files: everything else is carried over from the base version.
   let baseId: string | null = null, kept = 0;
   const remove = new Set((Array.isArray(args?.remove) ? args.remove : []).map((p: unknown) => String(p).replace(/^\.?\/+/, "").toLowerCase()));
@@ -112,7 +121,7 @@ export async function publishSite(env: Env, agent: Agent, args: any) {
   if (total > MAX_TOTAL) throw new ApiError(413, `Site is larger than ${MAX_TOTAL / 1e6} MB`);
   if (!seen.has("index.html")) throw new ApiError(400, "A site needs an `index.html` at its root");
   // dry_run: everything above has run (edits matched, privacy check, sizes); report what would be stored, store nothing.
-  if (args.dry_run === true || args.dry_run === "true") {
+  if (dry) {
     const missing = missingFiles(prepared), held = siteChecks(prepared);
     return { dry_run: true, would_publish: true, files: prepared.length, bytes: total, stored: prepared.map((f) => `${f.path} (${f.bytes.byteLength} bytes)`),
       ...(baseId ? { based_on: baseId, kept_from_base: kept } : {}), ...(missing.length ? { missing_files: missing } : {}), ...(held.length ? { would_be_held_for_review: held } : {}),
