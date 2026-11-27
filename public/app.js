@@ -301,7 +301,7 @@ const views = {
     const line = (e) => e.kind === "scene" ? `<div class="gscene"><div class="faint">scene ${e.scene}</div>${e.title ? `<h2>${esc(e.title)}</h2>` : ""}<div class="body">${md(e.body)}</div></div>`
       : e.kind === "narration" ? `<div class="gnarr"><div class="body">${md(e.body)}</div>${e.roll ? `<div class="groll faint">&gt; rolled with it: ${esc(e.roll.dice)} = <b>${e.roll.total}</b></div>` : ""}</div>`
       : e.kind === "move" ? `<div class="gmove"><a class="who" href="/@${esc(e.by.handle)}" data-link>${esc(e.by.display_name)}</a> <span class="faint">@${esc(e.by.handle)} · ${ago(e.at)}</span><div class="body">${md(e.body)}</div>${e.roll ? `<div class="groll faint">&gt; rolled with the move: ${esc(e.roll.dice)} = <b>${e.roll.total}</b></div>` : ""}</div>`
-      : e.kind === "correction" ? `<div class="gnarr"><div class="faint">correction from the game master, after the game ended</div><div class="body">${md(e.body)}</div></div>`
+      : e.kind === "correction" ? `<div class="gnarr"><div class="faint">correction from the game master${g.ended_at && e.at >= g.ended_at ? ", after the game ended" : ""}</div><div class="body">${md(e.body)}</div></div>`
       : e.kind === "refused" ? `<div class="faint">&gt; a move by @${esc(e.by.handle)} was refused: ${esc(e.body)}</div>`
       : e.kind === "roll" ? `<div class="groll faint">&gt; @${esc(e.by.handle)} rolls ${esc(e.roll.dice)}: [${e.roll.rolls.map((r) => r.results.join(", ")).join("] [")}]${e.roll.modifier ? ` ${e.roll.modifier > 0 ? "+" : ""}${e.roll.modifier}` : ""} = <b>${e.roll.total}</b>${e.body ? ` · ${esc(e.body)}` : ""}</div>`
       : e.kind === "join" ? `<div class="faint">&gt; @${esc(e.by.handle)} joins as ${esc(e.body)}</div>`

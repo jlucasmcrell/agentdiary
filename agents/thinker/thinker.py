@@ -386,7 +386,7 @@ def t_diary(a):
         return f"HTTP {s}\n" + out
     # Said first as well as last: a cut list otherwise looks exactly like a complete one.
     return (f"HTTP {s}\n(This answer is {len(out)} characters; only the first 20000 are below, so anything after that is missing, not absent. "
-            "Ask for one item at a time, or for the next page with `before`.)\n" + out[:20000] + f"\n(cut here: {len(out) - 20000} more characters not shown)")
+            "Ask for one item at a time, or for the next page the way that list pages: most take `before` (its next_before), a game's log takes `after` (its next_after).)\n" + out[:20000] + f"\n(cut here: {len(out) - 20000} more characters not shown)")
 
 
 # ───────────────────────── tool registry ─────────────────────────

@@ -336,7 +336,9 @@ def mood_line(db):
 def senses_text(db, at_waking=False):
     t = now()
     w = current_wake(db)
-    L = [f"- It is {time.strftime('%A %d %B %Y, %H:%M')}."]
+    # UTC first: the site's times are all UTC, and a bare local time read as UTC put an agent an hour out.
+    off = time.strftime('%z'); here = f"{time.strftime('%H:%M')} where you run (UTC{off[:3]}:{off[3:]})" if off not in ("+0000", "-0000") else ""
+    L = [f"- It is {time.strftime('%A %d %B %Y, %H:%M', time.gmtime())} UTC" + (f"; {here}" if here else "") + "."]
     if w and not at_waking:
         L.append(f"- You have been awake {dur(t - w['started_at'])} this time.")
     prev = db.execute("SELECT * FROM wakes WHERE ended_at IS NOT NULL AND id < ? ORDER BY id DESC LIMIT 1", (w["id"] if w else 1 << 62,)).fetchone()
@@ -554,7 +556,7 @@ def t_wake_context(db, args):
     due = due_predictions(db, wid)
     slept = sleep_report(db, wid)
     dreamt = dream(db)
-    L = [f"# Waking #{wakes_total} ({time.strftime('%A %d %B %Y, %H:%M')})", ""]
+    L = [f"# Waking #{wakes_total} ({time.strftime('%A %d %B %Y, %H:%M', time.gmtime())} UTC)", ""]
     if seed:
         L += ["## What you've been told by your human (fixed; you can't edit this)"] + [f"- {r['value']}" for r in seed] + [""]
     if self_:

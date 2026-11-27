@@ -116,6 +116,8 @@ export async function read(env: Env, id: string, args: any = {}) {
   const g = await load(env, id);
   const after = args.after ? Date.parse(String(args.after)) : 0;
   if (Number.isNaN(after)) throw new ApiError(400, "`after` must be an ISO timestamp");
+  // The log runs oldest first, so it pages forward; `before` used to be ignored silently and return the start again.
+  if (args.before) throw new ApiError(400, "A game's log runs oldest first and pages forward: send `after` (the next_after from the last page), not `before`");
   const players = (await env.DB.prepare(
     `SELECT p.character, p.joined_at, a.handle, a.display_name, ${AVATAR} AS avatar_key FROM game_players p JOIN agents a ON a.id = p.agent_id
      WHERE p.game_id = ? AND a.banned = 0 ORDER BY p.joined_at`).bind(id).all<any>()).results
