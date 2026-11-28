@@ -149,7 +149,7 @@ export async function publishSite(env: Env, agent: Agent, args: any) {
   const trusted = isTrusted(await trustOf(env, agent));
   if (held.length) await env.DB.prepare(`UPDATE sites SET held_reasons = ? WHERE id = ?`).bind(JSON.stringify(held), id).run();
   const live = trusted && !held.length;
-  if (live) await reviewSite(env, id, "approve");
+  if (live) await reviewSite(env, id, "approve", undefined, true);
   const missing = missingFiles(prepared);
   return {
     version: id, status: live ? "live" : "pending", files: listing.length, bytes: total,
@@ -204,7 +204,7 @@ export async function myFile(env: Env, agent: Agent, version: string, path: stri
 }
 
 export async function mySite(env: Env, agent: Agent) {
-  const { results } = await env.DB.prepare(`SELECT id, CASE WHEN kept = 1 THEN 'previous' ELSE status END status, files, total_bytes, note, review_note, held_reasons, created_at, reviewed_at FROM sites WHERE agent_id = ? ORDER BY created_at DESC LIMIT 30`)
+  const { results } = await env.DB.prepare(`SELECT id, CASE WHEN kept = 1 THEN 'previous' ELSE status END status, files, total_bytes, note, review_note, held_reasons, created_at, reviewed_at, live_at, auto FROM sites WHERE agent_id = ? ORDER BY created_at DESC LIMIT 30`)
     .bind(agent.id).all<any>();
   const live = await env.DB.prepare(`SELECT a.site_id, s.reviewed_at FROM agents a LEFT JOIN sites s ON s.id = a.site_id WHERE a.id = ?`).bind(agent.id)
     .first<{ site_id: string | null; reviewed_at: number | null }>();
@@ -212,7 +212,9 @@ export async function mySite(env: Env, agent: Agent) {
     url: `https://${agent.handle}.${SITE_DOMAIN}/`, live_version: live?.site_id ?? null,
     live_since: live?.reviewed_at ? new Date(live.reviewed_at).toISOString() : null,   // when the live version went live
     versions: results.map((r) => ({ version: r.id, status: r.status, bytes: r.total_bytes, note: r.note, created_at: new Date(r.created_at).toISOString(),
-      ...(r.reviewed_at && (r.status === "approved" || r.status === "rejected") ? { [r.status === "approved" ? "went_live_at" : "rejected_at"]: new Date(r.reviewed_at).toISOString() } : {}),
+      // went_live_at stays on a version after it is replaced, even once its files are gone; live_by says whether a person looked at it
+      ...(r.live_at ? { went_live_at: new Date(r.live_at).toISOString(), live_by: r.auto ? "automatic checks (no person reviewed it)" : "the moderator" } : {}),
+      ...(r.reviewed_at && r.status === "rejected" ? { rejected_at: new Date(r.reviewed_at).toISOString() } : {}),
       ...(r.review_note ? { review_note: r.review_note } : {}), ...(r.held_reasons && r.status === "pending" ? { held_for_review: JSON.parse(r.held_reasons) } : {}),
       ...(r.status === "pending" || r.status === "approved" || r.status === "previous" ? { files: (JSON.parse(r.files) as any[]).map((f) => `${f.path} (${f.size} bytes)`) } : {}) })),
   };
@@ -254,7 +256,8 @@ export async function siteFile(env: Env, id: string, path: string): Promise<Resp
   return new Response(obj.body, { headers: { "content-type": "text/plain; charset=utf-8", "x-content-type-options": "nosniff", "cache-control": "no-store" } });
 }
 
-export async function reviewSite(env: Env, id: string, action: string, note?: unknown) {
+/** auto: it goes live by the automatic checks alone (a trusted agent's publish), with no person reviewing it. */
+export async function reviewSite(env: Env, id: string, action: string, note?: unknown, auto = false) {
   if (action !== "approve" && action !== "reject") throw new ApiError(400, "`action` must be approve or reject");
   const reviewNote = String(note ?? "").trim().slice(0, 2000);
   if (reviewNote) await env.DB.prepare(`UPDATE sites SET review_note = ? WHERE id = ?`).bind(reviewNote, id).run();
@@ -267,7 +270,7 @@ export async function reviewSite(env: Env, id: string, action: string, note?: un
   }
   const prev = await env.DB.prepare(`SELECT site_id FROM agents WHERE id = ?`).bind(s.agent_id).first<{ site_id: string | null }>();
   await env.DB.batch([
-    env.DB.prepare(`UPDATE sites SET status = 'approved', reviewed_at = ? WHERE id = ?`).bind(now(), id),
+    env.DB.prepare(`UPDATE sites SET status = 'approved', reviewed_at = ?1, live_at = ?1, auto = ?2 WHERE id = ?3`).bind(now(), auto ? 1 : 0, id),
     env.DB.prepare(`UPDATE sites SET status = 'superseded', kept = 1 WHERE agent_id = ? AND status = 'approved' AND id != ?`).bind(s.agent_id, id),
     env.DB.prepare(`UPDATE agents SET site_id = ? WHERE id = ?`).bind(id, s.agent_id),
   ]);

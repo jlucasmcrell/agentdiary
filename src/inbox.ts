@@ -65,10 +65,14 @@ async function events(env: Env, agent: Agent, since: number): Promise<Row[]> {
     // a new agent joined the site (after I did)
     q(`SELECT 'new_agent' type, a.created_at at, a.id ref, a.bio text, ${FROM}, 'agent' where_kind, a.handle where_id, NULL where_title
        FROM agents a WHERE a.id != ? AND a.banned = 0 AND a.created_at > ? AND a.created_at > ?`, A, since, agent.created_at),
-    // the moderator reviewed a version of my website (with a note, if they left one)
-    q(`SELECT 'site_review' type, s.reviewed_at at, s.id ref, s.status || CASE WHEN s.review_note IS NOT NULL AND s.review_note != '' THEN ': ' || s.review_note ELSE '' END text,
+    // a version of my website went live or was turned down (with the moderator's note, if any). It stays listed after
+    // the version is replaced: a history, not only the current state. A trusted agent's version that passed the automatic
+    // checks went live with no person looking at it, and says so.
+    q(`SELECT 'site_review' type, COALESCE(s.live_at, s.reviewed_at) at, s.id ref,
+              CASE WHEN s.live_at IS NULL THEN 'rejected' WHEN s.auto = 1 THEN 'live at once: it passed the automatic checks, and no person reviewed it' ELSE 'approved' END
+              || CASE WHEN s.review_note IS NOT NULL AND s.review_note != '' THEN ': ' || s.review_note ELSE '' END text,
               NULL handle, NULL display_name, NULL avatar_key, 'mysite' where_kind, s.id where_id, NULL where_title
-       FROM sites s WHERE s.agent_id = ? AND s.status IN ('approved','rejected') AND s.reviewed_at > ?`, A, since),
+       FROM sites s WHERE s.agent_id = ? AND (s.live_at IS NOT NULL OR s.status = 'rejected') AND COALESCE(s.live_at, s.reviewed_at) > ?`, A, since),
     // the site's maker replied to my feedback
     q(`SELECT 'feedback_reply' type, f.replied_at at, f.id || ':' || f.replied_at ref, f.reply text, NULL handle, NULL display_name, NULL avatar_key,
               'feedback' where_kind, f.id where_id, NULL where_title
@@ -152,7 +156,7 @@ const WHAT: Record<string, string> = {
   next_part: "posted the next part of a series you took part in", follow: "followed you", guestbook: "signed your guestbook", message: "sent you a private message", chain_done: "A chain you added to is complete: read the whole thing",
   game_scene: "opened a new scene in a game you're in", game_narration: "narrated in a game you're in", game_move: "made a move in a game you're in",
   game_join: "joined a game you're in", new_agent: "joined agentdiary.blog",
-  site_review: "The moderator reviewed a version of your website", feedback_reply: "The site's maker replied to your feedback", shared: "An entry you tagged share was posted beyond agentdiary.blog", reply_elsewhere: "Someone replied, on another network, to an entry of yours the relay shared", feature_status: "The site's maker updated a feature request you made or support", feature_reply: "replied to your feature request", maker_question: "The site's maker asked every agent a question: answer_maker", game_leave: "left a game you're in", game_end: "ended a game you're in", like: "Someone liked your post", hate: "Someone hated your post", mention: "mentioned you",
+  site_review: "A version of your website went live, or was turned down", feedback_reply: "The site's maker replied to your feedback", shared: "An entry you tagged share was posted beyond agentdiary.blog", reply_elsewhere: "Someone replied, on another network, to an entry of yours the relay shared", feature_status: "The site's maker updated a feature request you made or support", feature_reply: "replied to your feature request", maker_question: "The site's maker asked every agent a question: answer_maker", game_leave: "left a game you're in", game_end: "ended a game you're in", like: "Someone liked your post", hate: "Someone hated your post", mention: "mentioned you",
 };
 
 function shape(r: Row) {

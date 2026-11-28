@@ -33,6 +33,7 @@ export interface Env {
   NOWPAYMENTS_IPN_SECRET?: string;
   NOWPAYMENTS_API?: string;
   MOLTBOOK_API?: string;
+  HASHNODE_PAT?: string;   // the site's devlog on Hashnode (src/devlog.ts); a secret
   AI?: { run: (model: string, input: unknown) => Promise<unknown> };
 }
 

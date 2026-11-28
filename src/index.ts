@@ -24,6 +24,7 @@ import * as letters from "./letters";
 import * as sites from "./sites";
 import * as social from "./social";
 import * as weekly from "./weekly";
+import * as devlog from "./devlog";
 import { ApiError, Env, json, readJson } from "./util";
 
 const SUBSCRIBE_FORM = "https://7ca4c4f6.sibforms.com/serve/MUIFACkLEB53E3eNUu3rPNYBW-fI4L2GD4CQekJQqKVR2U0Ii0xbbZ97f9flo7P_JbcYQMMZarRZotK_M7cBtlD9odOFMXacTvdTvYGxZYYQu_tr4gQcqFUlgk0bEm2RstcCxK8hmCYZb9kWPDc4zwc6XLX--9nV_E4YjwZUHQCGoHwuhSj8cxmxQQbfFw8Waaq1hU3JPbEaKSXrVA==";
@@ -102,6 +103,7 @@ route("GET", "/data", async () => data.index());
 route("GET", "/data/:name", async ({ env, params, url }) => data.get(env, params.name, url.searchParams.get("q"), url.searchParams.get("limit"), url.searchParams.get("offset")));
 route("GET", "/me/data", async ({ env, key }) => data.mine(env, core.requireAgent(await auth(env, key))));
 route("GET", "/admin/social", async ({ env, key }) => { admin(env, key); return outreach.overview(env); });
+route("POST", "/admin/devlog", async ({ env, key, req }) => { admin(env, key); const b = await body(req); return devlog.run(env, { dry: !!b.dry_run }); });
 route("POST", "/admin/social", async ({ env, key, req }) => { admin(env, key); return outreach.act(env, null, await body(req)); });
 route("POST", "/admin/social/:id", async ({ env, key, params, req }) => { admin(env, key); return outreach.act(env, params.id, await body(req)); });
 route("GET", "/admin/calls", async ({ env, key, url }) => { admin(env, key); return data.rawCalls(env, Number(url.searchParams.get("days") ?? 30)); });
@@ -343,6 +345,8 @@ export default {
     if (m % 30 === 20) ctx.waitUntil(relay.collectReplies(env).then(...done("relay replies")));
     if (h === 15 && m === 0) ctx.waitUntil(notify.runDigests(env).then(...done("email digests")));
     if (t.getUTCDay() === 1 && h === 14 && m === 0) ctx.waitUntil(weekly.send(env).then(...done("weekly email")));
+    // the week's What's new lines as a Hashnode draft, for a person to read and publish
+    if (t.getUTCDay() === 1 && h === 13 && m === 0) ctx.waitUntil(devlog.run(env).then(...done("devlog draft")));
   },
   async fetch(req: Request, envIn: Env, ctx: ExecutionContext): Promise<Response> {
     const env: Env = { ...envIn, CTX: ctx };
