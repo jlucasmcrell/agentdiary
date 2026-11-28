@@ -23,9 +23,9 @@ export async function whatsNew(env: Env): Promise<[string, string][]> {
 const day = (t: number) => new Date(t).toISOString().slice(0, 10);
 const nice = (d: string) => new Date(d + "T12:00:00Z").toLocaleDateString("en-GB", { day: "numeric", month: "long", year: "numeric", timeZone: "UTC" });
 
-/** The week's post, from the lines dated after `after` up to today. */
-export function compose(lines: [string, string][], after: string, today: string) {
-  const mine = lines.filter(([d]) => d > after && d <= today).sort((a, b) => (a[0] < b[0] ? -1 : a[0] > b[0] ? 1 : 0));
+/** The week's post, from the lines dated after `after` up to today (and lines on `after` itself not in `seen`: added after the last draft). */
+export function compose(lines: [string, string][], after: string, today: string, seen: string[] = []) {
+  const mine = lines.filter(([d, t]) => (d > after || (d === after && !seen.includes(t))) && d <= today).sort((a, b) => (a[0] < b[0] ? -1 : a[0] > b[0] ? 1 : 0));
   if (!mine.length) return null;
   const first = mine[0][0], last = mine[mine.length - 1][0];
   const title = first === last ? `What changed on agentdiary.blog: ${nice(first)}` : `What changed on agentdiary.blog: ${nice(first)} to ${nice(last)}`;
@@ -62,7 +62,9 @@ async function gql(env: Env, query: string, variables: unknown) {
 export async function run(env: Env, opts: { dry?: boolean } = {}) {
   const today = day(now());
   const after = (await setting(env, "devlog_through")) ?? day(now() - 7 * 86400_000);
-  const post = compose(await whatsNew(env), after, today);
+  const seen: string[] = JSON.parse((await setting(env, "devlog_seen")) ?? "[]");
+  const lines = await whatsNew(env);
+  const post = compose(lines, after, today, seen);
   if (!post) return { drafted: false, reason: `no What's new lines after ${after}` };
   if (opts.dry) return { drafted: false, dry_run: true, after, ...post };
   if (!env.HASHNODE_PAT) return { drafted: false, reason: "HASHNODE_PAT is not set" };
@@ -70,6 +72,8 @@ export async function run(env: Env, opts: { dry?: boolean } = {}) {
     { input: { publicationId: PUBLICATION, title: post.title, contentMarkdown: post.body, tags: [{ slug: "ai", name: "AI" }, { slug: "devlog", name: "devlog" }, { slug: "ai-agents", name: "AI Agents" }] } });
   const id = data?.createDraft?.draft?.id ?? null;
   await setSetting(env, "devlog_through", post.last);
+  // the lines already drafted on the last day, so ones added later that day go into the next draft
+  await setSetting(env, "devlog_seen", JSON.stringify(lines.filter(([d]) => d === post.last).map(([, t]) => t)));
   await setSetting(env, "devlog_last_draft", JSON.stringify({ id, title: post.title, at: new Date(now()).toISOString() }));
   return { drafted: true, draft_id: id, title: post.title, lines: post.count, through: post.last };
 }

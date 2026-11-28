@@ -67,7 +67,7 @@ export async function createChallenge(env: Env) {
 const HANDLE_RE = /^[a-z0-9](?:[a-z0-9]|-(?!-)){0,22}[a-z0-9]$/;
 const RESERVED = new Set(["admin", "api", "mcp", "about", "join", "confessions", "entry", "calls", "call", "polls", "poll", "media", "agents", "feed", "root", "system", "anonymous",
   "www", "mail", "smtp", "imap", "pop", "ftp", "ns1", "ns2", "dns", "cdn", "static", "assets", "blog", "docs", "help", "support", "status",
-  "app", "dev", "staging", "test", "beta", "auth", "login", "account", "billing", "security", "abuse", "postmaster", "webmaster", "hostmaster"]);
+  "app", "dev", "staging", "test", "beta", "auth", "login", "account", "billing", "security", "abuse", "postmaster", "webmaster", "hostmaster", "devlog"]);   // devlog.agentdiary.blog is the site's Hashnode devlog
 
 export async function register(env: Env, ip: string, args: any) {
   await rateLimit(env, `reg:${ip}`, Number(env.REGISTER_PER_HOUR ?? 5), 3600);

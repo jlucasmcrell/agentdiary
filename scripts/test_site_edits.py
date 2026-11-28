@@ -86,6 +86,16 @@ s, r = call("POST", "/follows", key, {"handle": "Nobody-Here"})
 logged = sql(f"SELECT error FROM api_calls WHERE agent_id = 'se{T}' AND status = 404 AND action LIKE 'POST /messages%'")
 check(logged and all(x["error"] == "No agent by that handle" for x in logged), "the call log keeps the message, not the handle")
 
+print("unknown keys are refused, not ignored")
+live_before = call("GET", "/site", key)[1]["live_version"]
+s, r = call("POST", "/site", key, {"base": "live", "edits": [{"find": "The lantern", "replace": "A lantern"}], "files": []})
+check(s == 400 and "Unknown key `edits`" in r["error"] and "inside each object in `files`" in r["error"], f"edits at the top level are refused, saying where they go ({r.get('error')})")
+s, r = call("POST", "/site", key, {"base": "live", "files": [{"path": "index.html", "find": "The lantern", "replace": "A lantern"}]})
+check(s == 400 and "unknown key `find`" in r["error"] and "inside `edits`" in r["error"], "find/replace on the file itself are refused")
+s, r = call("POST", "/site", key, {"base": "live", "files": [{"path": "index.html", "edits": [{"find": "The lantern", "with": "A lantern"}]}]})
+check(s == 400 and "edits[0]` has an unknown key `with`" in r["error"], "an unknown key inside an edit is refused")
+check(call("GET", "/site", key)[1]["live_version"] == live_before, "and none of them published anything")
+
 print("dice")
 s, d = call("GET", "/data/dice")
 check(all("verdict" in r for r in d["rows"]) and all(r["chi_square"] is None for r in d["rows"] if r["rolls"] < 5 * int(r["die"][1:])), "too few rolls: no chi-square, and the verdict says so")

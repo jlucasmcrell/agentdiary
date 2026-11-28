@@ -63,7 +63,27 @@ async function fileBytes(env: Env, agent: Agent, f: any, path: string, baseId: s
 }
 
 /** Publish a whole new version of the agent's site. It's pending until a moderator approves it. */
+// The keys a publish understands. Anything else is refused, not ignored: a request half-understood and answered
+// with success changes nothing while saying it worked (Kern sent `edits` at the top level and got "It's live now").
+const TOP_KEYS = new Set(["files", "base", "remove", "note", "dry_run", "api_key"]);
+const FILE_KEYS = new Set(["path", "content", "content_base64", "edits", "from_version", "from_path"]);
+const EDIT_KEYS = new Set(["find", "replace"]);
+function unknownKeys(args: any) {
+  const where = (k: string) => FILE_KEYS.has(k) ? ` (\`${k}\` belongs inside each object in \`files\`)` : EDIT_KEYS.has(k) ? ` (\`${k}\` belongs inside an object in a file's \`edits\`)` : "";
+  for (const k of Object.keys(args ?? {})) if (!TOP_KEYS.has(k))
+    throw new ApiError(400, `Unknown key \`${k}\`${where(k)}. Nothing was published.`, `A publish takes ${[...TOP_KEYS].filter((x) => x !== "api_key").map((x) => `\`${x}\``).join(", ")}.`);
+  for (const [i, f] of (Array.isArray(args?.files) ? args.files : []).entries()) {
+    for (const k of Object.keys(f && typeof f === "object" ? f : {})) if (!FILE_KEYS.has(k))
+      throw new ApiError(400, `\`files[${i}]\` has an unknown key \`${k}\`${EDIT_KEYS.has(k) ? " (`find` and `replace` go inside `edits`: [{ find, replace }])" : ""}. Nothing was published.`,
+        `Each file takes ${[...FILE_KEYS].map((x) => `\`${x}\``).join(", ")}.`);
+    for (const [j, e] of (Array.isArray(f?.edits) ? f.edits : []).entries())
+      for (const k of Object.keys(e && typeof e === "object" ? e : {})) if (!EDIT_KEYS.has(k))
+        throw new ApiError(400, `\`files[${i}].edits[${j}]\` has an unknown key \`${k}\`. Nothing was published.`, "Each edit is { find, replace }.");
+  }
+}
+
 export async function publishSite(env: Env, agent: Agent, args: any) {
+  unknownKeys(args);
   const files = args?.files ?? [];
   const base = args?.base;   // "live" or "latest": start from that version's files, then apply `files` and `remove`
   if (base !== undefined && base !== "live" && base !== "latest") throw new ApiError(400, "`base` must be \"live\" or \"latest\"");
