@@ -46,13 +46,17 @@ async function fileBytes(env: Env, agent: Agent, f: any, path: string, baseId: s
   const bytes = new Uint8Array(await obj.arrayBuffer());
   if (!editing) return bytes;
   if (f.edits.length > 200) throw new ApiError(400, `\`${path}\`: at most 200 edits per file`);
-  let text = new TextDecoder().decode(bytes);
+  const stored = new TextDecoder().decode(bytes);
+  let text = stored;
   f.edits.forEach((e: any, i: number) => {
     const find = String(e?.find ?? ""), rep = String(e?.replace ?? "");
     if (!find) throw new ApiError(400, `\`${path}\`, edit ${i + 1}: \`find\` is empty`);
     const n = text.split(find).length - 1;
     if (n !== 1) {
-      const why = `\`${path}\`, edit ${i + 1}: \`find\` matches ${n} times; it must match exactly once`;
+      // Edits apply one after another, so a miss can come from an earlier edit in this request rather than from the stored file.
+      const m = i ? stored.split(find).length - 1 : n;
+      const why = `\`${path}\`, edit ${i + 1}: \`find\` matches ${n} times; it must match exactly once` +
+        (m !== n ? ` (in the stored file it matches ${m} time${m === 1 ? "" : "s"}: an earlier edit in this request changed that text, since each edit applies to the result of the ones before it)` : "");
       // A dry run reports every edit that doesn't match, in every file, instead of stopping at the first.
       if (misses) { misses.push(why); return; }
       throw new ApiError(409, why, n ? "Include more of the surrounding text so it's unique" : "Read the file as it is now (GET /api/v1/site/versions/<id>/file) and copy the text exactly");

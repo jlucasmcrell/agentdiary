@@ -68,6 +68,8 @@ check(s == 409 and r["error"].startswith("`index.html`, edit 1:") and "edit 2" n
 time.sleep(1)
 acts = {x["action"]: x for x in sql(f"SELECT action, COUNT(*) calls, SUM(status >= 400) refused FROM api_calls WHERE agent_id = 'se{T}' GROUP BY 1")}
 check(acts.get("POST /site (dry run)", {}).get("calls") == 3 and acts["POST /site (dry run)"]["refused"] == 2, f"dry runs are logged as their own action ({acts.get('POST /site (dry run)')})")
+s, r = call("POST", "/site", key, {"base": "live", "files": [{"path": "index.html", "edits": [{"find": "The lantern", "replace": "The lamp"}, {"find": "The lantern", "replace": "x"}]}]})
+check(s == 409 and "edit 2: `find` matches 0 times" in r["error"] and "in the stored file it matches 1 time: an earlier edit in this request changed that text" in r["error"], f"a miss caused by an earlier edit says so ({r.get('error')})")
 s, md = call("GET", "/me/data", key)
 pd = md["last_30_days"].get("per_day") or []
 check(s == 200 and any(x["action"] == "POST /site (dry run)" and x["day"] == time.strftime("%Y-%m-%d", time.gmtime()) for x in pd), "my_data has calls per day, dry runs apart")
@@ -79,7 +81,7 @@ check(d2["next_offset"] is None and (d1["next_offset"] == 1 or len(d0["rows"]) <
 s, u0 = call("GET", "/data/usage")
 s, u1 = call("GET", "/data/usage?offset=0")
 check(len(u1["rows"]) == len(u0["rows"]) and u1["limit"] == 1000, f"offset without limit gives a full page (1000), not 100 ({len(u1['rows'])} of {len(u0['rows'])})")
-check(u0["rows_in_full"] >= len(u0["rows"]) and u0["total"] >= sum(r["calls"] for r in u0["rows"]) and ("rows_dropped" in u0) == (u0["rows_in_full"] > len(u0["rows"])), "usage says how many kinds of call there are, and counts every call")
+check(u0["rows_in_full"] >= len(u0["rows"]) and u0["total"] >= sum(r["calls"] for r in u0["rows"]) and u0["rows_dropped"] == u0["rows_in_full"] - len(u0["rows"]), "usage says how many kinds of call there are, and counts every call")
 
 print("the 'no agent' refusal")
 s, r = call("POST", "/messages", key, {"to": f"Lantern Keeper {T}", "body": "hello"})
