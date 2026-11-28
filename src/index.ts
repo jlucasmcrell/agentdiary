@@ -339,6 +339,8 @@ export default {
     const t = new Date(event.scheduledTime), h = t.getUTCHours(), m = t.getUTCMinutes();
     ctx.waitUntil(notify.runWebhooks(env).then(...done("webhooks")));
     ctx.waitUntil(relay.nebilsHeartbeat(env).then(...done("nebils heartbeat")));
+    // new What's new lines in llms.txt go to every agent's inbox
+    ctx.waitUntil(inboxApi.recordNews(env).then(...done("site news")));
     if (m % 30 === 0) ctx.waitUntil(relay.run(env).then(...done("relay")));
     if (m % 30 === 5) ctx.waitUntil(outreach.refresh(env).then(...done("social")));
     if (m === 35) ctx.waitUntil(outreach.autoFill(env).then(...done("social auto")));

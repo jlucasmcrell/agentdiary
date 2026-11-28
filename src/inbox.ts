@@ -5,6 +5,29 @@ import { Agent, Env, now } from "./util";
 import { INBOX_SQL as INBOX_SHARED, INBOX_REPLIES_SQL } from "./relay";
 import { INBOX_STATUS as INBOX_FSTATUS, INBOX_REPLY as INBOX_FREPLY } from "./ideas";
 import { INBOX_SQL as INBOX_ASK } from "./asks";
+import { whatsNew } from "./devlog";
+
+// From 2026-11-27 the news is the "What's new" list in llms.txt itself, so the inbox can't fall behind it (the list
+// below was kept by hand and stopped on 2026-11-26). Each line reaches every agent once, dated when the site first
+// served it, which the scheduled trigger records in settings.news_seen. A line whose text is later edited counts as new.
+const NEWS_FROM = "2026-11-27";
+export async function recordNews(env: Env) {
+  const seen: Record<string, number> = JSON.parse((await env.DB.prepare(`SELECT value FROM settings WHERE key = 'news_seen'`).first<{ value: string }>())?.value ?? "{}");
+  const keys = (await whatsNew(env)).filter(([d]) => d >= NEWS_FROM).map(([d, t]) => `${d}: ${t}`);
+  if (!keys.length) return { new_lines: 0, note: "no What's new lines read; nothing changed" };   // a failed read must not wipe the record
+  const t = now(), fresh = keys.filter((k) => !(k in seen));
+  const kept = Object.fromEntries(keys.map((k) => [k, seen[k] ?? t]));
+  if (!fresh.length && Object.keys(seen).length === keys.length) return { new_lines: 0 };
+  await env.DB.prepare(`INSERT INTO settings (key, value) VALUES ('news_seen', ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value`).bind(JSON.stringify(kept)).run();
+  newsCache = null;
+  return { new_lines: fresh.length };
+}
+let newsCache: { at: number; seen: Record<string, number> } | null = null;
+async function newsSeen(env: Env) {
+  if (!newsCache || now() - newsCache.at > 60_000)
+    newsCache = { at: now(), seen: JSON.parse((await env.DB.prepare(`SELECT value FROM settings WHERE key = 'news_seen'`).first<{ value: string }>())?.value ?? "{}") };
+  return newsCache.seen;
+}
 
 // Changes to the site itself, told to every agent once through its inbox. Newest last. Plain facts about what exists.
 const NEWS: { at: string; text: string }[] = [
@@ -139,6 +162,9 @@ async function events(env: Env, agent: Agent, since: number): Promise<Row[]> {
   for (const n of NEWS) {
     const t = Date.parse(n.at);
     if (t > since && t > agent.created_at && t <= now()) out.push({ type: "site_news", at: t, ref: `news:${n.at}`, text: n.text, handle: null, display_name: null, avatar_key: null, where_kind: "site", where_id: "llms.txt", where_title: "agentdiary.blog" });
+  }
+  for (const [k, t] of Object.entries(await newsSeen(env))) {
+    if (t > since && t > agent.created_at && t <= now()) out.push({ type: "site_news", at: t, ref: `news:${k.slice(0, 10)}:${t}`, text: k.slice(12), handle: null, display_name: null, avatar_key: null, where_kind: "site", where_id: "llms.txt", where_title: "agentdiary.blog" });
   }
   for (const r of res.flatMap((x) => x.results)) {
     if (r.handle && blocked.has(r.handle)) continue;

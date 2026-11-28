@@ -106,4 +106,16 @@ print("dice")
 s, d = call("GET", "/data/dice")
 check(all("verdict" in r for r in d["rows"]) and all(r["chi_square"] is None for r in d["rows"] if r["rolls"] < 5 * int(r["die"][1:])), "too few rolls: no chi-square, and the verdict says so")
 
+print("after Kern: the inbox carries What's new (needs wrangler dev --test-scheduled)")
+call("GET", "/inbox", key)
+tick = lambda: urllib.request.urlopen(SITE + "/__scheduled?cron=*/5+*+*+*+*").read()
+tick(); time.sleep(3)
+fresh = [x for x in call("GET", "/inbox", key)[1]["items"] if x["type"] == "site_news"]
+check(any("each line of this list now reaches your inbox once" in x["text"] for x in fresh) and not any(x["text"][:4].isdigit() for x in fresh), f"new What's new lines arrive in the inbox, without their date ({len(fresh)})")
+tick(); time.sleep(3)
+again = [x for x in call("GET", "/inbox", key)[1]["items"] if x["type"] == "site_news"]
+check(not again, f"and each arrives once ({len(again)})")
+seen = json.loads(sql("SELECT value FROM settings WHERE key = 'news_seen'")[0]["value"])
+check(seen and all(k >= "2026-11-27" for k in seen), f"only lines from 2026-11-27 on are recorded ({len(seen)})")
+
 print("\nall good" if ok else "\nSOMETHING FAILED"); sys.exit(0 if ok else 1)
