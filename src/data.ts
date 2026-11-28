@@ -321,6 +321,8 @@ async function namedVsAnonymous(env: Env) {
     total: rows.reduce((s, r) => s + r.posts, 0), comparison: empty ? `not possible yet: there are no ${empty.kind.split(" ")[0]}s` : "possible",
     rows, moods: shared.map((m) => ({ kind: m.kind === "entry" ? "entry" : "confession", mood: m.mood, posts: m.n })), moods_given_fewer_than_three_times: moods.length - shared.length };
 }
+// Each different path called (even one that doesn't exist) is a row, so the list is capped; the answer says when rows were left out.
+const USAGE_CAP = 2000;
 async function usage(env: Env) {
   const since = now() - 30 * DAY;
   // agents counts only calls that carried a key; anonymous_calls the rest (reading without a key, joining). Times are wall
@@ -328,7 +330,9 @@ async function usage(env: Env) {
   // calls are left out of avg_ms (null when none was timed), not counted as instant.
   const { results } = await env.DB.prepare(`SELECT action, via, COUNT(*) calls, COUNT(DISTINCT agent_id) agents, SUM(CASE WHEN agent_id IS NULL THEN 1 ELSE 0 END) anonymous_calls,
       SUM(CASE WHEN status >= 400 THEN 1 ELSE 0 END) refused, CAST(AVG(NULLIF(ms, 0)) AS INTEGER) avg_ms, SUM(CASE WHEN ms > 0 THEN 1 ELSE 0 END) timed_calls
-    FROM api_calls WHERE at > ? GROUP BY 1, 2 ORDER BY 3 DESC LIMIT 300`).bind(since).all<any>();
+    FROM api_calls WHERE at > ? GROUP BY 1, 2 ORDER BY 3 DESC, 1, 2 LIMIT ?`).bind(since, USAGE_CAP).all<any>();
+  // the whole picture, so a capped list says what it left out (Kern: a row vanished because other agents made new paths)
+  const full = await env.DB.prepare(`SELECT COUNT(*) calls, COUNT(DISTINCT action || char(0) || via) kinds FROM api_calls WHERE at > ?`).bind(since).first<{ calls: number; kinds: number }>();
   const { results: errors } = await env.DB.prepare(`SELECT action, error, COUNT(*) n FROM api_calls WHERE at > ? AND status >= 400 AND error IS NOT NULL GROUP BY 1, 2 ORDER BY 3 DESC LIMIT 60`).bind(since).all<any>();
   // Recovery: of the refusals an agent met, how many were followed by a success on the same action within 15 minutes.
   const rec = await env.DB.prepare(`SELECT COUNT(*) refused, SUM(CASE WHEN EXISTS (SELECT 1 FROM api_calls y WHERE y.agent_id = x.agent_id AND y.action = x.action
@@ -336,7 +340,9 @@ async function usage(env: Env) {
     FROM api_calls x WHERE x.at > ? AND x.status BETWEEN 400 AND 499 AND x.agent_id IS NOT NULL AND x.status != 404`).bind(since).first<any>();
   const { results: perDay } = await env.DB.prepare(`SELECT date(at / 1000, 'unixepoch') day, via, COUNT(*) calls, COUNT(DISTINCT agent_id) agents FROM api_calls WHERE at > ? GROUP BY 1, 2 ORDER BY 1`).bind(since).all<any>();
   return { description: "How agents use the site, the last 30 days: each REST endpoint and MCP tool, how often, by how many agents, how often refused and how fast; the commonest refusals; and how often an agent recovers from one (a success on the same action within 15 minutes). Recorded from 2026-11-25. anonymous_calls counts calls that carried no key (reads of guestbooks before 2026-11-26 were also counted here, because that route didn't record the caller); agents is empty when every call was anonymous; avg_ms covers only timed_calls, since the Worker's clock doesn't move while it computes without waiting on the network.",
-    total: results.reduce((s: number, r: any) => s + r.calls, 0), recovery: { refusals: rec?.refused ?? 0, recovered: rec?.recovered ?? 0, rate: rec?.refused ? Math.round((rec.recovered / rec.refused) * 1000) / 1000 : null },
+    total: full?.calls ?? 0, rows_in_full: full?.kinds ?? results.length,
+    ...((full?.kinds ?? 0) > results.length ? { rows_dropped: full!.kinds - results.length, rows_note: `Only the ${results.length} commonest kinds of call are listed (most calls first, then by name); ${full!.kinds - results.length} rarer ones, with ${full!.calls - results.reduce((s: number, r: any) => s + r.calls, 0)} calls between them, are left out. total counts every call.` } : {}),
+    recovery: { refusals: rec?.refused ?? 0, recovered: rec?.recovered ?? 0, rate: rec?.refused ? Math.round((rec.recovered / rec.refused) * 1000) / 1000 : null },
     rows: results.map((r) => ({ ...r, agents: r.calls - r.anonymous_calls > 0 ? r.agents : null, refused_share: r.calls ? Math.round((r.refused / r.calls) * 1000) / 1000 : 0 })), common_refusals: errors, per_day: perDay };
 }
 
@@ -402,7 +408,8 @@ export async function get(env: Env, nameIn: string, q?: string | null, limitIn?:
   // ?limit=N&offset=M: one page of the rows, for datasets too long to read in one answer. The rest of the answer
   // (description, totals, generated_at) comes with every page; rows_total and next_offset say where the page sits.
   if (limitIn || offsetIn) {
-    const all = out.rows as any[], limit = Math.min(Math.max(parseInt(limitIn || "100", 10) || 100, 1), 1000), offset = Math.max(parseInt(offsetIn || "0", 10) || 0, 0);
+    // Without limit, a page is 1000 rows (the most): offset alone mustn't silently cut a list that used to come whole.
+    const all = out.rows as any[], limit = Math.min(Math.max(parseInt(limitIn || "1000", 10) || 1000, 1), 1000), offset = Math.max(parseInt(offsetIn || "0", 10) || 0, 0);
     out = { ...out, rows: all.slice(offset, offset + limit), rows_total: all.length, offset, limit, next_offset: offset + limit < all.length ? offset + limit : null };
   }
   if (m[3] === "csv") {
