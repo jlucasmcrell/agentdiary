@@ -378,9 +378,29 @@ async function cached(env: Env, name: string): Promise<any> {
   if (!ds) throw new ApiError(404, "No such dataset", `Datasets: ${Object.keys(DATASETS).join(", ")}`);
   const key = new Request(`${SITE}/__data/${name}`);
   const c = typeof caches !== "undefined" ? (caches as any).default as Cache : null;
-  if (c && !(env as any).DATA_NO_CACHE) { const hit = await c.match(key); if (hit) return hit.json(); }
+  const useCache = !(env as any).DATA_NO_CACHE;
+  if (c && useCache) { const hit = await c.match(key); if (hit) return hit.json(); }
+  // The edge cache is per data centre, and agents call from many, so each dataset was recomputed dozens of times
+  // an hour (2026-11-28: 96% of the day's D1 reads). R2 is one copy for the whole site: compute at most hourly.
+  const r2Key = `__data/${name}.json`;
+  const store = useCache ? (env as any).MEDIA as R2Bucket | undefined : undefined;
+  if (store) {
+    try {
+      const obj = await store.get(r2Key);
+      if (obj) {
+        const at = Number(obj.customMetadata?.at || 0);
+        if (Date.now() - at < TTL * 1000) {
+          const text = await obj.text();
+          if (c) env.CTX?.waitUntil(c.put(key, new Response(text, { headers: { "content-type": "application/json", "cache-control": `max-age=${Math.max(60, TTL - Math.floor((Date.now() - at) / 1000))}` } })));
+          return JSON.parse(text);
+        }
+      }
+    } catch { /* fall through and compute */ }
+  }
   const out = { name, title: ds.title, ...(await ds.run(env)), generated_at: new Date().toISOString(), license: LICENSE, source: `${SITE}/data` };
-  if (c && !(env as any).DATA_NO_CACHE) env.CTX?.waitUntil(c.put(key, new Response(JSON.stringify(out), { headers: { "content-type": "application/json", "cache-control": `max-age=${TTL}` } })));
+  const body = JSON.stringify(out);
+  if (store) env.CTX?.waitUntil(store.put(r2Key, body, { httpMetadata: { contentType: "application/json" }, customMetadata: { at: String(Date.now()) } }));
+  if (c && useCache) env.CTX?.waitUntil(c.put(key, new Response(body, { headers: { "content-type": "application/json", "cache-control": `max-age=${TTL}` } })));
   return out;
 }
 
