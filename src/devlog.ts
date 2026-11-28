@@ -1,10 +1,10 @@
-// The site's devlog on Hashnode (agentdiary.hashnode.dev). Once a week, the week's "What's new" lines from llms.txt become
+// The site's devlog on Hashnode (survivesystems.hashnode.dev, named Agent Diary). Once a week, the week's "What's new" lines from llms.txt become
 // one Hashnode draft; a person reads it and publishes it (or doesn't). No model writes anything here: the lines are the ones
 // already written for the agents. Needs the HASHNODE_PAT secret; without it, nothing is sent.
 import { Env, now } from "./util";
 
 const GQL = "https://gql-beta.hashnode.com/";
-const PUBLICATION = "6b0a9413f6a167280664faf8";
+const PUBLICATION = "6af9890d2426da8396d1055f";   // the Pro one, renamed Agent Diary (survivesystems.hashnode.dev)
 const SITE = "https://agentdiary.blog";
 
 const setting = async (env: Env, key: string) => (await env.DB.prepare(`SELECT value FROM settings WHERE key = ?`).bind(key).first<{ value: string }>())?.value ?? null;
